@@ -29998,6 +29998,318 @@ def _js_f679_operand(text, j, env):
     return kind, val, q
 
 
+class _JSF929Proxy(dict):
+    """F679 env value for a narrow `new Proxy(...)` binding (F929).
+
+    A dict SUBCLASS so every existing object-kind path keeps
+    working unchanged: `_js_f679_kind` reports "o", member reads
+    hit the target's own string props, for-in iterates the
+    target's keys (node-exact -- the narrow handler carries no
+    get/ownKeys traps, so default forwarding applies). The only
+    extra state is `_f929_has_lit`: None when the handler has no
+    `has` trap (then `in` follows the plain-object rule), or the
+    literal the narrow has-trap compares against
+    (`return k==='LIT';`). Never constructed outside
+    `_js_f929_parse_new_proxy`. Never evals.
+    """
+
+    def __init__(self, target, has_lit):
+        super().__init__(target)
+        self._f929_has_lit = has_lit
+
+
+_JS_F929_OBJECT_PROTO_KEYS = frozenset((
+    "__defineGetter__", "__defineSetter__",
+    "__lookupGetter__", "__lookupSetter__", "__proto__",
+    "constructor", "hasOwnProperty", "isPrototypeOf",
+    "propertyIsEnumerable", "toLocaleString", "toString",
+    "valueOf",
+))  # Object.getOwnPropertyNames(Object.prototype), node v24.20.0
+
+
+def _js_f929_in_eval(key, oval):
+    """Evaluate `'KEY' in OBJ` for an F679 object binding (F929).
+
+    Node-exact (v24.20.0) for the accepted subset: every F679
+    object binding is a plain literal whose prototype is
+    Object.prototype (decl objects reject `__proto__`, and the
+    sim has no setPrototypeOf production), so `in` is the
+    own-props check plus the fixed Object.prototype key set
+    above. A _JSF929Proxy with a narrow has-trap answers from
+    the trap (`return k==='LIT';` -- true iff key equals the
+    literal); without a has trap it forwards to the target
+    (same rule). Never evals.
+    """
+    if isinstance(oval, _JSF929Proxy) and oval._f929_has_lit is not None:
+        return key == oval._f929_has_lit
+    return key in oval or key in _JS_F929_OBJECT_PROTO_KEYS
+
+
+def _js_f929_try_paren_in(text, j, env):
+    """Try `('KEY' in OBJ)` at text[j] (F929).
+
+    The parenthesized `in` form (the filed F929 shapes guard
+    with `('v' in o)?...:...`). KEY is a string literal or a
+    bound string name; OBJ is a bound object (plain or
+    _JSF929Proxy). Returns (result, next_index), or None when
+    text[j] is not this form (the caller falls through to the
+    normal condition path, which fails closed on `(`). Never
+    evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j + 1)
+    if q < n and text[q] in "'\"":
+        key, q = _js_parse_string(text, q)
+    elif q < n and text[q] in _JS_IDENT_START:
+        kname, q = _js_parse_ident(text, q)
+        if kname not in env:
+            return None
+        kval, _m = env[kname]
+        if _js_f679_kind(kval) != "s":
+            return None
+        key = kval
+    else:
+        return None
+    q = _js_skip_ws(text, q)
+    if _js_match_kw(text, q, "in") is None:
+        return None
+    q = _js_skip_ws(text, q + 2)
+    if q < n and text[q] in _JS_IDENT_START:
+        oname, q = _js_parse_ident(text, q)
+    else:
+        return None
+    if oname not in env:
+        return None
+    oval, _m2 = env[oname]
+    if _js_f679_kind(oval) != "o":
+        return None
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != ")":
+        return None
+    return _js_f929_in_eval(key, oval), q + 1
+
+
+def _js_f929_parse_trap_eq(text, j, p2):
+    """Parse `P2==='LIT'` / `'LIT'===P2` at text[j] (F929).
+
+    The narrow has-trap comparison: the second trap param
+    strictly compared against a string literal (loose `==`,
+    non-literal, or wrong-param comparisons fail closed --
+    outside the narrow scope). Returns (literal, next_index).
+    Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    if q < n and text[q] in "'\"":
+        lit, q = _js_parse_string(text, q)
+        q = _js_skip_ws(text, q)
+        if not text.startswith("===", q):
+            raise _JSExprFail("F929 trap not strict-eq")
+        q = _js_skip_ws(text, q + 3)
+        pname, q = _js_parse_ident(text, q)
+        if pname != p2:
+            raise _JSExprFail("F929 trap wrong param")
+        return lit, q
+    if q < n and text[q] in _JS_IDENT_START:
+        pname, q = _js_parse_ident(text, q)
+        if pname != p2:
+            raise _JSExprFail("F929 trap wrong param")
+        q = _js_skip_ws(text, q)
+        if not text.startswith("===", q):
+            raise _JSExprFail("F929 trap not strict-eq")
+        q = _js_skip_ws(text, q + 3)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail("F929 trap rhs not a literal")
+        lit, q = _js_parse_string(text, q)
+        return lit, q
+    raise _JSExprFail("F929 trap bad comparison")
+
+
+def _js_f929_parse_has_trap_fn(text, j):
+    """Parse a narrow has-trap function at text[j] (F929).
+
+    Forms: `function(t,k){return k==='LIT';}`,
+    `(t,k)=>k==='LIT'`, `(t,k)=>{return k==='LIT';}`. Exactly
+    two simple-ident params; the body is a single return of the
+    narrow strict-equal comparison against the SECOND param
+    (anything else fails closed). Returns (literal,
+    next_index). Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    fk = _js_match_kw(text, q, "function")
+    if fk is not None:
+        q = _js_skip_ws(text, fk)
+        q = _js_expect(text, q, "(")
+        _p1, q = _js_parse_ident(text, _js_skip_ws(text, q))
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ",")
+        p2, q = _js_parse_ident(text, _js_skip_ws(text, q))
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "{")
+        q = _js_skip_ws(text, q)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F929 trap body not return")
+        lit, q = _js_f929_parse_trap_eq(text, _js_skip_ws(text, rk), p2)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "}")
+        return lit, q
+    if q < n and text[q] == "(":
+        q = _js_skip_ws(text, q + 1)
+        _p1, q = _js_parse_ident(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ",")
+        p2, q = _js_parse_ident(text, _js_skip_ws(text, q))
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        if not text.startswith("=>", q):
+            raise _JSExprFail("F929 trap not an arrow")
+        q = _js_skip_ws(text, q + 2)
+        if q < n and text[q] == "{":
+            q = _js_skip_ws(text, q + 1)
+            rk = _js_match_kw(text, q, "return")
+            if rk is None:
+                raise _JSExprFail("F929 trap body not return")
+            lit, q = _js_f929_parse_trap_eq(text,
+                                            _js_skip_ws(text, rk), p2)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "}")
+            return lit, q
+        lit, q = _js_f929_parse_trap_eq(text, q, p2)
+        return lit, q
+    raise _JSExprFail("F929 trap bad form")
+
+
+def _js_f929_parse_has_trap_method(text, j):
+    """Parse `has(t,k){return k==='LIT';}` at text[j] (F929).
+
+    The method-shorthand has-trap twin. Returns (literal,
+    next_index). Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    hk = _js_match_kw(text, q, "has")
+    if hk is None:
+        raise _JSExprFail("F929 trap not has")
+    q = _js_skip_ws(text, hk)
+    q = _js_expect(text, q, "(")
+    _p1, q = _js_parse_ident(text, _js_skip_ws(text, q))
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ",")
+    p2, q = _js_parse_ident(text, _js_skip_ws(text, q))
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ")")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, "{")
+    q = _js_skip_ws(text, q)
+    rk = _js_match_kw(text, q, "return")
+    if rk is None:
+        raise _JSExprFail("F929 trap body not return")
+    lit, q = _js_f929_parse_trap_eq(text, _js_skip_ws(text, rk), p2)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, "}")
+    return lit, q
+
+
+def _js_f929_parse_new_proxy(text, j, depth, state):
+    """Parse `new Proxy(TARGET,HANDLER)` at text[j] (F929).
+
+    TARGET is a string-valued object literal (the F535
+    grammar); HANDLER is `{}` or `{has:TRAP}` with TRAP in the
+    narrow has-trap forms (function/arrow/method-shorthand --
+    any other trap, e.g. `get`, fails closed: unmodeled).
+    Returns (_JSF929Proxy, next_index). Never evals.
+    """
+    n = len(text)
+    nk = _js_match_kw(text, j, "new")
+    q = _js_skip_ws(text, nk)
+    pk = _js_match_kw(text, q, "Proxy")
+    if pk is None:
+        raise _JSExprFail("F929 not a Proxy")
+    q = _js_skip_ws(text, pk)
+    q = _js_expect(text, q, "(")
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != "{":
+        raise _JSExprFail("F929 proxy target not an object")
+    tprops, q = _js_parse_f535_object(text, q, depth, state)
+    for tk, tv in tprops.items():
+        if not isinstance(tk, str) or not isinstance(tv, str):
+            raise _JSExprFail("F929 proxy target not string-valued")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ",")
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != "{":
+        raise _JSExprFail("F929 proxy handler not an object")
+    q = _js_skip_ws(text, q + 1)
+    has_lit = None
+    if q < n and text[q] != "}":
+        hstart = q
+        hname, q = _js_parse_ident(text, q)
+        if hname != "has":
+            raise _JSExprFail("F929 proxy non-has trap")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "(":
+            # Method-shorthand twin: `has(t,k){...}`.
+            has_lit, q = _js_f929_parse_has_trap_method(text, hstart)
+            q = _js_skip_ws(text, q)
+        elif q < n and text[q] == ":":
+            has_lit, q = _js_f929_parse_has_trap_fn(
+                text, _js_skip_ws(text, q + 1))
+            q = _js_skip_ws(text, q)
+        else:
+            raise _JSExprFail("F929 proxy bad has form")
+        if q < n and text[q] == ",":
+            raise _JSExprFail("F929 proxy extra trap")
+        q = _js_expect(text, q, "}")
+    else:
+        q += 1
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ")")
+    return _JSF929Proxy(tprops, has_lit), q
+
+
+def _js_f928_parse_comma_seq(text, j, env, state):
+    """Parse `(E1,E2,...,En)` at text[j] (F928).
+
+    The comma (sequence) operator in an F679 declaration
+    initializer. Node-exact (v24.20.0): evaluates left to
+    right, yields the last operand. Each Ei is an F679 string
+    operand or a decimal integer literal (calls, member
+    writes, and anything else fail closed -- the engine would
+    evaluate arbitrary expressions, outside the subset).
+    Returns (last_value, next_index_past_')'). Never evals.
+    """
+    n = len(text)
+    q = _js_expect(text, j, "(")
+    vals = []
+    while True:
+        q = _js_skip_ws(text, q)
+        if q >= n:
+            raise _JSExprFail("F928 comma seq overrun")
+        if q < n and (text[q] in _ASCII_DIGITS or text[q] == "-"):
+            v, q = _js_f679_parse_int(text, q)
+        else:
+            v, q = _js_f679_str_operand(text, q, env)
+        vals.append(v)
+        _js_f679_charge(state)  # each segment is obfuscation-shaped
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ",":
+            q += 1
+            continue
+        q = _js_expect(text, q, ")")
+        return vals[-1], q
+
+
 def _js_f679_eval_cond(text, j, env):
     """Evaluate a boolean condition at text[j] (F679).
 
@@ -30010,8 +30322,19 @@ def _js_f679_eval_cond(text, j, env):
     truthiness ("" -> False, 0 -> False, undefined -> False).
     F740: `undefined` (kind "u") only loosely/strictly equals
     itself; every ordered comparison involving it is False (NaN
-    semantics, v24.20.0). Returns (bool, next_index). Never evals.
+    semantics, v24.20.0). F929: the `in` operator --
+    `('K' in OBJ)` (parenthesized) and `'K' in OBJ` (bare) --
+    where K is a string and OBJ a bound object (plain or
+    _JSF929Proxy). Returns (bool, next_index). Never evals.
     """
+    n = len(text)
+    # F929: parenthesized `in` form first -- the operand grammar
+    # below fails closed on `(`, so this only adds decodes.
+    q0 = _js_skip_ws(text, j)
+    if q0 < n and text[q0] == "(":
+        pin = _js_f929_try_paren_in(text, q0, env)
+        if pin is not None:
+            return pin
     kind, aval, q = _js_f679_operand(text, j, env)
     q = _js_skip_ws(text, q)
     op = None
@@ -30021,6 +30344,23 @@ def _js_f679_eval_cond(text, j, env):
             q += len(cand)
             break
     if op is None:
+        # F929: bare `'K' in OBJ`. Only a string left operand is
+        # modeled (the engine coerces others -- fail closed,
+        # never mis-decode). Previously no `<operand> in ...`
+        # shape decoded (the caller failed on the trailing
+        # `in`), so this only adds decodes.
+        iq = _js_match_kw(text, q, "in")
+        if iq is not None:
+            if kind != "s":
+                raise _JSExprFail("F929 in bad lhs")
+            iq2 = _js_skip_ws(text, iq)
+            oname, iq3 = _js_parse_ident(text, iq2)
+            if oname not in env:
+                raise _JSExprFail("F929 in unbound")
+            oval, _m = env[oname]
+            if _js_f679_kind(oval) != "o":
+                raise _JSExprFail("F929 in not an object")
+            return _js_f929_in_eval(aval, oval), iq3
         if kind == "b":
             return aval, q
         if kind == "s":
@@ -30434,6 +30774,17 @@ def _js_f679_decl(text, j, env, state, depth, nested=False):
             val = props
         elif text[q] in _ASCII_DIGITS or text[q] == "-":
             val, q = _js_f679_parse_int(text, q)
+        elif text[q] == "(":
+            # F928: comma-sequence initializer `(E1,...,En)` --
+            # evaluates left to right, yields the last.
+            val, q = _js_f928_parse_comma_seq(text, q, env, state)
+        elif _js_match_kw(text, q, "new") is not None:
+            # F929: `new Proxy(TARGET,HANDLER)` -- the narrow
+            # has-trap (or empty-handler) proxy. Checked before
+            # the bound-name copy branch (`new` opens with an
+            # ident char).
+            val, q = _js_f929_parse_new_proxy(text, q, depth,
+                                              state)
         elif text[q] in _JS_IDENT_START:
             # F902: `var m=e;` -- copy a bound binding (the catch
             # parameter bound to the thrown string flows into the
@@ -30659,6 +31010,40 @@ def _js_f679_is_array_index(k):
     return int(k) < 4294967295
 
 
+def _js_f679_for_update(text, j, env, state):
+    """Parse/apply one for-UPDATE list at text[j] (F679, F928).
+
+    A comma-separated list of integer updates (`i++`, `i+=1`)
+    and string accumulation segments (`s+='LIT'`, `s='LIT'`
+    -- the `_js_f679_accum_value` grammar without the trailing
+    `;`). Node-exact (v24.20.0): applies left to right. The
+    integer form is tried first (it fails closed fast on
+    string bindings); a failed integer attempt restores env
+    and budget before the string form runs. Returns the index
+    just past the last update (the caller expects `)`).
+    Never evals.
+    """
+    n = len(text)
+    while True:
+        q = _js_skip_ws(text, j)
+        saved = dict(env)
+        sparts, sops = state["parts"], state["ops"]
+        try:
+            j = _js_f679_int_update(text, q, env, state)
+        except _JSExprFail:
+            env.clear()
+            env.update(saved)
+            state["parts"] = sparts
+            state["ops"] = sops
+            _sv, j = _js_f679_accum_value(text, q, env, state)
+        _js_f679_charge(state)  # the extra segment is obfuscation-shaped
+        q = _js_skip_ws(text, j)
+        if q < n and text[q] == ",":
+            j = q + 1
+            continue
+        return j
+
+
 def _js_f679_sim_for(text, j, env, state, depth):
     """Simulate `for(INIT;TEST;UPDATE){S}` at text[j] (F679).
 
@@ -30666,11 +31051,15 @@ def _js_f679_sim_for(text, j, env, state, depth):
     (`var|let i=0;` -- `let`/`const` are loop-scoped, restored
     after). TEST is empty (infinite -- needs `break;`) or an
     evaluable condition, re-evaluated per iteration. UPDATE is
-    empty or an integer update. Node-exact (v24.20.0) for the
-    accepted subset; the loop is bounded by
+    empty or a comma-separated update list (F928: integer
+    updates and string accumulations, e.g. `s+='f1',i++`).
+    The body is `{S}` or a lone `;` (F928: empty statement --
+    the update still runs per iteration, node-exact v24.20.0).
+    Node-exact (v24.20.0) for the accepted subset; the loop is bounded by
     _JS_F679_MAX_ITERS iterations (a non-terminating shape fails
     closed -- never mis-decode). A bare `break;` exits; a throw
-    propagates. Returns the index just past `}`. Never evals.
+    propagates. Returns the index just past `}` (or `;` for the
+    empty body). Never evals.
     """
     n = len(text)
     if depth >= _JS_EXPR_MAX_DEPTH:
@@ -30725,15 +31114,29 @@ def _js_f679_sim_for(text, j, env, state, depth):
     else:
         update_start = j
         saved_env = dict(env)
+        saved_parts, saved_ops = state["parts"], state["ops"]
         try:
-            j = _js_f679_int_update(text, j, env, state)
+            # F928: the update is a comma-separated list; the
+            # trial parse validates the shape without committing
+            # (env AND budget restored -- the per-iteration
+            # application below does the real charging).
+            j = _js_f679_for_update(text, j, env, state)
         finally:
             env.clear()
             env.update(saved_env)
+            state["parts"] = saved_parts
+            state["ops"] = saved_ops
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
-    j = _js_expect(text, _js_skip_ws(text, j), "{")
-    bs, be, j = _js_span_braced(text, j - 1)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        # F928: empty-statement body -- `for(...;...;...);`.
+        # The update still runs per iteration (node-exact).
+        bs = be = j + 1
+        j += 1
+    else:
+        j = _js_expect(text, j, "{")
+        bs, be, j = _js_span_braced(text, j - 1)
     if scoped_name is not None:
         lex.add(scoped_name)
     try:
@@ -30753,7 +31156,7 @@ def _js_f679_sim_for(text, j, env, state, depth):
                     raise
                 break
             if update_start is not None:
-                _js_f679_int_update(text, update_start, env, state)
+                _js_f679_for_update(text, update_start, env, state)
             _js_f679_charge(state)
             iters += 1
     finally:
@@ -34904,6 +35307,107 @@ def _js_parse_f753_arrow_spread_iife(text, i, depth, state):
         return None
 
 
+def _js_f929_parse_branch_additive(text, j, env, state):
+    """Parse an F929 ternary-branch additive at text[j] (F929).
+
+    `+`-joined `_js_f679_str_operand` operands (string literals,
+    bound strings, member reads, undefined renders via
+    `_js_f679_concat_parts`). Returns (value, next_index).
+    Never evals.
+    """
+    n = len(text)
+    parts = []
+    while True:
+        v, j = _js_f679_str_operand(text, j, env)
+        parts.append(v)
+        total = 0
+        for p in parts:
+            total += _js_f679_rendered_len(p)
+        if total > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F929 branch too long")
+        _js_f679_charge(state)
+        q = _js_skip_ws(text, j)
+        if (q < n and text[q] == "+"
+                and not text.startswith(("++", "+="), q)):
+            j = q + 1
+            continue
+        return _js_f679_concat_parts(parts), q
+
+
+def _js_f929_try_in_cond(text, j, env):
+    """Try an F929 `in` condition at text[j] (F929).
+
+    Parenthesized `('K' in OBJ)` or bare `'K' in OBJ` (K a
+    string literal or bound string name; OBJ a bound object --
+    plain or _JSF929Proxy). Returns (result, next_index), or
+    None when text[j] is not an `in` condition (any
+    _JSExprFail inside becomes None -- the caller falls
+    through). Never evals.
+    """
+    n = len(text)
+    try:
+        q0 = _js_skip_ws(text, j)
+        if q0 < n and text[q0] == "(":
+            return _js_f929_try_paren_in(text, q0, env)
+        q = q0
+        if q < n and text[q] in "'\"":
+            key, q = _js_parse_string(text, q)
+        elif q < n and text[q] in _JS_IDENT_START:
+            kname, q = _js_parse_ident(text, q)
+            if kname not in env:
+                return None
+            kval, _m = env[kname]
+            if _js_f679_kind(kval) != "s":
+                return None
+            key = kval
+        else:
+            return None
+        q = _js_skip_ws(text, q)
+        if _js_match_kw(text, q, "in") is None:
+            return None
+        q = _js_skip_ws(text, q + 2)
+        oname, q = _js_parse_ident(text, q)
+        if oname not in env:
+            return None
+        oval, _m2 = env[oname]
+        if _js_f679_kind(oval) != "o":
+            return None
+        return _js_f929_in_eval(key, oval), q
+    except _JSExprFail:
+        return None
+
+
+def _js_f929_try_ternary_return(text, j, env, state):
+    """Try `IN_COND ? A : B` at text[j] (F929).
+
+    The `in`-guarded return ternary: the condition is an F929
+    `in` condition, each branch an F929 branch additive.
+    Returns (chosen_value, next_index_past_B), or None when
+    text[j] is not this shape. Budget snapshot/restore on miss
+    (wave-383 lesson): the branch additives charge per-operand
+    before the full shape is confirmed. Never evals.
+    """
+    n = len(text)
+    parts0, ops0 = state["parts"], state["ops"]
+    try:
+        cond = _js_f929_try_in_cond(text, j, env)
+        if cond is None:
+            return None
+        cval, q = cond
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "?")
+        aval, q = _js_f929_parse_branch_additive(text, q, env,
+                                                 state)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ":")
+        bval, q = _js_f929_parse_branch_additive(
+            text, _js_skip_ws(text, q), env, state)
+        return (aval if cval else bval), q
+    except _JSExprFail:
+        state["parts"], state["ops"] = parts0, ops0
+        return None
+
+
 def _js_parse_f679_statement_iife(text, i, depth, state):
     """Parse `(function(){STMT* return ADD;})()` at text[i] (F679).
 
@@ -34981,8 +35485,18 @@ def _js_parse_f679_statement_iife(text, i, depth, state):
         # F740: an uninitialized binding renders "undefined" in the
         # return additive (v24.20.0); the poison sentinel never
         # reaches here (it is restored/popped after the catch).
-        rval, sj = _js_parse_f645_bound_additive(
-            text, _js_skip_ws(text, rk), depth, state, bindings)
+        # F929: `return ('K' in OBJ)?A:B;` -- the `in`-guarded
+        # return ternary. Tried before the F645 additive (which
+        # has no ternary production and fails closed on `?`);
+        # only triggers on `in` conditions, so no
+        # previously-decoded input changes behavior.
+        rj = _js_skip_ws(text, rk)
+        f929r = _js_f929_try_ternary_return(text, rj, env, state)
+        if f929r is not None:
+            rval, sj = f929r
+        else:
+            rval, sj = _js_parse_f645_bound_additive(
+                text, rj, depth, state, bindings)
         sj = _js_skip_ws(text, sj)
         if sj >= n or text[sj] != ";":
             raise _JSExprFail("F679 return without semicolon")
@@ -35006,6 +35520,459 @@ def _js_parse_f679_statement_iife(text, i, depth, state):
     except _JSF679Throw:
         # An uncaught throw propagates out of the IIFE in the
         # engine -- the decoder never decodes a throwing shape.
+        return None
+
+
+def _js_f925_charge(state):
+    """Charge one F452 part and fail closed past the budget (F925).
+
+    Fail-closed matches consume scan budget (wave-362 lesson).
+    Never evals.
+    """
+    state["parts"] += 1  # the statement/read is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F925 too many parts")
+
+
+def _js_f925_parse_additive_ops(text, j):
+    """Parse an F925 method-return additive into operands (F925).
+
+    Operands: string literals, `super.X`, `super['X']`
+    (super reads are NOT resolved here -- the proto is
+    installed after the method is declared, so resolution
+    happens at call time). Returns ([("lit", val) |
+    ("super", key)], next_index). Never evals.
+    """
+    n = len(text)
+    ops = []
+    while True:
+        q = _js_skip_ws(text, j)
+        if q < n and text[q] in "'\"":
+            v, q = _js_parse_string(text, q)
+            ops.append(("lit", v))
+        else:
+            sk = _js_match_kw(text, q, "super")
+            if sk is None:
+                raise _JSExprFail("F925 bad additive operand")
+            q = _js_skip_ws(text, sk)
+            if q < n and text[q] == ".":
+                key, q = _js_parse_ident(text,
+                                         _js_skip_ws(text, q + 1))
+            elif q < n and text[q] == "[":
+                key, q = _js_parse_bracket_member(text, q)
+            else:
+                raise _JSExprFail("F925 super bad member")
+            ops.append(("super", key))
+        q2 = _js_skip_ws(text, q)
+        if (q2 < n and text[q2] == "+"
+                and not text.startswith(("++", "+="), q2)):
+            j = q2 + 1
+            continue
+        return ops, q2
+
+
+def _js_f925_parse_object(text, j, state, comma_sep=True):
+    """Parse `{...}` with string props and method shorthands (F925).
+
+    Each member is `K:'V'` (string value) or `M(){return ADD;}`
+    (method shorthand -- no params, single return; the return
+    additive is parsed into unresolved operands). Getters,
+    setters, computed keys, spread, non-string values, and
+    constructors fail closed. With comma_sep=False (class
+    bodies), members are not comma-separated. Returns (props,
+    methods, next_index_past_'}') where methods maps names to
+    operand lists. Never evals.
+    """
+    n = len(text)
+    q = _js_expect(text, j, "{")
+    props = {}
+    methods = {}
+    while True:
+        q = _js_skip_ws(text, q)
+        if q >= n:
+            raise _JSExprFail("F925 object overrun")
+        if text[q] == "}":
+            return props, methods, q + 1
+        if text[q] in "'\"":
+            key, q = _js_parse_string(text, q)
+        elif text[q] in _JS_IDENT_START:
+            key, q = _js_parse_ident(text, q)
+        else:
+            raise _JSExprFail("F925 object bad key")
+        if key == "__proto__":
+            raise _JSExprFail("F925 object proto key")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ":":
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F925 object bad value")
+            v, q = _js_parse_string(text, q)
+            if not isinstance(key, str):
+                raise _JSExprFail("F925 object bad key")
+            props[key] = v
+        elif q < n and text[q] == "(":
+            if key == "constructor":
+                raise _JSExprFail("F925 constructor unmodeled")
+            q = _js_skip_ws(text, q + 1)
+            q = _js_expect(text, q, ")")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "{")
+            q = _js_skip_ws(text, q)
+            rk = _js_match_kw(text, q, "return")
+            if rk is None:
+                raise _JSExprFail("F925 method body not return")
+            ops, q = _js_f925_parse_additive_ops(
+                text, _js_skip_ws(text, rk))
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "}")
+            methods[key] = ops
+            _js_f925_charge(state)
+        else:
+            raise _JSExprFail("F925 object bad member")
+        q = _js_skip_ws(text, q)
+        if comma_sep and q < n and text[q] == ",":
+            q += 1
+            continue
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "}":
+            return props, methods, q + 1
+        if not comma_sep:
+            # Class bodies: members run together without
+            # commas; loop back for the next member (the loop
+            # head raises on anything unexpected).
+            continue
+        raise _JSExprFail("F925 object bad separator")
+
+
+def _js_f925_resolve_holder(env, name):
+    """Resolve a method-call receiver to its holder (F925).
+
+    *name* is an object-literal holder, a class name (whose
+    methods live on `C.prototype`), or a `new C()` instance
+    var. Returns the holder key, or None. Never evals.
+    """
+    ent = env.get(name)
+    if ent is None:
+        return None
+    kind = ent[0]
+    if kind == "obj":
+        return name
+    if kind == "inst":
+        return ent[1]
+    return None
+
+
+def _js_f925_call_method(text, env, name, mname, state):
+    """Evaluate `NAME.MNAME()` for an F925 holder (F925).
+
+    The method's operands resolve now: `super` reads hit the
+    prototype installed by `Object.setPrototypeOf` (a missing
+    proto, a missing key, or a non-string value fails closed --
+    the engine would yield undefined there, which cannot carry
+    the credential). Node-exact (v24.20.0) for the accepted
+    subset. Returns the joined string. Never evals.
+    """
+    holder = _js_f925_resolve_holder(env, name)
+    if holder is None:
+        raise _JSExprFail("F925 call unbound")
+    _kind, _props, methods, protoname = env[holder]
+    if mname not in methods:
+        raise _JSExprFail("F925 call unknown method")
+    if protoname is None:
+        raise _JSExprFail("F925 super without proto")
+    pent = env.get(protoname)
+    if pent is None or pent[0] != "obj" or pent[2]:
+        raise _JSExprFail("F925 proto not a pure object")
+    pprops = pent[1]
+    parts = []
+    for okind, oval in methods[mname]:
+        if okind == "lit":
+            parts.append(oval)
+        else:
+            if oval not in pprops:
+                raise _JSExprFail("F925 super key missing")
+            sv = pprops[oval]
+            if not isinstance(sv, str):
+                raise _JSExprFail("F925 super not a string")
+            parts.append(sv)
+        _js_f925_charge(state)
+    total = "".join(parts)
+    if len(total) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F925 concat too long")
+    return total
+
+
+def _js_f925_parse_return(text, j, env, state):
+    """Parse `return ADD;` (no `;`) of an F925 body (F925).
+
+    ADD is `+`-joined string literals and method calls
+    (`O.M()` / `c.M()`). Returns (value, next_index_past_ADD).
+    Never evals.
+    """
+    n = len(text)
+    rk = _js_match_kw(text, j, "return")
+    if rk is None:
+        raise _JSExprFail("F925 body without return")
+    j = _js_skip_ws(text, rk)
+    parts = []
+    while True:
+        q = _js_skip_ws(text, j)
+        if q < n and text[q] in "'\"":
+            v, q = _js_parse_string(text, q)
+            parts.append(v)
+        elif q < n and text[q] in _JS_IDENT_START:
+            name, q = _js_parse_ident(text, q)
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                raise _JSExprFail("F925 return bad operand")
+            mname, q = _js_parse_ident(text,
+                                       _js_skip_ws(text, q + 1))
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+            parts.append(_js_f925_call_method(text, env, name,
+                                              mname, state))
+        else:
+            raise _JSExprFail("F925 return bad operand")
+        total = sum(len(p) for p in parts)
+        if total > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F925 concat too long")
+        q2 = _js_skip_ws(text, q)
+        if (q2 < n and text[q2] == "+"
+                and not text.startswith(("++", "+="), q2)):
+            j = q2 + 1
+            continue
+        return "".join(parts), q2
+
+
+def _js_f925_parse_decl(text, j, env, state):
+    """Parse one F925 body declaration at text[j] (F925).
+
+    `var P={...};` (string props and/or method shorthands),
+    `var c=new C();` (instance of a declared method-only
+    class). Returns the index just past `;`. Never evals.
+    """
+    n = len(text)
+    kw, m = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail("F925 not a declaration")
+    q = _js_skip_ws(text, m)
+    name, q = _js_parse_ident(text, q)
+    if (name == "arguments" or name in _F611_RESERVED
+            or name in env):
+        raise _JSExprFail("F925 bad decl name")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, "=")
+    q = _js_skip_ws(text, q)
+    nk = _js_match_kw(text, q, "new")
+    if nk is not None:
+        q = _js_skip_ws(text, nk)
+        cname, q = _js_parse_ident(text, q)
+        cent = env.get(cname)
+        if cent is None or cent[0] != "class":
+            raise _JSExprFail("F925 new of unknown class")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        env[name] = ("inst", cent[1])
+        _js_f925_charge(state)
+        return q
+    if q >= n or text[q] != "{":
+        raise _JSExprFail("F925 decl not an object")
+    props, methods, q = _js_f925_parse_object(text, q, state)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    env[name] = ("obj", props, methods, None)
+    _js_f925_charge(state)
+    return q
+
+
+def _js_f925_parse_class(text, j, env, state):
+    """Parse `class C{M(){...}...};` at text[j] (F925).
+
+    Method-only classes (no extends, no constructor, no
+    fields): the methods are installed on a `C.prototype`
+    holder so `Object.setPrototypeOf(C.prototype,B)` +
+    `new C()` + `c.m()` resolve exactly like the
+    object-literal twin. `extends` is F926's production (fail
+    closed here). Returns the index just past `;`. Never
+    evals.
+    """
+    n = len(text)
+    ck = _js_match_kw(text, j, "class")
+    q = _js_skip_ws(text, ck)
+    cname, q = _js_parse_ident(text, q)
+    if (cname == "arguments" or cname in _F611_RESERVED
+            or cname in env):
+        raise _JSExprFail("F925 bad class name")
+    q = _js_skip_ws(text, q)
+    if _js_match_kw(text, q, "extends") is not None:
+        raise _JSExprFail("F925 class extends")
+    if q >= n or text[q] != "{":
+        raise _JSExprFail("F925 class not a body")
+    props, methods, q = _js_f925_parse_object(text, q, state,
+                                               comma_sep=False)
+    if props:
+        raise _JSExprFail("F925 class fields unmodeled")
+    q = _js_skip_ws(text, q)
+    # A trailing `;` after a class declaration is optional in
+    # the engine (node-exact).
+    if q < n and text[q] == ";":
+        q += 1
+    env[cname + ".prototype"] = ("obj", {}, methods, None)
+    env[cname] = ("class", cname + ".prototype")
+    _js_f925_charge(state)
+    return q
+
+
+def _js_f925_parse_setproto(text, j, env, state):
+    """Parse `Object.setPrototypeOf(X,P);` at text[j] (F925).
+
+    X is an object-literal holder or `C.prototype` (for a
+    declared method-only class); P is a pure string-props
+    object. Installs P as X's holder proto (super reads
+    resolve against it at call time). Returns the index just
+    past `;`. Never evals.
+    """
+    n = len(text)
+    ok = _js_match_kw(text, j, "Object")
+    q = _js_skip_ws(text, ok)
+    if q >= n or text[q] != ".":
+        raise _JSExprFail("F925 not setPrototypeOf")
+    sm = _js_match_kw(text, _js_skip_ws(text, q + 1),
+                      "setPrototypeOf")
+    if sm is None:
+        raise _JSExprFail("F925 not setPrototypeOf")
+    q = _js_skip_ws(text, sm)
+    q = _js_expect(text, q, "(")
+    q = _js_skip_ws(text, q)
+    xname, q = _js_parse_ident(text, q)
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] == ".":
+        # `C.prototype` -- the class holder.
+        p2, q = _js_parse_ident(text, _js_skip_ws(text, q + 1))
+        if p2 != "prototype":
+            raise _JSExprFail("F925 bad proto target")
+        xname = xname + ".prototype"
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ",")
+    q = _js_skip_ws(text, q)
+    pname, q = _js_parse_ident(text, q)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ")")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ";")
+    if xname not in env or env[xname][0] != "obj":
+        raise _JSExprFail("F925 setproto bad target")
+    pent = env.get(pname)
+    if pent is None or pent[0] != "obj" or pent[2]:
+        raise _JSExprFail("F925 setproto bad proto")
+    _kind, _props, _methods, _old = env[xname]
+    env[xname] = (_kind, _props, _methods, pname)
+    _js_f925_charge(state)
+    return q
+
+
+def _js_parse_f925_super_iife(text, i, depth, state):
+    """Parse `(function(){...})()` super-property laundering (F925).
+
+    F925 (LOW, filed 2026-10-09 by wave-388 attack round 56):
+    the decoder has no `super` production --
+      `(function(){var proto={x:'f1'};var o={m(){return super.x+'f2';}};
+        Object.setPrototypeOf(o,proto);return o.m();})()`
+    resolves node-exactly (v24.20.0) while the decoder
+    produces zero variants.
+
+    Node-exact desugar (v24.20.0): the body is
+    - `var P={K:'V',...};` -- string-valued object literals
+      (method shorthands allowed: `M(){return ADD;}`);
+    - `class C{M(){return ADD;}...};` -- method-only classes
+      (no extends/ctor/fields; F926 owns extends);
+    - `Object.setPrototypeOf(X,P);` -- X an object holder or
+      `C.prototype`, P a pure string-props object;
+    - `var c=new C();` -- zero-arg instantiation;
+    - `return ADD;` -- string literals and `X.M()` calls.
+    A method's `super.X` / `super['X']` reads resolve at call
+    time against the currently-installed proto (the engine's
+    `GetPrototypeOf(homeObject)`); a missing proto, key, or a
+    non-string value fails closed (the engine yields undefined
+    there, which cannot carry the credential -- a miss, never
+    a mis-decode).
+
+    Bounds (all fail closed): params, non-return method
+    bodies, `this`, getters/setters/computed keys/spread/
+    `__proto__`, constructor members, class fields, extends,
+    non-empty call args, `new` of undeclared classes,
+    setPrototypeOf with method-carrying protos, duplicate or
+    reserved binding names, comments.
+
+    Tried after F679: F679's declaration grammar has no
+    method-shorthand production and fails closed on
+    `var o={m(){...}}` (red-first verified: 4 BREAK on the open
+    tree); F780's class productions fail closed on methods;
+    no earlier route accepts a method-shorthand head, so no
+    previously-decoded input changes behavior. The F679 hook
+    and its trailing `return` are untouched (wave-379 lesson).
+    F452 parts charged per statement/read via _js_f925_charge;
+    speculative misses restore parts/ops at the dispatch site
+    (wave-383 lesson).
+    Returns (value, next_index), or None when text[i] is not
+    this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F925 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        env = {}
+        sj = _js_skip_ws(text, inner_start)
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= inner_end:
+                raise _JSExprFail("F925 body without return")
+            rk = _js_match_kw(text, sj, "return")
+            if rk is not None:
+                break
+            dk, _dnext = _js_match_decl_kw(text, sj)
+            if dk is not None:
+                sj = _js_f925_parse_decl(text, sj, env, state)
+                continue
+            if _js_match_kw(text, sj, "class") is not None:
+                sj = _js_f925_parse_class(text, sj, env, state)
+                continue
+            if _js_match_kw(text, sj, "Object") is not None:
+                sj = _js_f925_parse_setproto(text, sj, env, state)
+                continue
+            raise _JSExprFail("F925 bad statement")
+        rval, sj = _js_f925_parse_return(text, sj, env, state)
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != ";":
+            raise _JSExprFail("F925 return without semicolon")
+        sj = _js_skip_ws(text, sj + 1)
+        if sj != inner_end:
+            raise _JSExprFail("F925 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return rval, j
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
         return None
 
 
@@ -38136,6 +39103,15 @@ def _js_f904_parse_subclass(text, q, ctors, state):
       `_js_f780_bind` maps to _F780_MISSING, node-exact);
       methods = the superclass's arrow-field methods (copied --
       the engine installs them on every instance).
+    - F926: `constructor(...){ super(...); this.K=SRC; ... }` --
+      this-assignments after the super() call (SRC a string
+      literal or one of the subclass's params). The engine runs
+      the superclass assigns first (via super()), then the
+      subclass's own this-assignments (later wins), so the
+      subclass assigns append AFTER the pre-substituted
+      superclass assigns. `this` before super() is a
+      ReferenceError in the engine -- the grammar requires
+      super() first (fail closed, never mis-decode).
     A non-super statement, a non-literal non-param super arg,
     or extra class members fail closed (documented narrow
     scope). Returns ((params, assigns, methods), next_index).
@@ -38206,6 +39182,41 @@ def _js_f904_parse_subclass(text, q, ctors, state):
             raise _JSExprFail("F904 super args malformed")
         q = _js_skip_ws(text, q)
         q = _js_expect(text, q, ";")
+        # F926: subclass constructor field init -- `this.K=SRC;`
+        # statements after the super() call (node-exact,
+        # v24.20.0). Later assignments win (the subclass's own
+        # this-assignments run after the superclass's, via
+        # `_js_f780_bind`'s in-order fold).
+        sub_assigns = []
+        while True:
+            qq = _js_skip_ws(text, q)
+            if qq < n and text[qq] == "}":
+                break
+            tk = _js_match_kw(text, qq, "this")
+            if tk is None:
+                raise _JSExprFail("F904 subclass body not this-assign")
+            q2 = _js_skip_ws(text, tk)
+            if q2 < n and text[q2] == ".":
+                fkey, q2 = _js_parse_ident(text,
+                                           _js_skip_ws(text, q2 + 1))
+            elif q2 < n and text[q2] == "[":
+                fkey, q2 = _js_parse_bracket_member(text, q2)
+            else:
+                raise _JSExprFail("F904 subclass bad member")
+            q2 = _js_expect(text, q2, "=")
+            q2 = _js_skip_ws(text, q2)
+            if q2 < n and text[q2] in "'\"":
+                fval, q2 = _js_parse_string(text, q2)
+                fsrc = ("lit", fval)
+            else:
+                pname, q2 = _js_parse_ident(text, q2)
+                if pname not in cparams:
+                    raise _JSExprFail("F904 field RHS unbound")
+                fsrc = ("param", pname)
+            q2 = _js_expect(text, q2, ";")
+            sub_assigns.append((fkey, fsrc))
+            _js_f672_charge(state)
+            q = q2
         q = _js_skip_ws(text, q)
         q = _js_expect(text, q, "}")
         q = _js_skip_ws(text, q)
@@ -38226,11 +39237,35 @@ def _js_f904_parse_subclass(text, q, ctors, state):
             else:
                 new_assigns.append((key, super_args[si]))
             _js_f672_charge(state)
-        return (cparams, new_assigns, dict(bmethods)), q
+        # F926: the subclass's own field inits run after the
+        # superclass assigns (later wins -- `_js_f780_bind`
+        # folds in order).
+        return (cparams, new_assigns + sub_assigns,
+                dict(bmethods)), q
     except _JSExprFail:
         state["parts"] = saved_parts
         state["ops"] = saved_ops
         raise
+
+
+def _js_f926_parse_class_expr_body(text, q, state):
+    """Parse a non-extends class-expression body at text[q] (F926).
+
+    `class{}` (empty -- the default constructor, node-exact
+    v24.20.0: `new B()` yields an instance with no assigns) or
+    the F878 constructor+arrow-fields production. The empty
+    form is what the filed F926 shapes bind the superclass
+    with (`var B=class{}`). Returns ((params, assigns,
+    methods), next_index). Never evals.
+    """
+    n = len(text)
+    qe = _js_skip_ws(text, q)
+    if qe < n and text[qe] == "{":
+        _bs, _be, qn = _js_span_braced(text, qe)
+        if _js_skip_ws(text, _bs) >= _be:
+            _js_f672_charge(state)
+            return ([], [], {}), qn
+    return _js_f878_parse_ctor_members(text, q, state)
 
 
 def _js_parse_f780_ctor_param_iife(text, i, depth, state):
@@ -38372,13 +39407,38 @@ def _js_parse_f780_ctor_param_iife(text, i, depth, state):
                     if q < n and text[q] in _JS_IDENT_START:
                         # Optional inner class name -- binds only
                         # inside the class body in the engine, so
-                        # it is parsed and discarded here.
-                        _, q = _js_parse_ident(text, q)
-                        q = _js_skip_ws(text, q)
+                        # it is parsed and discarded here. But
+                        # `class extends B` has NO inner name:
+                        # `extends` followed by another ident is
+                        # the extends clause (F926), not a name.
+                        # And `class extends{` / `class extends;`
+                        # is a SyntaxError in the engine
+                        # (node-exact v24.20.0) -- fail closed.
+                        iname, iq = _js_parse_ident(text, q)
+                        iq2 = _js_skip_ws(text, iq)
+                        if iname == "extends":
+                            if not (iq2 < n
+                                    and text[iq2] in _JS_IDENT_START):
+                                raise _JSExprFail(
+                                    "F926 extends without superclass")
+                            # else: leave q at `extends` for the
+                            # extends check below.
+                        else:
+                            q = iq2
                     if _js_match_kw(text, q, "extends") is not None:
-                        raise _JSExprFail("F879 class extends")
-                    (params, assigns, methods), q = \
-                        _js_f878_parse_ctor_members(text, q, state)
+                        # F926: `var C=class extends B{...}` --
+                        # route through the F904 subclass
+                        # production (mirrors the
+                        # class-declaration path above).
+                        (params, assigns, methods), q = \
+                            _js_f904_parse_subclass(
+                                text, q, ctors, state)
+                    else:
+                        # F926: `var B=class{}` (empty -- default
+                        # ctor) or the F878 production.
+                        (params, assigns, methods), q = \
+                            _js_f926_parse_class_expr_body(
+                                text, q, state)
                     q = _js_expect(text, q, ";")
                     ctors[vname] = (params, assigns, methods)
                     _js_f672_charge(state)
@@ -93439,6 +94499,28 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f679_saved_parts; state['ops'] = _f679_saved_ops
         if _f679 is not None:
             val, i = _f679
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F925: (function(){var P={...};var O={M(){return
+        #   super.X+ADD;}};Object.setPrototypeOf(O,P);return
+        #   O.M();})() -- super-property laundering (plus the
+        #   class-method twin). Tried after F679: F679's
+        #   declaration grammar has no method-shorthand
+        #   production and fails closed on `var o={m(){...}}`
+        #   (red-first verified: 4 BREAK on the open tree);
+        #   F780's class productions fail closed on methods; no
+        #   earlier route accepts a method-shorthand head, so no
+        #   previously-decoded input changes behavior.
+        #   Snapshot/restore on miss (wave-383 lesson). The F679
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f925_saved_parts = state["parts"]
+        _f925_saved_ops = state["ops"]
+        _f925 = _js_parse_f925_super_iife(text, i, depth, state)
+        if _f925 is None:
+            state["parts"] = _f925_saved_parts
+            state["ops"] = _f925_saved_ops
+        if _f925 is not None:
+            val, i = _f925
             return _js_parse_postfix(text, i, val, depth, state)
         # F903: (function(){var|let|const S=JSON.stringify(VALUE);
         #   return S.slice(A,B)(+ 'LIT')*;})() -- stringify-then-slice
