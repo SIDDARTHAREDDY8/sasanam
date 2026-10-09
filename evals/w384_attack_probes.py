@@ -452,28 +452,28 @@ def test_r52_f775_s2_closed():
     return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
-def test_r52_f776_s1_open():
-    """F776 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={__proto__:{x:'%s'}};return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f776_s1_closed():
+    """F776 CLOSED (wave-385 lane 8): blocks coded."""
+    hit = _blocked("(function(){var o={__proto__:{x:'%s'}};return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f776_s2_open():
-    """F776 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={};o.__proto__={x:'%s'};return o.__proto__.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f776_s2_closed():
+    """F776 CLOSED (wave-385 lane 8): blocks coded."""
+    hit = _blocked("(function(){var o={};o.__proto__={x:'%s'};return o.__proto__.x+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f777_s1_open():
-    """F777 OPEN: miss reproduces."""
-    miss = _misses("(function(){var x='';return (x||'%s')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f777_s1_closed():
+    """F777 CLOSED (wave-385 lane 8): blocks coded."""
+    hit = _blocked("(function(){var x='';return (x||'%s')+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f777_s2_open():
-    """F777 OPEN: miss reproduces."""
-    miss = _misses("(function(){return (1&&'%s')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f777_s2_closed():
+    """F777 CLOSED (wave-385 lane 8): blocks coded."""
+    hit = _blocked("(function(){return (1&&'%s')+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r52_f778_s1_open():

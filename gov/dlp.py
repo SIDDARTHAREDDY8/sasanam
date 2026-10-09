@@ -45228,6 +45228,565 @@ def _js_parse_f757_newtarget_iife(text, i, depth, state):
         return None
 
 
+def _js_f776_parse_nested_proto(text, j, depth, state):
+    """Parse `{K:'LIT',...}` at text[j] == '{' as a prototype object (F776).
+
+    Delegates to _js_parse_f67x_object with this_bodies=False, which
+    admits only plain string-literal data values and fails closed on
+    `__proto__` (no nested proto chains -- documented bound),
+    getters, methods, spreads, and unbound computed keys. The
+    result becomes the installed [[Prototype]] of the F776 object.
+    Values are re-checked to be plain strings (never _JSNumStr).
+    Each property charges the F452 parts budget via the delegate.
+    Never evals.
+    """
+    props, k = _js_parse_f67x_object(text, j, depth, state,
+                                     this_bodies=False)
+    for v in props.values():
+        if not isinstance(v, str) or isinstance(v, _JSNumStr):
+            raise _JSExprFail("F776 proto value not a plain string")
+    return _JSObj(props), k
+
+
+def _js_f776_parse_proto_object(text, j, depth, state):
+    """Parse `{__proto__:{...}, K:'LIT', ...}` at text[j] == '{' (F776).
+
+    The `__proto__` key (identifier or string-literal form -- the
+    engine treats both as the prototype setter, node v24.20.0)
+    is REQUIRED and takes exactly one nested object literal
+    (parsed by _js_f776_parse_nested_proto), installed as the
+    _JSObj proto. Other keys take plain string literals as own
+    data properties (own properties shadow the proto,
+    node-exact). A computed `['__proto__']` key does NOT take the
+    setter path in the engine (it creates an own data property)
+    and fails closed here. Duplicate `__proto__`, non-object
+    `__proto__` values, getters, methods, spreads, computed keys,
+    and non-literal values all fail closed. Returns
+    (_JSObj, next_index). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F776 object too deep")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "}":
+        raise _JSExprFail("F776 empty object is not our shape")
+    props = {}
+    proto = None
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F776 unterminated object")
+        c = text[j]
+        if c in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif c in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        elif c in _ASCII_DIGITS:
+            k = j + 1
+            while k < n and text[k] in _ASCII_DIGITS:
+                k += 1
+            key = text[j:k]
+            j = k
+        else:
+            raise _JSExprFail("F776 object key not a literal")
+        if isinstance(key, _JSNumStr):
+            raise _JSExprFail("F776 numeric key not modeled")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        if key == "__proto__":
+            if proto is not None:
+                raise _JSExprFail("F776 duplicate __proto__")
+            if j >= n or text[j] != "{":
+                raise _JSExprFail("F776 __proto__ not an object")
+            pobj, j = _js_f776_parse_nested_proto(text, j, depth + 1,
+                                                 state)
+            proto = pobj
+        else:
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F776 value not a string")
+            val, j = _js_parse_string(text, j)
+            if isinstance(val, _JSNumStr):
+                raise _JSExprFail("F776 value not a plain string")
+            props[key] = val
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                if proto is None:
+                    raise _JSExprFail("F776 no __proto__")
+                return _JSObj(props, proto), j + 1
+            continue
+        if j < n and text[j] == "}":
+            if proto is None:
+                raise _JSExprFail("F776 no __proto__ (not our shape)")
+            return _JSObj(props, proto), j + 1
+        raise _JSExprFail("F776 bad object literal")
+
+
+def _js_f776_resolve_member(obj, steps, depth, state):
+    """Resolve NAME(.MEM)* steps on a bound F776 _JSObj (F776).
+
+    A `__proto__` step resolves to the object's installed proto
+    (must be a _JSObj -- a missing proto fails closed); any other
+    step walks the proto chain via _js_f67x_lookup (own properties
+    shadow, node-exact). The final value must be a plain string --
+    a _JSObj (the engine yields an object) or a missing key (the
+    engine yields undefined) fails closed, never mis-decoded.
+    Never evals.
+    """
+    cur = obj
+    for step in steps:
+        if step == "__proto__":
+            if not isinstance(cur, _JSObj) or cur.proto is None:
+                raise _JSExprFail("F776 __proto__ not installed")
+            cur = cur.proto
+            continue
+        if not isinstance(cur, _JSObj):
+            raise _JSExprFail("F776 member on non-object")
+        val, _ = _js_f67x_lookup(cur, step)
+        if val is None:
+            raise _JSExprFail("F776 missing member")
+        cur = val
+    if not isinstance(cur, str) or isinstance(cur, _JSNumStr):
+        raise _JSExprFail("F776 member not a string")
+    return cur
+
+
+def _js_parse_f776_proto_iife(text, i, depth, state):
+    """Parse `(function(){DECL;* return ADD;})()` with a nested-object __proto__ (F776).
+
+    F776 (LOW, filed 2026-10-09 by wave-384 attack round 52): F673
+    (CLOSED) models `Object.create({LIT})` prototype reads with
+    direct string values, but a nested object as the `__proto__`
+    value has no production:
+      `(function(){var o={__proto__:{x:'f1'}};return o.x+'f2';})()`
+      `(function(){var o={};o.__proto__={x:'f1'};`
+      `return o.__proto__.x+'f2';})()`
+    both node-evaluate (v24.20.0) to the exact credential while the
+    decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): the declaration binds one name
+    to an object whose [[Prototype]] is the nested literal (the
+    `{__proto__:{...}}` literal form) or to an empty object whose
+    proto is then installed by the `o.__proto__={...};` statement
+    (the assignment twin). Member reads resolve through the proto
+    chain (own properties shadow); `o.__proto__` reads the
+    installed proto object itself.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (the F654 head); no params, no
+      name, no async.
+    - one declaration: `var|let|const NAME={__proto__:{...},...};`
+      (the literal twin) or `var|let|const NAME={};` (the
+      assignment twin). `arguments`/reserved names fail closed.
+    - assignment twin only: exactly one `NAME.__proto__={...};`
+      statement (installs the proto; a second install fails
+      closed).
+    - return: `TERM (+ TERM)*;` where TERM is a string literal, a
+      bound string name, or a dot-form member chain on the bound
+      name (`o.x`, `o.__proto__.x`). A bare bound name (the
+      object itself), a missing key, and a non-string resolution
+      fail closed.
+    - exactly `()` invocation; no trailing statements.
+
+    Tried after F757: the `__proto__` literal key and the
+    `o.__proto__=` assignment head are accepted by no earlier
+    route (every `__proto__` key fails closed upstream;
+    red-first verified: 2 BREAK on the open tree), so only
+    previously fail-closed inputs are newly decoded. The F757
+    hook and its trailing `return` are untouched (wave-379
+    lesson). F452 parts charged per property/declaration/term;
+    the IIFE wrapper charges one op; results bounded by
+    _MAX_DECODE_BYTES. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            raise _JSExprFail("F776 decl not var/let/const")
+        m = _js_skip_ws(text, m)
+        name, m = _js_parse_ident(text, m)
+        if name == "arguments" or name in _F611_RESERVED:
+            raise _JSExprFail("F776 bad decl name")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "=")
+        if m < n and text[m] == "=":
+            raise _JSExprFail("F776 decl not =")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F776 decl not an object")
+        # Literal twin vs assignment twin: the literal twin's
+        # object carries a __proto__ key; the assignment twin's is
+        # the empty object. Peek for the empty form first so the
+        # literal parser's "no __proto__" refusal stays the
+        # disjointness head.
+        q = _js_skip_ws(text, m + 1)
+        if q < n and text[q] == "}":
+            obj = _JSObj({})
+            m = q + 1
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            sj = _js_skip_ws(text, m)
+            # `NAME.__proto__ = {nested};`
+            aname, sj = _js_parse_ident(text, sj)
+            if aname != name:
+                raise _JSExprFail("F776 assign not bound name")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ".")
+            sj = _js_skip_ws(text, sj)
+            pmem, sj = _js_parse_ident(text, sj)
+            if pmem != "__proto__":
+                raise _JSExprFail("F776 assign not __proto__")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "=")
+            if sj < n and text[sj] == "=":
+                raise _JSExprFail("F776 assign not =")
+            sj = _js_skip_ws(text, sj)
+            if sj >= n or text[sj] != "{":
+                raise _JSExprFail("F776 assign not an object")
+            pobj, sj = _js_f776_parse_nested_proto(text, sj,
+                                                  depth + 1, state)
+            obj.proto = pobj
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ";")
+            sj = _js_skip_ws(text, sj)
+        else:
+            obj, m = _js_f776_parse_proto_object(text, m, depth,
+                                                state)
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            sj = _js_skip_ws(text, m)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        env = {name: obj}
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F776 no return")
+        sj = _js_skip_ws(text, rk)
+        total = None
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+                if isinstance(term, _JSNumStr):
+                    raise _JSExprFail("F776 term not a plain string")
+            elif sj < n and text[sj] in _JS_IDENT_START:
+                tname, sj = _js_parse_ident(text, sj)
+                if tname not in env:
+                    raise _JSExprFail("F776 term unbound")
+                # env holds exactly one binding: the _JSObj. A bare
+                # bound name reads "[object Object]" in the engine --
+                # never decoded (F671 discipline); member chains are
+                # parsed below.
+                bound = env[tname]
+                steps = []
+                while True:
+                    sj = _js_skip_ws(text, sj)
+                    if sj >= n or text[sj] != ".":
+                        break
+                    sj = _js_skip_ws(text, sj + 1)
+                    mem, sj = _js_parse_ident(text, sj)
+                    steps.append(mem)
+                if not steps:
+                    raise _JSExprFail("F776 bare object read")
+                term = _js_f776_resolve_member(bound, steps,
+                                              depth, state)
+            else:
+                raise _JSExprFail("F776 term not modeled")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F776 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f777_truthy(kind, val):
+    """Node-exact ToBoolean over the F777 operand domain (v24.20.0).
+
+    kind is 'str' (non-empty is truthy), 'int' (non-zero is
+    truthy), 'bool' (itself), or 'null' (falsy). Never evals.
+    """
+    if kind == "str":
+        return len(val) > 0
+    if kind == "int":
+        return val != 0
+    if kind == "bool":
+        return val
+    return False  # null
+
+
+def _js_f777_parse_operand(text, j, env):
+    """Parse one F777 logical operand at text[j] (F777).
+
+    Operands are string literals, decimal integer literals
+    (optional leading `-`; hex/float/exponent forms fail closed),
+    the `true`/`false`/`null` keywords, or a bound name resolving
+    to one of those. Returns (kind, value, next_index) with kind
+    in {'str','int','bool','null'}. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("F777 operand missing")
+    c = text[j]
+    if c in "'\"":
+        val, k = _js_parse_string(text, j)
+        if isinstance(val, _JSNumStr):
+            raise _JSExprFail("F777 operand not a plain string")
+        return "str", val, k
+    if c == "-" or c in _ASCII_DIGITS:
+        k = j + 1 if c == "-" else j
+        d0 = k
+        while k < n and text[k] in _ASCII_DIGITS:
+            k += 1
+        if k == d0:
+            raise _JSExprFail("F777 bad number")
+        if k < n and text[k] in ".eExX":
+            # Floats, exponents, and hex fail closed -- only
+            # plain decimal integers have exact truthiness here.
+            raise _JSExprFail("F777 non-decimal number")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F777 number with ident tail")
+        return "int", int(text[j:k]), k
+    if c in _JS_IDENT_START:
+        kw = _js_match_kw(text, j, "true")
+        if kw is not None:
+            return "bool", True, kw
+        kw = _js_match_kw(text, j, "false")
+        if kw is not None:
+            return "bool", False, kw
+        kw = _js_match_kw(text, j, "null")
+        if kw is not None:
+            return "null", None, kw
+        nm, k = _js_parse_ident(text, j)
+        if nm not in env:
+            raise _JSExprFail("F777 operand unbound")
+        kind, val = env[nm]
+        return kind, val, k
+    raise _JSExprFail("F777 operand not modeled")
+
+
+def _js_f777_logical_at(text, j, env):
+    """Parse `A||B` / `A&&B` at text[j] (F777); returns (value, next).
+
+    A and B are F777 operands; B must be a string (or a bound
+    string name) -- a non-string B is a documented bound. The
+    engine's selection is node-exact (v24.20.0): `A||B` yields A
+    when truthy(A) else B; `A&&B` yields A when falsy(A) else B.
+    The SELECTED operand must be a string -- otherwise the engine
+    yields a non-string (e.g. `(0&&'f1')` is `0`) and the decoder
+    fails closed rather than mis-decode. `||=`/`&&=` are
+    assignment operators (F748's domain) and never match here;
+    `??` is out of scope and fails closed. Never evals.
+    """
+    n = len(text)
+    akind, aval, j = _js_f777_parse_operand(text, j, env)
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j:j + 2] == "||" \
+            and not text.startswith("||=", j):
+        op = "||"
+        j += 2
+    elif j + 1 < n and text[j:j + 2] == "&&" \
+            and not text.startswith("&&=", j):
+        op = "&&"
+        j += 2
+    else:
+        raise _JSExprFail("F777 not a logical operator")
+    j = _js_skip_ws(text, j)
+    bkind, bval, j = _js_f777_parse_operand(text, j, env)
+    if bkind != "str":
+        raise _JSExprFail("F777 B not a string")
+    if op == "||":
+        skind, sval = ((akind, aval)
+                       if _js_f777_truthy(akind, aval)
+                       else (bkind, bval))
+    else:
+        skind, sval = ((akind, aval)
+                       if not _js_f777_truthy(akind, aval)
+                       else (bkind, bval))
+    if skind != "str":
+        raise _JSExprFail("F777 selected non-string")
+    return sval, j
+
+
+def _js_parse_f777_logical_iife(text, i, depth, state):
+    """Parse `(function(){DECL;* return ADD;})()` with plain || / && value flows (F777).
+
+    F777 (LOW, filed 2026-10-09 by wave-384 attack round 52): F748
+    (CLOSED) models the `||=` / `&&=` assignment forms, but plain
+    `||` / `&&` value flow has no production:
+      `(function(){var x='';return (x||'f1')+'f2';})()`
+      `(function(){return (1&&'f1')+'f2';})()`
+    both node-evaluate (v24.20.0) to the exact credential while the
+    decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): declarations bind names to
+    string literals, decimal integers, booleans, or null --
+    exactly the decidable-truthiness domain. The return additive's
+    parenthesized `(A||B)` / `(A&&B)` groups select per the
+    engine's short-circuit semantics; the selected operand must be
+    a string or the decoder fails closed.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (the F654 head); no params, no
+      name, no async.
+    - declarations: `var|let|const NAME='LIT';`,
+      `var|let|const NAME=<decimal int>;`,
+      `var|let|const NAME=true|false|null;`. Rebinding,
+      `arguments`/reserved names, and unmodeled initializers fail
+      closed.
+    - return: `TERM (+ TERM)*;` where TERM is a string literal, a
+      bound string name, or a parenthesized logical group
+      `(A||B)` / `(A&&B)`. At least one logical group is required
+      (the disjointness head). A bare (unparenthesized) logical
+      in the return additive fails closed -- the engine's
+      precedence would extend it over the `+` tail.
+    - exactly `()` invocation; no trailing statements.
+
+    Tried after F776: every accepted shape carries a
+    parenthesized `(A||B)` / `(A&&B)` group in the return
+    additive, which no earlier route accepts (F756 needs a
+    ternary `?`; F632/F706 need their member-read heads;
+    red-first verified: 2 BREAK on the open tree), so only
+    previously fail-closed inputs are newly decoded. The F776
+    hook and its trailing `return` are untouched (wave-379
+    lesson). F452 parts charged per declaration/term; the IIFE
+    wrapper charges one op; results bounded by
+    _MAX_DECODE_BYTES. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        env = {}
+        while True:
+            dkw, m = _js_match_decl_kw(text, sj)
+            if dkw is None:
+                break
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if (name == "arguments" or name in _F611_RESERVED
+                    or name in env):
+                raise _JSExprFail("F777 bad decl")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "=")
+            if m < n and text[m] == "=":
+                raise _JSExprFail("F777 decl not =")
+            m = _js_skip_ws(text, m)
+            kind, val, m = _js_f777_parse_operand(text, m, env)
+            env[name] = (kind, val)
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = m
+        rk = _js_match_kw(text, _js_skip_ws(text, sj), "return")
+        if rk is None:
+            raise _JSExprFail("F777 no return")
+        sj = _js_skip_ws(text, rk)
+        total = None
+        saw_logical = False
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "(":
+                q = _js_expect(text, sj, "(")
+                term, q = _js_f777_logical_at(text, q, env)
+                q = _js_skip_ws(text, q)
+                sj = _js_expect(text, q, ")")
+                saw_logical = True
+            elif sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+                if isinstance(term, _JSNumStr):
+                    raise _JSExprFail("F777 term not a plain string")
+            elif sj < n and text[sj] in _JS_IDENT_START:
+                tname, sj = _js_parse_ident(text, sj)
+                if tname not in env:
+                    raise _JSExprFail("F777 term unbound")
+                tkind, tval = env[tname]
+                if tkind != "str":
+                    raise _JSExprFail("F777 term not a string")
+                term = tval
+            else:
+                raise _JSExprFail("F777 term not modeled")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        if not saw_logical:
+            raise _JSExprFail("F777 no logical group (not our shape)")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F777 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_f67x_lookup(obj, key):
     """Resolve *key* on a _JSObj holding F67x bodies (F673/F674).
 
@@ -65832,6 +66391,41 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f769_saved_parts; state['ops'] = _f769_saved_ops
         if _f769 is not None:
             val, i = _f769
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F776: (function(){var o={__proto__:{...}};return o.x+...;})()
+        #   and the `o.__proto__={...};` assignment twin -- nested-
+        #   object __proto__ literal reads. Tried after F757: the
+        #   __proto__ literal key and the o.__proto__= assignment
+        #   head are accepted by no earlier route (every __proto__
+        #   key fails closed upstream; red-first verified: 2 BREAK
+        #   on the open tree), so only previously fail-closed
+        #   inputs are newly decoded. None falls through to the
+        #   parenthesized-additive path. The F757 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f776_saved_parts = state['parts']; _f776_saved_ops = state['ops']
+        _f776 = _js_parse_f776_proto_iife(text, i, depth, state)
+        if _f776 is None:
+            state['parts'] = _f776_saved_parts; state['ops'] = _f776_saved_ops
+        if _f776 is not None:
+            val, i = _f776
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F777: (function(){DECL;* return (A||B)/(A&&B)+...;})() --
+        #   plain || / && value flows on decidable-truthiness
+        #   operands. Tried after F776: every accepted shape carries
+        #   a parenthesized (A||B)/(A&&B) group in the return
+        #   additive, which no earlier route accepts (F756 needs a
+        #   ternary `?`; F632/F706 need their member-read heads;
+        #   red-first verified: 2 BREAK on the open tree), so only
+        #   previously fail-closed inputs are newly decoded. None
+        #   falls through to the parenthesized-additive path. The
+        #   F776 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f777_saved_parts = state['parts']; _f777_saved_ops = state['ops']
+        _f777 = _js_parse_f777_logical_iife(text, i, depth, state)
+        if _f777 is None:
+            state['parts'] = _f777_saved_parts; state['ops'] = _f777_saved_ops
+        if _f777 is not None:
+            val, i = _f777
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
