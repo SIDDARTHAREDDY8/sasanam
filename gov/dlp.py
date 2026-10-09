@@ -22598,6 +22598,953 @@ def _js_parse_f671_member_term(text, j, env, depth, state):
     return recv, j
 
 
+def _js_f837_parse_inner_iife(text, i, depth, state):
+    """Parse `(function(){return OBJLIT;})()` / `(function(){return ARRLIT;})()`
+    at text[i] (F837 helper).
+
+    Returns (value, next_index): value is a _JSObj whose every property
+    value is a plain string, or a _JSArr whose every element is a plain
+    string. The object literal parses through _js_parse_f535_object
+    (node-exact, engine-verified) and is then restricted to data-only:
+    methods/getters/spreads of non-strings fail closed here, since the
+    filed F837 shapes are string-valued. Raises _JSExprFail on any
+    mismatch. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F837 too deep")
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F837 not parenthesized")
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        raise _JSExprFail("F837 not a function IIFE")
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        raise _JSExprFail("F837 functionx")
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        raise _JSExprFail("F837 named function")
+    j = _js_skip_ws(text, k2)
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    brace = _js_skip_ws(text, j)
+    j = _js_expect(text, brace, "{")
+    inner_start, inner_end, j = _js_span_braced(text, brace)
+    sj = _js_skip_ws(text, inner_start)
+    m = _js_match_kw(text, sj, "return")
+    if m is None:
+        raise _JSExprFail("F837 body not return")
+    sj = _js_skip_ws(text, m)
+    if sj < n and text[sj] == "{":
+        props, sj = _js_parse_f535_object(text, sj, depth, state)
+        for _pv in props.values():
+            if type(_pv) is not str:
+                raise _JSExprFail("F837 object value not a string")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        value = _JSObj(props)
+    elif sj < n and text[sj] == "[":
+        arr, sj = _js_parse_array(text, sj, depth, state)
+        for _e in arr.elements:
+            if type(_e) is not str:
+                raise _JSExprFail("F837 array element not a string")
+        value = arr
+    else:
+        raise _JSExprFail("F837 return not object/array literal")
+    sj = _js_skip_ws(text, sj)
+    sj = _js_expect(text, sj, ";")
+    if _js_skip_ws(text, sj) != inner_end:
+        raise _JSExprFail("F837 trailing statements")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the inner IIFE wrapper is obfuscation-shaped
+    return value, j
+
+
+def _js_parse_f837_objarr_iife(text, i, depth, state):
+    """Parse `(function(){return OBJLIT|ARRLIT;})()` in primary position
+    (F837).
+
+    The returned IIFE's member reads ride the existing postfix chain
+    for _JSObj (`.k`/`['k']`/`?.`); _JSArr index reads have no postfix
+    production, so one `[N]` is resolved inline here (node-exact:
+    negative/OOB indices are undefined, never decoded; the elements
+    were already validated as plain strings) and parsing re-enters
+    postfix on the resulting string. Returns (value, next_index) or
+    None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        val, j = _js_f837_parse_inner_iife(text, i, depth, state)
+    except _JSExprFail:
+        return None
+    if isinstance(val, _JSArr):
+        k = _js_skip_ws(text, j)
+        if k < n and text[k] == "[":
+            br = _js_parse_bracket_index(text[k:])
+            if br is None:
+                return None  # committed: malformed index fails closed
+            idx, consumed = br
+            if idx >= len(val.elements):
+                return None  # OOB -> undefined, never decoded
+            state["ops"] += 1
+            return val.elements[idx], k + consumed
+    return val, j
+
+
+def _js_f837_parse_bound_read(text, j, rname, bound, depth, state):
+    """Parse one F837 return-additive term: a string literal, or `rname`
+    followed by >=1 member/index read against the bound _JSObj/_JSArr
+    value (F837). Returns (str, next_index). Raises _JSExprFail on any
+    mismatch. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    name, j = _js_parse_ident(text, j)
+    if name != rname:
+        raise _JSExprFail("F837 term not over bound name")
+    val = bound
+    steps = 0
+    while True:
+        q = _js_skip_ws(text, j)
+        if q < n and text[q] == ".":
+            mname, j = _js_parse_ident(text, _js_skip_ws(text, q + 1))
+            if not isinstance(val, _JSObj):
+                raise _JSExprFail("F837 dot read on array")
+            v = _jsobj_lookup(val, mname)
+            if v is None:
+                raise _JSExprFail("F837 missing key")
+            val = v
+        elif q < n and text[q] == "[":
+            if isinstance(val, _JSArr):
+                br = _js_parse_bracket_index(text[q:])
+                if br is None:
+                    raise _JSExprFail("F837 bad index")
+                idx, consumed = br
+                if idx >= len(val.elements):
+                    raise _JSExprFail("F837 index OOB")
+                val = val.elements[idx]
+                j = q + consumed
+            elif isinstance(val, _JSObj):
+                mname, j = _js_parse_bracket_member(text, q)
+                v = _jsobj_lookup(val, mname)
+                if v is None:
+                    raise _JSExprFail("F837 missing key")
+                val = v
+            else:
+                raise _JSExprFail("F837 bracket on string")
+        else:
+            break
+        if type(val) is not str:
+            raise _JSExprFail("F837 read not a string")
+        steps += 1
+        state["ops"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    if steps == 0:
+        raise _JSExprFail("F837 bare bound ident")
+    return val, j
+
+
+def _js_parse_f837_varbound_iife(text, i, depth, state):
+    """Parse `(function(){DECL r=(function(){return OBJLIT|ARRLIT;})();
+    return ADD;})()` (F837).
+
+    The return additive is a `+`-join of string literals and member/
+    index reads (`r.k`, `r['k']`, `r[N]`) against the bound object or
+    array. Returns (str, next_index) or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _dkw, m = _js_match_decl_kw(text, sj)
+        if _dkw is None:
+            raise _JSExprFail("F837 decl not var/let/const")
+        sj = _js_skip_ws(text, m)
+        rname, sj = _js_parse_ident(text, sj)
+        if rname in _F611_RESERVED or rname == "arguments":
+            raise _JSExprFail("F837 bad binding name")
+        sj = _js_skip_ws(text, sj)
+        if not (sj < n and text[sj] == "="
+                and not text.startswith(("==", "=>"), sj)):
+            raise _JSExprFail("F837 binding not initialized")
+        sj = _js_skip_ws(text, sj + 1)
+        bound, sj = _js_f837_parse_inner_iife(text, sj, depth, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F837 no return")
+        sj = _js_skip_ws(text, m)
+        total = None
+        while True:
+            term, sj = _js_f837_parse_bound_read(text, sj, rname, bound,
+                                                depth, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("F837 result too long")
+                total = total + term
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj += 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        if _js_skip_ws(text, sj) != inner_end:
+            raise _JSExprFail("F837 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the outer IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f838_parse_fndecl(text, j, state):
+    """Parse `function NAME([p='LIT',...]){...}` at text[j] (F838).
+
+    Returns (name, params, body_start, body_end, next_index): params is
+    a list of (pname, default_or_None) with defaults restricted to
+    string literals; the body span is returned unevaluated (evaluated
+    lazily at call time, so nested declarations hoist engine-exactly).
+    Async/generator/named-expr/destructuring/rest forms fail closed.
+    Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if not text.startswith("function", j):
+        raise _JSExprFail("F838 not a function declaration")
+    k = j + len("function")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F838 functionx")
+    if k < n and text[k] == "*":
+        raise _JSExprFail("F838 generator")
+    name, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if name in _F611_RESERVED or name in ("this", "arguments"):
+        raise _JSExprFail("F838 bad function name")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "(")
+    params = []
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] != ")":
+        while True:
+            k = _js_skip_ws(text, k)
+            pname, k = _js_parse_ident(text, k)
+            if pname in _F611_RESERVED or pname in ("this", "arguments"):
+                raise _JSExprFail("F838 bad param name")
+            k = _js_skip_ws(text, k)
+            default = None
+            if k < n and text[k] == "=" \
+                    and not text.startswith(("==", "=>"), k):
+                k = _js_skip_ws(text, k + 1)
+                if k >= n or text[k] not in "'\"":
+                    raise _JSExprFail("F838 param default not a string")
+                default, k = _js_parse_string(text, k)
+                if not isinstance(default, str) \
+                        or isinstance(default, _JSNumStr):
+                    raise _JSExprFail("F838 param default not a string")
+            if any(pname == _pn for _pn, _d in params):
+                raise _JSExprFail("F838 duplicate param")
+            params.append((pname, default))
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            break
+    k = _js_expect(text, k, ")")
+    brace = _js_skip_ws(text, k)
+    k = _js_expect(text, brace, "{")
+    inner_start, inner_end, k = _js_span_braced(text, brace)
+    state["ops"] += 1  # a function declaration is obfuscation-shaped
+    return name, params, inner_start, inner_end, k
+
+
+def _js_f838_call(text, name, params, fbs, fbe, args, lex_env, lex_funcs,
+                  depth, state, callstack):
+    """Evaluate one F838 nested-function call (never evals).
+
+    Args are string literals; missing args fall back to the parameter
+    default, and a missing arg without a default fails closed. The
+    callstack (of (name, body_start, body_end) ids) fails direct and
+    mutual recursion closed -- the engine would stack-overflow, and we
+    never mis-decode. Returns the call's string value.
+    """
+    fid = (name, fbs, fbe)
+    if fid in callstack:
+        raise _JSExprFail("F838 recursive call")
+    if len(callstack) >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F838 call too deep")
+    if len(args) > len(params):
+        raise _JSExprFail("F838 too many args")
+    call_env = dict(lex_env)
+    for idx, (pname, default) in enumerate(params):
+        if idx < len(args):
+            call_env[pname] = args[idx]
+        elif default is not None:
+            call_env[pname] = default
+        else:
+            raise _JSExprFail("F838 missing arg without default")
+    state["ops"] += 1
+    return _js_f838_eval_body(text, fbs, fbe, call_env, lex_funcs,
+                             depth + 1, state, callstack + (fid,))
+
+
+def _js_f838_parse_term(text, j, env, funcs, lex_env, lex_funcs, depth,
+                        state, callstack):
+    """Parse one F838 return-additive term: a string literal, a bound
+    identifier, or a call `NAME('LIT'*)` against the in-scope function
+    table (F838). Returns (str, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    name, k = _js_parse_ident(text, j)
+    if name in ("this", "arguments"):
+        raise _JSExprFail("F838 this/arguments")
+    k2 = _js_skip_ws(text, k)
+    if k2 < n and text[k2] == "(":
+        if name not in funcs:
+            raise _JSExprFail("F838 call of unbound function")
+        params, fbs, fbe = funcs[name]
+        args = []
+        q = _js_skip_ws(text, k2 + 1)
+        if q >= n or text[q] != ")":
+            while True:
+                q = _js_skip_ws(text, q)
+                if q >= n or text[q] not in "'\"":
+                    raise _JSExprFail("F838 call arg not a literal")
+                arg, q = _js_parse_string(text, q)
+                if not isinstance(arg, str) \
+                        or isinstance(arg, _JSNumStr):
+                    raise _JSExprFail("F838 call arg not a string")
+                args.append(arg)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                q = _js_skip_ws(text, q)
+                if q < n and text[q] == ",":
+                    q += 1
+                    continue
+                break
+        q = _js_expect(text, q, ")")
+        return _js_f838_call(text, name, params, fbs, fbe, args,
+                            lex_env, lex_funcs, depth, state,
+                            callstack), q
+    if name not in env:
+        raise _JSExprFail("F838 unbound identifier")
+    return env[name], k
+
+
+def _js_f838_prescan_nested(text, bs, be, state):
+    """Pre-scan [bs, be) for function declarations (F838 hoisting).
+
+    The engine hoists function declarations to the top of the function
+    scope, so a declaration after `return` is still callable. This
+    pre-pass collects every `function NAME(...){...}` over the whole
+    span (skipping string declarations and the return additive without
+    evaluating them). Returns {name: (params, fbs, fbe, next_index)}.
+    Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    nested = {}
+    fn_ends = {}  # declaration start -> end index (for the main pass)
+    j = _js_skip_ws(text, bs)
+    while j < be:
+        fk = _js_match_kw(text, j, "function")
+        if fk is not None:
+            fname, fparams, fbs, fbe, q = _js_f838_parse_fndecl(
+                text, j, state)
+            if fname in nested:
+                raise _JSExprFail("F838 function redeclared")
+            nested[fname] = (fparams, fbs, fbe, q)
+            fn_ends[j] = q
+            j = _js_skip_ws(text, q)
+            continue
+        dkw, dnext = _js_match_decl_kw(text, j)
+        if dkw is not None:
+            q = _js_skip_ws(text, dnext)
+            _, q = _js_parse_ident(text, q)
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "=" \
+                    and not text.startswith(("==", "=>"), q):
+                q = _js_skip_ws(text, q + 1)
+                _, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            j = _js_skip_ws(text, q)
+            continue
+        rk = _js_match_kw(text, j, "return")
+        if rk is not None:
+            # Skip the return additive (string/paren-aware) without
+            # evaluating; it is evaluated by the main pass.
+            q = _js_skip_ws(text, rk)
+            pdepth = 0
+            in_str = None
+            while q < be:
+                c = text[q]
+                if in_str is not None:
+                    if c == "\\":
+                        q += 2
+                        continue
+                    if c == in_str:
+                        in_str = None
+                elif c in "'\"":
+                    in_str = c
+                elif c == "(":
+                    pdepth += 1
+                elif c == ")":
+                    pdepth -= 1
+                elif c == ";" and pdepth == 0:
+                    break
+                q += 1
+            if q >= be:
+                raise _JSExprFail("F838 return not terminated")
+            j = _js_skip_ws(text, q + 1)
+            continue
+        raise _JSExprFail("F838 bad body statement")
+    return nested, fn_ends
+
+
+def _js_f838_eval_body(text, bs, be, lex_env, lex_funcs, depth, state,
+                       callstack):
+    """Evaluate an F838 function-body span [bs, be): statements then a
+    terminal `return ADD;` (F838).
+
+    Function declarations are pre-scanned over the whole span before
+    the return is evaluated, so nested declarations hoist exactly as
+    the engine hoists them (a call before the textual declaration, or
+    a declaration after `return`, still resolves). Inner calls
+    evaluate with the definition-site scope (lex_env/lex_funcs), so
+    closures over outer bindings and parameter shadowing are
+    engine-exact. Non-function statements after `return` fail closed.
+    Returns the return-additive string. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F838 too deep")
+    strings = {}
+    letconst_names = set()  # names bound by let/const (var cannot redeclare)
+    prescanned, fn_ends = _js_f838_prescan_nested(text, bs, be, state)
+    nested = {name: (params, fbs, fbe)
+              for name, (params, fbs, fbe, _q) in prescanned.items()}
+    j = _js_skip_ws(text, bs)
+    while True:
+        if j >= be:
+            raise _JSExprFail("F838 body without return")
+        rk = _js_match_kw(text, j, "return")
+        if rk is not None:
+            break
+        fk = _js_match_kw(text, j, "function")
+        if fk is not None:
+            # Already collected (and ops-charged) by the pre-scan;
+            # skip via the recorded end index.
+            if j not in fn_ends:
+                raise _JSExprFail("F838 function not prescanned")
+            j = _js_skip_ws(text, fn_ends[j])
+            continue
+        dkw, dnext = _js_match_decl_kw(text, j)
+        if dkw is None:
+            raise _JSExprFail("F838 bad body statement")
+        q = _js_skip_ws(text, dnext)
+        vname, q = _js_parse_ident(text, q)
+        if vname in _F611_RESERVED or vname in ("this", "arguments"):
+            raise _JSExprFail("F838 bad binding name")
+        q = _js_skip_ws(text, q)
+        if not (q < n and text[q] == "="
+                and not text.startswith(("==", "=>"), q)):
+            raise _JSExprFail("F838 binding not initialized")
+        q = _js_skip_ws(text, q + 1)
+        vval, q = _js_parse_string(text, q)
+        if not isinstance(vval, str) or isinstance(vval, _JSNumStr):
+            raise _JSExprFail("F838 binding not a string")
+        if dkw in ("let", "const") and vname in strings:
+            raise _JSExprFail("F838 let/const redeclared")
+        if dkw in ("let", "const") and vname in lex_env:
+            # let/const cannot shadow a param/outer binding (SyntaxError);
+            # var can (same binding, engine-exact).
+            raise _JSExprFail("F838 let/const shadows binding")
+        if dkw == "var" and vname in letconst_names:
+            # var cannot redeclare a let/const binding (SyntaxError).
+            raise _JSExprFail("F838 var vs let/const")
+        if vname in nested:
+            # A var binding overwrites the hoisted function (node:
+            # calling it throws); let/const with a function of the
+            # same name is a SyntaxError. Both fail closed for calls.
+            if dkw in ("let", "const"):
+                raise _JSExprFail("F838 let/const vs function")
+            del nested[vname]
+        strings[vname] = vval  # var: last wins, engine-exact
+        if dkw in ("let", "const"):
+            letconst_names.add(vname)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        j = _js_skip_ws(text, q)
+    body_env = dict(lex_env)
+    body_env.update(strings)
+    body_funcs = dict(lex_funcs)
+    body_funcs.update(nested)
+    sj = _js_skip_ws(text, rk)
+    total = None
+    while True:
+        term, sj = _js_f838_parse_term(text, sj, body_env, body_funcs,
+                                      body_env, body_funcs, depth,
+                                      state, callstack)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if total is None:
+            total = term
+        else:
+            if len(total) + len(term) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F838 result too long")
+            total = total + term
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == "+":
+            sj += 1
+            continue
+        break
+    sj = _js_skip_ws(text, sj)
+    sj = _js_expect(text, sj, ";")
+    sj = _js_skip_ws(text, sj)
+    # Skip hoisted function declarations after the return (the
+    # pre-scan collected them; they are dead code positionally but
+    # hoisted semantically).
+    while sj < be and _js_match_kw(text, sj, "function") is not None:
+        if sj not in fn_ends:
+            raise _JSExprFail("F838 function not prescanned")
+        sj = _js_skip_ws(text, fn_ends[sj])
+    if sj != be:
+        raise _JSExprFail("F838 statements after return")
+    return total
+
+
+def _js_parse_f838_nested_fndecl_iife(text, i, depth, state):
+    """Parse `(function(){STMTS return ADD;})()` with nested function
+    declarations (F838).
+
+    Statements are string declarations and `function` declarations
+    (the latter possibly nested to any depth, hoisted engine-exactly);
+    the return additive joins string literals, bound identifiers, and
+    calls of the declared functions with string-literal args (params
+    with `='LIT'` defaults supported). Returns (str, next_index) or
+    None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None
+        kk = _js_skip_ws(text, k2)
+        if kk < n and text[kk] == "*":
+            return None  # generator
+        j = _js_expect(text, kk, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        total = _js_f838_eval_body(text, inner_start, inner_end, {},
+                                  {}, depth, state, ())
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f839_block_let_iife(text, i, depth, state):
+    """Parse `(function(){DECL acc='LIT';BLOCK return ADD;})()` (F839).
+
+    BLOCK is a block-scoped accumulation step: `{DECL k='LIT2';acc=k;}`
+    or `if(true){DECL k='LIT2';acc=k;}`. The block binding `k` is only
+    visible inside the block (engine-exact: reading it outside fails
+    closed); after the block the accumulator holds `'LIT2'`. The
+    return additive joins string literals and the accumulator ident.
+    `if(false)` / non-`true` guards fail closed (the block provably
+    does not run). Returns (str, next_index) or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            raise _JSExprFail("F839 acc not declared")
+        sj = _js_skip_ws(text, m)
+        acc, sj = _js_parse_ident(text, sj)
+        if acc in _F611_RESERVED or acc == "arguments":
+            raise _JSExprFail("F839 bad acc name")
+        sj = _js_skip_ws(text, sj)
+        if not (sj < n and text[sj] == "="
+                and not text.startswith(("==", "=>"), sj)):
+            raise _JSExprFail("F839 acc not initialized")
+        sj = _js_skip_ws(text, sj + 1)
+        acc_val, sj = _js_parse_string(text, sj)
+        if not isinstance(acc_val, str) or isinstance(acc_val, _JSNumStr):
+            raise _JSExprFail("F839 acc not a string")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        ik = _js_match_kw(text, sj, "if")
+        if ik is not None:
+            q = _js_skip_ws(text, ik)
+            q = _js_expect(text, q, "(")
+            tq = _js_match_kw(text, _js_skip_ws(text, q), "true")
+            if tq is None:
+                raise _JSExprFail("F839 if guard not true")
+            q = _js_skip_ws(text, tq)
+            q = _js_expect(text, q, ")")
+            sj = _js_skip_ws(text, q)
+        if sj >= n or text[sj] != "{":
+            raise _JSExprFail("F839 block not braced")
+        bstart, bend, sj = _js_span_braced(text, sj)
+        bj = _js_skip_ws(text, bstart)
+        dkw2, m2 = _js_match_decl_kw(text, bj)
+        if dkw2 is None:
+            raise _JSExprFail("F839 block decl not var/let/const")
+        bj = _js_skip_ws(text, m2)
+        kname, bj = _js_parse_ident(text, bj)
+        if kname in _F611_RESERVED or kname == "arguments" \
+                or kname == acc:
+            raise _JSExprFail("F839 bad block binding name")
+        bj = _js_skip_ws(text, bj)
+        if not (bj < n and text[bj] == "="
+                and not text.startswith(("==", "=>"), bj)):
+            raise _JSExprFail("F839 block binding not initialized")
+        bj = _js_skip_ws(text, bj + 1)
+        kval, bj = _js_parse_string(text, bj)
+        if not isinstance(kval, str) or isinstance(kval, _JSNumStr):
+            raise _JSExprFail("F839 block value not a string")
+        bj = _js_skip_ws(text, bj)
+        bj = _js_expect(text, bj, ";")
+        bj = _js_skip_ws(text, bj)
+        aname, bj = _js_parse_ident(text, bj)
+        if aname != acc:
+            raise _JSExprFail("F839 block assigns wrong name")
+        bj = _js_skip_ws(text, bj)
+        if not (bj < n and text[bj] == "="
+                and not text.startswith(("==", "=>"), bj)):
+            raise _JSExprFail("F839 block not an assignment")
+        bj = _js_skip_ws(text, bj + 1)
+        vname, bj = _js_parse_ident(text, bj)
+        if vname != kname:
+            raise _JSExprFail("F839 block assigns wrong value")
+        bj = _js_skip_ws(text, bj)
+        bj = _js_expect(text, bj, ";")
+        if _js_skip_ws(text, bj) != bend:
+            raise _JSExprFail("F839 block trailing statements")
+        acc_val = kval
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F839 no return")
+        sj = _js_skip_ws(text, m)
+        total = None
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+                if not isinstance(term, str) \
+                        or isinstance(term, _JSNumStr):
+                    raise _JSExprFail("F839 term not a string")
+            else:
+                tname, sj = _js_parse_ident(text, sj)
+                if tname != acc:
+                    raise _JSExprFail("F839 return not over acc")
+                term = acc_val
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("F839 result too long")
+                total = total + term
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj += 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        if _js_skip_ws(text, sj) != inner_end:
+            raise _JSExprFail("F839 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f840_parse_object(text, j, bindings, state):
+    """Parse the F840 object literal at text[j]: `{k0:v0,...}` where
+    each property is `key:'LIT'` / `'key':'LIT'` or a bare `key`
+    (shorthand, resolved from the string `bindings`; the engine's
+    ReferenceError on an unbound shorthand fails closed here, and the
+    engine's SyntaxError on a string-literal shorthand fails closed
+    too). Later duplicate keys win (engine-exact). `__proto__`,
+    methods, getters, spreads, computed keys, and non-string values
+    fail closed. Returns (props, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    props = {}
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        return props, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        is_shorthand = False
+        if j < n and text[j] in "'\"":
+            key, j = _js_parse_string(text, j)
+            if not isinstance(key, str) or isinstance(key, _JSNumStr):
+                raise _JSExprFail("F840 bad key")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ":")
+            j = _js_skip_ws(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ":":
+                j = _js_skip_ws(text, j + 1)
+            else:
+                is_shorthand = True
+        else:
+            raise _JSExprFail("F840 bad object key")
+        if key == "__proto__":
+            raise _JSExprFail("F840 __proto__ key")
+        if is_shorthand:
+            if key not in bindings:
+                raise _JSExprFail("F840 shorthand unbound")
+            props[key] = bindings[key]
+        else:
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F840 value not a string literal")
+            val, j = _js_parse_string(text, j)
+            if not isinstance(val, str) or isinstance(val, _JSNumStr):
+                raise _JSExprFail("F840 value not a string")
+            props[key] = val
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return props, j + 1
+            continue
+        if j < n and text[j] == "}":
+            return props, j + 1
+        raise _JSExprFail("F840 bad object literal")
+
+
+def _js_parse_f840_shorthand_iife(text, i, depth, state):
+    """Parse `(function(){DECL n='LIT'(,n2='LIT2')*;DECL o={props};
+    return ADD;})()` (F840).
+
+    The object literal mixes explicit `'key':'LIT'` properties with
+    shorthand `{k}` properties resolved from the string bindings. The
+    return additive is a `+`-join of member reads on `o` (via the F671
+    member-term grammar) and string literals. Returns (str,
+    next_index) or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            return None
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            raise _JSExprFail("F840 no bindings")
+        sj = _js_skip_ws(text, m)
+        bindings = {}
+        while True:
+            bname, sj = _js_parse_ident(text, sj)
+            if bname in _F611_RESERVED or bname == "arguments":
+                raise _JSExprFail("F840 bad binding name")
+            sj = _js_skip_ws(text, sj)
+            if not (sj < n and text[sj] == "="
+                    and not text.startswith(("==", "=>"), sj)):
+                raise _JSExprFail("F840 binding not initialized")
+            sj = _js_skip_ws(text, sj + 1)
+            bval, sj = _js_parse_string(text, sj)
+            if not isinstance(bval, str) or isinstance(bval, _JSNumStr):
+                raise _JSExprFail("F840 binding not a string")
+            if bname in bindings:
+                raise _JSExprFail("F840 duplicate binding")
+            bindings[bname] = bval
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ",":
+                sj = _js_skip_ws(text, sj + 1)
+                continue
+            break
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        dkw2, m2 = _js_match_decl_kw(text, sj)
+        if dkw2 is None:
+            raise _JSExprFail("F840 no object decl")
+        sj = _js_skip_ws(text, m2)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname in _F611_RESERVED or oname == "arguments" \
+                or oname in bindings:
+            raise _JSExprFail("F840 bad object name")
+        sj = _js_skip_ws(text, sj)
+        if not (sj < n and text[sj] == "="
+                and not text.startswith(("==", "=>"), sj)):
+            raise _JSExprFail("F840 object not initialized")
+        sj = _js_skip_ws(text, sj + 1)
+        props, sj = _js_f840_parse_object(text, sj, bindings, state)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F840 no return")
+        sj = _js_skip_ws(text, m)
+        env = {oname: _JSObj(props)}
+        total = None
+        while True:
+            term, sj = _js_parse_f671_member_term(text, sj, env, depth,
+                                                 state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("F840 result too long")
+                total = total + term
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj += 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        if _js_skip_ws(text, sj) != inner_end:
+            raise _JSExprFail("F840 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f671_member_reads_iife(text, i, depth, state):
     """Parse `(function(){[DECL NAME={LIT};]return ADD;})()` (F671).
 
@@ -77375,6 +78322,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f804 is not None:
             val, i = _f804
             return _js_parse_postfix(text, i, val, depth, state)
+        # F837: (function(){return OBJLIT|ARRLIT;})() -- object/array-
+        #   returning IIFE in primary position; member reads ride the
+        #   existing postfix chain (_JSObj) or resolve inline (_JSArr
+        #   [N]). Tried after F804: the `return OBJLIT;`/`return
+        #   ARRLIT;` body is disjoint from every earlier route (all of
+        #   which require arguments forms, named-function heads, or
+        #   different body grammars), and this route fails closed on
+        #   every shape they accept, so no previously-decoded input
+        #   changes behavior. None falls through like F804.
+        _f837_saved_parts = state['parts']; _f837_saved_ops = state['ops']
+        _f837 = _js_parse_f837_objarr_iife(text, i, depth, state)
+        if _f837 is None:
+            state['parts'] = _f837_saved_parts; state['ops'] = _f837_saved_ops
+        if _f837 is not None:
+            val, i = _f837
+            return _js_parse_postfix(text, i, val, depth, state)
         # F533: (function(){DECL a=arguments;
         #   var|let s='';for(var|let|const x of a){s+=x;}return s;})(lit, ...)
         #   -- for-of VALUE iteration over the arguments alias
@@ -78744,6 +79707,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f735f736 is not None:
             val, i = _f735f736
             return _js_parse_postfix(text, i, val, depth, state)
+        # F838: (function(){STMTS return ADD;})() with nested `function`
+        #   declarations (hoisted engine-exactly, closures over outer
+        #   bindings, recursion fails closed). Tried after F735/F736:
+        #   F735/F736 fail closed on every shape this accepts (their
+        #   nested-function bodies must be exactly `return ADD;`), and
+        #   F735/F736's shapes decode identically here, so no
+        #   previously-decoded input changes behavior. None falls
+        #   through like F735/F736.
+        _f838_saved_parts = state['parts']; _f838_saved_ops = state['ops']
+        _f838 = _js_parse_f838_nested_fndecl_iife(text, i, depth, state)
+        if _f838 is None:
+            state['parts'] = _f838_saved_parts; state['ops'] = _f838_saved_ops
+        if _f838 is not None:
+            val, i = _f838
+            return _js_parse_postfix(text, i, val, depth, state)
         # F821: (function(){[STMT;]* var F=(p='LIT',...)=>BODY;
         # return TERM;})() -- var-bound arrow with default params.
         # None falls through (fails closed inside; F735/F736's
@@ -78998,6 +79976,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f611 is not None:
             val, i = _f611
             return _js_parse_postfix(text, i, val, depth, state)
+        # F837: (function(){DECL r=(function(){return OBJLIT|ARRLIT;})();
+        #   return ADD;})() -- var-bound object/array-returning IIFE
+        #   with member/index reads in the return additive. Tried
+        #   after F611: F611 requires literal/atob initializers and
+        #   fails closed on IIFE initializers; this requires the inner
+        #   IIFE initializer and fails closed on every shape F611
+        #   accepts, so no previously-decoded input changes behavior.
+        #   None falls through like F611.
+        _f837b_saved_parts = state['parts']; _f837b_saved_ops = state['ops']
+        _f837b = _js_parse_f837_varbound_iife(text, i, depth, state)
+        if _f837b is None:
+            state['parts'] = _f837b_saved_parts; state['ops'] = _f837b_saved_ops
+        if _f837b is not None:
+            val, i = _f837b
+            return _js_parse_postfix(text, i, val, depth, state)
         # F789: (function(){var|let|const p=new Proxy(FN,{construct:TRAP});
         #   return ADD;})() -- Proxy construct-trap reads. Tried after
         #   F611: F611 requires literal/atob initializers and fails
@@ -79069,6 +80062,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f671 is not None:
             val, i = _f671
             return _js_parse_postfix(text, i, val, depth, state)
+        # F840: (function(){DECL n='LIT'(,n2='LIT2')*;DECL o={props};
+        #   return ADD;})() -- object literal mixing shorthand `{k}`
+        #   properties (resolved from the string bindings) with
+        #   explicit ones. Tried after F671: F671 allows at most one
+        #   declaration and fails closed on the two-declaration shape;
+        #   this requires >=1 string binding plus the object decl and
+        #   fails closed on every shape F671 accepts, so no
+        #   previously-decoded input changes behavior. None falls
+        #   through like F671.
+        _f840_saved_parts = state['parts']; _f840_saved_ops = state['ops']
+        _f840 = _js_parse_f840_shorthand_iife(text, i, depth, state)
+        if _f840 is None:
+            state['parts'] = _f840_saved_parts; state['ops'] = _f840_saved_ops
+        if _f840 is not None:
+            val, i = _f840
+            return _js_parse_postfix(text, i, val, depth, state)
         # F748: (function(){DECL; STMT+; return EXPR;})() --
         # logical-assignment (||= / &&= / ??=) and += statements
         # over one var/let/const binding. Tried after F671: every
@@ -79085,6 +80094,21 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f748_saved_parts; state['ops'] = _f748_saved_ops
         if _f748 is not None:
             val, i = _f748
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F839: (function(){DECL acc='LIT';BLOCK return ADD;})() --
+        #   block-scoped accumulation (`{DECL k='LIT2';acc=k;}` or
+        #   `if(true){...}`). Tried after F748: F748's statement
+        #   grammar has no bare-block/`if` head (red-first verified:
+        #   2 BREAK on the open tree); this requires the block head
+        #   and fails closed on every shape F748 accepts, so no
+        #   previously-decoded input changes behavior. None falls
+        #   through like F748.
+        _f839_saved_parts = state['parts']; _f839_saved_ops = state['ops']
+        _f839 = _js_parse_f839_block_let_iife(text, i, depth, state)
+        if _f839 is None:
+            state['parts'] = _f839_saved_parts; state['ops'] = _f839_saved_ops
+        if _f839 is not None:
+            val, i = _f839
             return _js_parse_postfix(text, i, val, depth, state)
         # F790-forof: (function(){var|let ACC='LIT';for(var|let|const
         #   [P1,P2] of [[..],..]){STMT+}return ACC;})() -- for-of
