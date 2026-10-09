@@ -26073,6 +26073,573 @@ def _js_parse_f728_nextvalue_iife(text, i, depth, state):
         return None
 
 
+_F750_ERROR_CTORS = ("Error", "EvalError", "RangeError", "ReferenceError",
+                     "SyntaxError", "TypeError", "URIError")
+
+
+def _js_f750_charge(state):
+    """Charge one F452 part and fail closed past the budget (F750)."""
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F750 too many parts")
+
+
+def _js_f750_parse_error_new(text, j):
+    """Parse `[new] CTOR('LIT' | )` at text[j] (F750).
+
+    Node-exact (v24.20.0): `new Error('x')` and `Error('x')` both
+    yield an error whose .message is 'x'; `new Error()` yields
+    message ''. Returns (message, next_index). A non-literal
+    argument (the engine coerces: `new Error(123)` -> '123'),
+    extra arguments, and non-Error constructors fail closed --
+    never mis-decode. Never evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, j, "new")
+    if k is not None:
+        j = _js_skip_ws(text, k)
+    cname, j = _js_parse_ident(text, j)
+    if cname not in _F750_ERROR_CTORS:
+        raise _JSExprFail("F750 not an Error constructor")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ")":
+        return "", j + 1
+    msg, j = _js_parse_string(text, j)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    return msg, j
+
+
+def _js_f750_parse_predecl(text, j, errenv, throwers, state):
+    """Parse one F750 pre-body declaration at text[j].
+
+    Accepts `function F(){throw [new] CTOR('LIT'|);}` (thrower) or
+    `var|let|const X = [new] CTOR('LIT'|);` (error-valued binding).
+    Records into throwers/errenv and returns next_index, or None
+    when text[j] starts neither production. Duplicate bindings fail
+    closed. Never evals.
+    """
+    fk = _js_match_kw(text, j, "function")
+    if fk is not None:
+        fname, k = _js_parse_ident(text, _js_skip_ws(text, fk))
+        k = _js_expect(text, _js_skip_ws(text, k), "(")
+        k = _js_expect(text, _js_skip_ws(text, k), ")")
+        k = _js_expect(text, _js_skip_ws(text, k), "{")
+        tk = _js_match_kw(text, _js_skip_ws(text, k), "throw")
+        if tk is None:
+            raise _JSExprFail("F750 thrower body not a throw")
+        msg, k = _js_f750_parse_error_new(text, _js_skip_ws(text, tk))
+        k = _js_expect(text, _js_skip_ws(text, k), ";")
+        k = _js_expect(text, _js_skip_ws(text, k), "}")
+        if fname in throwers or fname in errenv:
+            raise _JSExprFail("F750 duplicate binding")
+        throwers[fname] = msg
+        _js_f750_charge(state)
+        return k
+    kw, k = _js_match_decl_kw(text, j)
+    if kw is None:
+        return None
+    name, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    k = _js_expect(text, _js_skip_ws(text, k), "=")
+    msg, k = _js_f750_parse_error_new(text, _js_skip_ws(text, k))
+    k = _js_expect(text, _js_skip_ws(text, k), ";")
+    if name in errenv or name in throwers:
+        raise _JSExprFail("F750 duplicate binding")
+    errenv[name] = msg
+    _js_f750_charge(state)
+    return k
+
+
+def _js_f750_parse_throw_stmt(text, j, errenv, throwers, state):
+    """Parse the single F750 try-body statement at text[j].
+
+    Accepts `throw [new] CTOR('LIT'|);`, `throw X;` for an X bound
+    by a pre-body error declaration, or `F();` for an F bound by a
+    pre-body thrower declaration. Returns (message, next_index).
+    A second statement, statements before the throw, or any other
+    throw form fails closed (documented residual). Never evals.
+    """
+    n = len(text)
+    tk = _js_match_kw(text, j, "throw")
+    if tk is None:
+        name, k = _js_parse_ident(text, j)
+        if name in throwers:
+            k = _js_expect(text, _js_skip_ws(text, k), "(")
+            k = _js_expect(text, _js_skip_ws(text, k), ")")
+            k = _js_expect(text, _js_skip_ws(text, k), ";")
+            _js_f750_charge(state)
+            return throwers[name], k
+        raise _JSExprFail("F750 bad try-body statement")
+    k = _js_skip_ws(text, tk)
+    nm = None
+    if k < n and text[k] in _JS_IDENT_START:
+        nm, k2 = _js_parse_ident(text, k)
+    if nm is not None and nm in errenv:
+        # A bound error value (a same-named global constructor is
+        # shadowed by the binding -- the bound value wins).
+        k = _js_expect(text, _js_skip_ws(text, k2), ";")
+        _js_f750_charge(state)
+        return errenv[nm], k
+    msg, k = _js_f750_parse_error_new(text, k)
+    k = _js_expect(text, _js_skip_ws(text, k), ";")
+    _js_f750_charge(state)
+    return msg, k
+
+
+def _js_f750_parse_msg_additive(text, j, cname, state):
+    """Parse `TERM (+ TERM)*` at text[j] (F750).
+
+    TERM is a string literal, `C.message`, or `C['message']` where C
+    is the catch parameter name. Returns (terms, next_index) with
+    terms as ("lit", s) / ("msg",) tuples. A bare `C` (the engine
+    would stringify the error object -- unmodeled here) or any
+    other term fails closed. Never evals.
+    """
+    n = len(text)
+    terms = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            s, j = _js_parse_string(text, j)
+            terms.append(("lit", s))
+        else:
+            name, k = _js_parse_ident(text, j)
+            if name != cname:
+                raise _JSExprFail("F750 bad return term")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ".":
+                mname, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+                if mname != "message":
+                    raise _JSExprFail("F750 not .message")
+            elif k < n and text[k] == "[":
+                ms, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+                if ms != "message":
+                    raise _JSExprFail("F750 not ['message']")
+                k = _js_expect(text, _js_skip_ws(text, k), "]")
+            else:
+                raise _JSExprFail("F750 bad message read")
+            terms.append(("msg",))
+            j = k
+        _js_f750_charge(state)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j = j + 1
+            continue
+        return terms, j
+
+
+def _js_parse_f750_error_message_iife(text, i, depth, state):
+    """Parse `(function(){PRE* try{THROW}catch(C){return RET;}})()` (F750).
+
+    Error .message reads: the decoder had no Error-object
+    production, so a thrown/caught Error's .message (including
+    subclasses) carried the fragment node-exactly while the
+    decoder produced zero variants. Node-exact desugar
+    (v24.20.0): the try body throws (directly, via a bound error
+    value, or via a declared thrower function); the catch binds the
+    parameter to the error; `C.message` / `C['message']` reads the
+    literal message; the return additive concatenates plain
+    strings. `new Error('x')` and `Error('x')` are identical in the
+    engine; `new Error()` has message ''.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - non-Error throws, non-literal message arguments (the engine
+      coerces: `new Error(123)` -> '123'), extra constructor args,
+      AggregateError (its message is the second arg);
+    - statements before the throw in the try body, a second try
+      statement, `finally`, a non-return catch body;
+    - a bare `C` return term (the engine stringifies the error --
+      unmodeled), non-`message` member reads.
+    Disjoint from every earlier route: F679's statement simulation
+    has no Error production and fails closed on `throw new
+    Error(...)` (red-first verified: 2 BREAK on the open tree);
+    F655's try-finally requires `finally`; no earlier route
+    accepts a `try{` head, so no previously-decoded input changes
+    behavior. On miss the F452 budgets are restored (wave-383
+    lesson). Returns (value, next_index), or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F750 not our head")
+        inner_start, inner_end, after_close = _js_span_braced(text, brace)
+        errenv = {}
+        throwers = {}
+        j = _js_skip_ws(text, inner_start)
+        while True:
+            k = _js_f750_parse_predecl(text, j, errenv, throwers, state)
+            if k is None:
+                break
+            j = _js_skip_ws(text, k)
+        tk = _js_match_kw(text, j, "try")
+        if tk is None:
+            raise _JSExprFail("F750 no try")
+        j = _js_expect(text, _js_skip_ws(text, tk), "{")
+        msg, j = _js_f750_parse_throw_stmt(text, _js_skip_ws(text, j),
+                                           errenv, throwers, state)
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        ck = _js_match_kw(text, _js_skip_ws(text, j), "catch")
+        if ck is None:
+            raise _JSExprFail("F750 no catch")
+        j = _js_expect(text, _js_skip_ws(text, ck), "(")
+        cname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if rk is None:
+            raise _JSExprFail("F750 catch without return")
+        terms, j = _js_f750_parse_msg_additive(text, _js_skip_ws(text, rk),
+                                              cname, state)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        rval = "".join(msg if t[0] == "msg" else t[1] for t in terms)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F750 concat too long")
+        if j != inner_end:
+            raise _JSExprFail("F750 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, after_close, depth, state,
+                                       rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_f751_charge(state):
+    """Charge one F452 part and fail closed past the budget (F751)."""
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F751 too many parts")
+
+
+def _js_f751_is_intkey(k):
+    """True when k is a canonical integer-index key (F751).
+
+    Matches _js_parse_object_literal_keys_values' engine order:
+    ASCII decimal digits, no leading zeros, value < 2**32 - 1
+    (node v24.20.0: larger numerics stay in string insertion
+    order). Never evals.
+    """
+    if not k or any(c not in _ASCII_DIGITS for c in k):
+        return False
+    if len(k) > 1 and k[0] == "0":
+        return False
+    return int(k) < 4294967295
+
+
+def _js_f751_parse_oread(text, j, oname, kname):
+    """Parse `O[K]` at text[j] (F751).
+
+    The object read through the iteration parameter: the index must
+    be the bare parameter ident K. `o.k` / `o['k']` read a literal
+    key, not the iteration value, and fail closed here. Returns
+    next_index. Never evals.
+    """
+    n = len(text)
+    on, j = _js_parse_ident(text, j)
+    if on != oname:
+        raise _JSExprFail("F751 oread not our object")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F751 oread not a bracket read")
+    kn, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if kn != kname:
+        raise _JSExprFail("F751 oread not the param")
+    j = _js_expect(text, _js_skip_ws(text, j), "]")
+    return j
+
+
+def _js_f751_parse_key_head(text, j, oname):
+    """Parse `(Reflect.ownKeys|Object.keys)(O)` at text[j] (F751).
+
+    On the modeled subset (plain objects with string keys, no
+    symbols) both heads yield the keys in identical engine order.
+    The object name must be the bound O. Returns next_index.
+    Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    ns, j = _js_parse_ident(text, j)
+    if ns == "Reflect":
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if m != "ownKeys":
+            raise _JSExprFail("F751 not ownKeys")
+    elif ns == "Object":
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if m != "keys":
+            raise _JSExprFail("F751 not keys")
+    else:
+        raise _JSExprFail("F751 bad key-head namespace")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    on, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if on != oname:
+        raise _JSExprFail("F751 key-head not our object")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    return j
+
+
+def _js_f751_parse_map_cb(text, j, oname, state):
+    """Parse the F751 `.map` callback at text[j].
+
+    Accepts `function(K){return O[K];}` or `K=>O[K]`. The O[K]
+    read must go through the callback parameter. Returns
+    next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    fk = _js_match_kw(text, j, "function")
+    if fk is not None:
+        j = _js_skip_ws(text, fk)
+        j = _js_expect(text, j, "(")
+        k, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if rk is None:
+            raise _JSExprFail("F751 map body not a return")
+        j = _js_f751_parse_oread(text, _js_skip_ws(text, rk), oname, k)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f751_charge(state)
+        return j
+    k, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if j + 1 >= n or text[j:j + 2] != "=>":
+        raise _JSExprFail("F751 not an arrow")
+    j = _js_f751_parse_oread(text, _js_skip_ws(text, j + 2), oname, k)
+    _js_f751_charge(state)
+    return j
+
+
+def _js_f751_parse_accum(text, j, oname, sname, kname, state):
+    """Parse `S+=O[K]` at text[j] (F751). Returns next_index."""
+    n = len(text)
+    sn, j = _js_parse_ident(text, j)
+    if sn != sname:
+        raise _JSExprFail("F751 accum not our accumulator")
+    j = _js_skip_ws(text, j)
+    if j + 1 >= n or text[j:j + 2] != "+=":
+        raise _JSExprFail("F751 accum not +=")
+    j = _js_f751_parse_oread(text, _js_skip_ws(text, j + 2), oname, kname)
+    _js_f751_charge(state)
+    return j
+
+
+def _js_f751_parse_foreach_cb(text, j, oname, sname, state):
+    """Parse the F751 `.forEach` callback at text[j].
+
+    Accepts `function(K){S+=O[K];}`, `K=>{S+=O[K];}`, or the
+    expression-bodied `K=>S+=O[K]`. The accumulation target must
+    be the bound S and the read must go through K. Returns
+    next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    fk = _js_match_kw(text, j, "function")
+    if fk is not None:
+        j = _js_skip_ws(text, fk)
+        j = _js_expect(text, j, "(")
+        k, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_f751_parse_accum(text, _js_skip_ws(text, j), oname,
+                                 sname, k, state)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        return j
+    k, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if j + 1 >= n or text[j:j + 2] != "=>":
+        raise _JSExprFail("F751 not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        j = _js_f751_parse_accum(text, _js_skip_ws(text, j + 1), oname,
+                                 sname, k, state)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        return j
+    return _js_f751_parse_accum(text, j, oname, sname, k, state)
+
+
+def _js_f751_parse_obj_binding(text, j, depth, state):
+    """Parse the F751 object binding at text[j].
+
+    `var|let|const O = {K:V, ...};` (string-literal values via
+    _js_parse_object_literal_keys_values) or `= {};`, followed by
+    zero or more `O.K='LIT';` / `O['K']='LIT';` mutations. Returns
+    (oname, str_keys, int_keys, values, next_index): the caller's
+    engine-exact enumeration order is sorted(int_keys) + str_keys
+    (node v24.20.0: integer indices ascending first, then string
+    keys in first-insertion order; a duplicate key keeps its first
+    position with the later value). Never evals.
+    """
+    n = len(text)
+    kw, j = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail("F751 no object decl")
+    oname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, _js_skip_ws(text, j), "=")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F751 object not a literal")
+    okeys, ovals, j = _js_parse_object_literal_keys_values(text, j, depth,
+                                                           state)
+    values = {}
+    str_keys = []
+    int_keys = set()
+    for kk, vv in zip(okeys, ovals):
+        values[kk] = vv
+        if _js_f751_is_intkey(kk):
+            int_keys.add(kk)
+        else:
+            str_keys.append(kk)
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    while True:
+        k = _js_skip_ws(text, j)
+        if not text.startswith(oname, k):
+            break
+        ke = k + len(oname)
+        if ke < n and text[ke] in _JS_IDENT_CONT:
+            break
+        if ke >= n or text[ke] not in ".[":
+            break
+        k = ke
+        if text[k] == ".":
+            kk, k = _js_parse_ident(text, k + 1)
+        else:
+            kk, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+            k = _js_expect(text, _js_skip_ws(text, k), "]")
+        k = _js_expect(text, _js_skip_ws(text, k), "=")
+        vv, k = _js_parse_string(text, _js_skip_ws(text, k))
+        k = _js_expect(text, _js_skip_ws(text, k), ";")
+        values[kk] = vv
+        if _js_f751_is_intkey(kk):
+            int_keys.add(kk)
+        elif kk not in str_keys:
+            str_keys.append(kk)
+        _js_f751_charge(state)
+        j = k
+    return oname, str_keys, int_keys, values, j
+
+
+def _js_parse_f751_ownkeys_map_iife(text, i, depth, state):
+    """Parse ownKeys/keys map-read IIFEs at text[i] (F751).
+
+    F579 (CLOSED) models Reflect.ownKeys ORDER but not
+    key-iteration reads: `Reflect.ownKeys(o).map(k=>o[k]).join('')`
+    and the `forEach` accumulation twin assemble the credential
+    node-exactly while the decoder produced zero variants.
+    Node-exact desugar (v24.20.0): the object is a literal (plus
+    literal-valued mutations); keys enumerate integer-indices
+    ascending first, then string keys in insertion order; `.map`
+    projects each key's value and `.join(SEP)` concatenates with
+    the literal separator (no-arg `.join()` uses ','); the forEach
+    form accumulates into a pre-declared empty-string binding.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - non-literal values, symbol/computed keys, a non-string
+      `.join()` argument;
+    - map callbacks whose body is not exactly `return O[K];`,
+      forEach callbacks that do not exactly `S+=O[K];`, an `O[K]`
+      read through anything but the callback parameter (`o.k` /
+      `o['k']` read a literal key, not the iteration);
+    - a non-empty-string accumulator initializer, `return` of
+      anything but the accumulator in the forEach form.
+    Disjoint from every earlier route: F579 resolves only the
+    `[Reflect.ownKeys(OBJLIT)[INT]]` bracket-index key form; no
+    earlier route accepts a `.map(`/`.forEach(` continuation on a
+    key list, so no previously-decoded input changes behavior
+    (red-first verified: 2 BREAK on the open tree). On miss the
+    F452 budgets are restored (wave-383 lesson). Returns (value,
+    next_index), or None. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F751 not our head")
+        inner_start, inner_end, after_close = _js_span_braced(text, brace)
+        oname, str_keys, int_keys, values, j = _js_f751_parse_obj_binding(
+            text, _js_skip_ws(text, inner_start), depth, state)
+        order = sorted(int_keys, key=int) + str_keys
+        vals = [values[kk] for kk in order]
+        # optional accumulator decl (forEach form only)
+        sname = None
+        k = _js_skip_ws(text, j)
+        skw, sk = _js_match_decl_kw(text, k)
+        if skw is not None:
+            sn, sk = _js_parse_ident(text, _js_skip_ws(text, sk))
+            sk = _js_expect(text, _js_skip_ws(text, sk), "=")
+            sv, sk = _js_parse_string(text, _js_skip_ws(text, sk))
+            if sv != "":
+                raise _JSExprFail("F751 accum not empty")
+            sk = _js_expect(text, _js_skip_ws(text, sk), ";")
+            sname = sn
+            _js_f751_charge(state)
+            j = sk
+        rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if rk is not None and sname is None:
+            j = _js_f751_parse_key_head(text, _js_skip_ws(text, rk), oname)
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+            mn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if mn != "map":
+                raise _JSExprFail("F751 not a map terminal")
+            j = _js_expect(text, _js_skip_ws(text, j), "(")
+            j = _js_f751_parse_map_cb(text, j, oname, state)
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+            jn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if jn != "join":
+                raise _JSExprFail("F751 not a join terminal")
+            j = _js_expect(text, _js_skip_ws(text, j), "(")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ")":
+                sep = ","
+                j = j + 1
+            else:
+                sep, j = _js_parse_string(text, j)
+                j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            rval = sep.join(vals)
+        elif sname is not None:
+            j = _js_f751_parse_key_head(text, j, oname)
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+            fn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if fn != "forEach":
+                raise _JSExprFail("F751 not a forEach terminal")
+            j = _js_expect(text, _js_skip_ws(text, j), "(")
+            j = _js_f751_parse_foreach_cb(text, j, oname, sname, state)
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+            if rk is None:
+                raise _JSExprFail("F751 forEach without return")
+            sn2, j = _js_parse_ident(text, _js_skip_ws(text, rk))
+            if sn2 != sname:
+                raise _JSExprFail("F751 return not the accumulator")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            rval = "".join(vals)
+        else:
+            raise _JSExprFail("F751 bad terminal")
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F751 concat too long")
+        if j != inner_end:
+            raise _JSExprFail("F751 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, after_close, depth, state,
+                                       rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
 def _js_parse_f679_statement_iife(text, i, depth, state):
     """Parse `(function(){STMT* return ADD;})()` at text[i] (F679).
 
@@ -56981,6 +57548,35 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f679_saved_parts; state['ops'] = _f679_saved_ops
         if _f679 is not None:
             val, i = _f679
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F750: (function(){PRE* try{THROW}catch(C){return RET;}})()
+        # -- Error .message reads. Tried after F679: F679's
+        # statement simulation has no Error production and fails
+        # closed on `throw new Error(...)` (red-first verified: 2
+        # BREAK on the open tree); F655's try-finally requires
+        # `finally`; no earlier route accepts a `try{` head, so no
+        # previously-decoded input changes behavior.
+        _f750_saved_parts = state['parts']; _f750_saved_ops = state['ops']
+        _f750 = _js_parse_f750_error_message_iife(text, i, depth, state)
+        if _f750 is None:
+            state['parts'] = _f750_saved_parts; state['ops'] = _f750_saved_ops
+        if _f750 is not None:
+            val, i = _f750
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F751: (function(){var O=OBJLIT;(O.K='LIT';)*RET})() with
+        # RET = return (Reflect.ownKeys|Object.keys)(O).map(CB).join(SEP);
+        # or the forEach-accumulation twin -- key-iteration reads.
+        # Tried after F750: disjoint grammars (try/catch-error vs
+        # ownKeys-map); F579 resolves only the bracket-index key
+        # form and no earlier route accepts a `.map(`/`.forEach(`
+        # continuation, so no previously-decoded input changes
+        # behavior (red-first verified: 2 BREAK on the open tree).
+        _f751_saved_parts = state['parts']; _f751_saved_ops = state['ops']
+        _f751 = _js_parse_f751_ownkeys_map_iife(text, i, depth, state)
+        if _f751 is None:
+            state['parts'] = _f751_saved_parts; state['ops'] = _f751_saved_ops
+        if _f751 is not None:
+            val, i = _f751
             return _js_parse_postfix(text, i, val, depth, state)
         # F708: (function(){var|let|const M=new Map([PAIRS]);
         #   (M.set(K,V);|var|let|const K='LIT';)*return
