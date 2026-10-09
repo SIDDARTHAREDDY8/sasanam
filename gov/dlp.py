@@ -53735,6 +53735,526 @@ def _js_f747_parse_augassign_target(stmts, q, env):
     return (False, name, None), r
 
 
+
+def _js_parse_f778_iife_value(text, j, depth, state):
+    """Parse `(function(){return 'LIT';})` or `(()=> 'LIT')` at text[j] (F778).
+
+    Narrow IIFE-value production for the nullish computed-right
+    operand: an anonymous zero-param function whose body is exactly
+    `return 'LIT';`, or a zero-param arrow with a string-literal
+    body. The caller models the immediate invocation `(...)()`;
+    the engine then yields the literal node-exactly (v24.20.0).
+    Named functions, params, non-literal bodies, block-body
+    arrows, `this`/`arguments` fail closed -- the engine's invoke
+    would not yield a provable plain string there. Returns
+    (literal, next_index). Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    k = _js_skip_ws(text, j)
+    if text.startswith("function", k):
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            raise _JSExprFail("F778 iife functionx")
+        if k2 < n and text[k2] in _JS_IDENT_START:
+            raise _JSExprFail("F778 iife named fn")
+        q = _js_skip_ws(text, k2)
+        q = _js_expect(text, q, "(")
+        q = _js_expect(text, _js_skip_ws(text, q), ")")
+        brace = _js_skip_ws(text, q)
+        q = _js_expect(text, brace, "{")
+        inner_start, inner_end, q = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F778 iife no return")
+        sj = _js_skip_ws(text, m)
+        if sj >= n or text[sj] not in "'\"":
+            raise _JSExprFail("F778 iife non-literal return")
+        lit, sj = _js_parse_string(text, sj)
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        if _js_skip_ws(text, sj) != inner_end:
+            raise _JSExprFail("F778 iife trailing statements")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return lit, q
+    if k < n and text[k] == "(":
+        # Arrow twin: `()=> 'LIT'`.
+        q = _js_skip_ws(text, k + 1)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        if not text.startswith("=>", q):
+            raise _JSExprFail("F778 not an arrow iife")
+        q = _js_skip_ws(text, q + 2)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail("F778 arrow non-literal body")
+        lit, q = _js_parse_string(text, q)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return lit, q
+    raise _JSExprFail("F778 not an iife")
+
+
+def _js_f778_nullish_left(text, j, null_idents):
+    """Parse a provably-nullish LEFT at text[j] (F778).
+
+    `null` / `undefined` keywords (ident-boundary checked), or an
+    ident bound to `null`/`undefined` in the decl section. The
+    decl section has no reassignment production, so a null-bound
+    ident is nullish at the `??` in the engine (v24.20.0). Every
+    other LEFT fails closed: a non-nullish LEFT picks LEFT in
+    the engine (or throws on the trailing `()` invoke), so
+    decoding it as a RIGHT-pick would mis-decode. Returns
+    next_index. Raises _JSExprFail. Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "null")
+    if m is not None:
+        return m
+    m = _js_match_kw(text, j, "undefined")
+    if m is not None:
+        return m
+    name, q = _js_parse_ident(text, j)
+    if name in null_idents:
+        return q
+    raise _JSExprFail("F778 LEFT not provably nullish")
+
+
+def _js_parse_f778_nullish_group(text, j, null_idents, depth, state):
+    """Parse `(NULLISH ?? IIFE)()` at text[j] (F778).
+
+    The `??` picks the IIFE exactly when LEFT is provably
+    nullish; the trailing `()` invokes the picked zero-param
+    IIFE, whose body provably returns a plain string (node
+    v24.20.0). A non-invoked `(NULLISH ?? IIFE)` yields the
+    function object in the engine (its source text under `+`),
+    so the invocation parens are required -- without them this
+    fails closed. Returns (value, next_index). Raises
+    _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_f778_nullish_left(text, j, null_idents)
+    j = _js_skip_ws(text, j)
+    # `??` (not `?.`, not a ternary `?`): the F490 peek discipline.
+    if not (j + 1 < n and text[j] == "?" and text[j + 1] == "?"):
+        raise _JSExprFail("F778 no ??")
+    if j + 2 < n and (text[j + 2] in _JS_IDENT_CONT
+                      or text[j + 2] == "?"):
+        raise _JSExprFail("F778 ?? followed by ?/ident")
+    j = _js_skip_ws(text, j + 2)
+    val, j = _js_parse_f778_iife_value(text, j, depth, state)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")  # close the RIGHT paren
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")  # close the nullish group
+    # Invocation: exactly `()`. The picked IIFE takes no params;
+    # an arg-carrying invoke is engine-ignored but fails closed
+    # here (documented narrowness).
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1  # the ?? pick is obfuscation-shaped
+    return val, j
+
+
+def _js_parse_f778_term(text, j, null_idents, depth, state, saw):
+    """Parse one F778 return-expression term at text[j].
+
+    A term is an F778 `(NULLISH ?? IIFE)()` group (tried first;
+    appends to *saw* on success; state counters restored on
+    miss) or a plain string literal (the additive tail). The
+    term value is always a plain str. Raises _JSExprFail. Never
+    evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    if q < n and text[q] == "(":
+        sp, so = state["parts"], state["ops"]
+        try:
+            val, q2 = _js_parse_f778_nullish_group(text, q, null_idents,
+                                                  depth, state)
+            saw.append(True)
+            return val, q2
+        except _JSExprFail:
+            state["parts"], state["ops"] = sp, so
+    if q < n and text[q] in "'\"":
+        return _js_parse_string(text, q)
+    raise _JSExprFail("F778 term not modeled")
+
+
+def _js_parse_f778_nullish_computed_iife(text, i, depth, state):
+    """Parse `(function(){DECLS return ADD;})()` (F778).
+
+    F647 residual (LOW): F647 (CLOSED) models `??` with literal
+    right operands only; a computed right operand that resolves
+    node-exactly had no modeled path. DECLS bind
+    `var|let|const IDENT = null|undefined;` (any order; may be
+    empty -- with no decls the nullish LEFT is restricted to the
+    `null`/`undefined` keywords, still provably nullish).
+    `const` is initialized so it is legal here. ADD is
+    `TERM (+ TERM)*` where TERM is an F778 `(NULLISH ??
+    IIFE)()` group or a plain string literal; at least one
+    group is required (group-free shapes belong to earlier
+    routes, which keep decoding them unchanged).
+
+    Disjointness: tried after F747. F647 fails closed on
+    initialized bindings and on non-literal RIGHTs; F747's
+    group grammar requires a plain-str FRAG and fails closed on
+    IIFE rights (red-first verified: the IIFE shapes miss on
+    the open tree). The member-read `(NULLISH ?? o.x)` family
+    already decodes via the existing routes, so this hook does
+    not model it (no behavior change there).
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-nullish LEFT; a non-IIFE RIGHT; a non-invoked group; an
+    arg-carrying invoke; named/param/non-literal IIFEs; extra
+    statements; reassignment (no reassignment production, so a
+    null-bound ident stays nullish); non-string tails. Returns
+    (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        null_idents = set()
+        ndecl = 0
+        while True:
+            dkw, m = _js_match_decl_kw(text, sj)
+            if dkw is None:
+                break
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if name == "arguments" or name in null_idents:
+                raise _JSExprFail("F778 bad decl")
+            if name in ("null", "true", "false"):
+                # Reserved words are a SyntaxError as binding
+                # names in the engine (node v24.20.0); decoding
+                # them would mis-decode dead text. `undefined`
+                # stays legal: a function-scope `var undefined`
+                # shadows the global (engine-verified).
+                raise _JSExprFail("F778 reserved decl name")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "=")
+            m = _js_skip_ws(text, m)
+            mm = _js_match_kw(text, m, "null")
+            if mm is None:
+                mm = _js_match_kw(text, m, "undefined")
+            if mm is None:
+                raise _JSExprFail("F778 decl not nullish")
+            m = _js_expect(text, _js_skip_ws(text, mm), ";")
+            null_idents.add(name)
+            ndecl += 1
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = m
+        m = _js_match_kw(text, _js_skip_ws(text, sj), "return")
+        if m is None:
+            raise _JSExprFail("F778 no return")
+        sj = _js_skip_ws(text, m)
+        saw = []
+        val, sj = _js_parse_f778_term(text, sj, null_idents, depth,
+                                     state, saw)
+        while True:
+            q = _js_skip_ws(text, sj)
+            if q >= n or text[q] != "+":
+                break
+            rhs, q = _js_parse_f778_term(text, _js_skip_ws(text, q + 1),
+                                        null_idents, depth, state,
+                                        saw)
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F778 tail too long")
+            val = val + rhs
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = q
+        if not saw:
+            raise _JSExprFail("F778 no ?? group")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F778 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f779_symbol_value(text, j):
+    """Parse `Symbol('LIT')` / `Symbol.for('LIT')` at text[j] (F779).
+
+    The argument must be a string literal (node-exact: it becomes
+    the symbol's description; `Symbol()` yields undefined
+    description and fails closed here). Returns ((description,
+    is_global), next_index) where is_global marks
+    `Symbol.for` registry symbols (`Symbol.keyFor` yields the key
+    only for those; the engine yields undefined for
+    `Symbol()`-created symbols). Raises _JSExprFail. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "Symbol")
+    if m is None:
+        raise _JSExprFail("F779 not Symbol(")
+    q = _js_skip_ws(text, m)
+    is_global = False
+    if q < n and text[q] == ".":
+        q2 = _js_skip_ws(text, q + 1)
+        if not text.startswith("for", q2):
+            raise _JSExprFail("F779 not Symbol.for")
+        q3 = q2 + len("for")
+        if q3 < n and text[q3] in _JS_IDENT_CONT:
+            raise _JSExprFail("F779 Symbol.forx")
+        q = _js_skip_ws(text, q3)
+        is_global = True
+    q = _js_expect(text, q, "(")
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] not in "'\"":
+        raise _JSExprFail("F779 Symbol non-literal arg")
+    lit, q = _js_parse_string(text, q)
+    q = _js_expect(text, _js_skip_ws(text, q), ")")
+    return (lit, is_global), q
+
+
+def _js_parse_f779_symbol_form(text, j, syms, state, saw):
+    """Parse one F779 Symbol-introspection form at text[j].
+
+    `IDENT.description` / `IDENT['description']` (the
+    description literal -- node-exact for `Symbol('LIT')` and
+    `Symbol.for('LIT')` bindings, v24.20.0) or
+    `Symbol.keyFor(IDENT)` (the registry key -- only for
+    `Symbol.for`-created bindings; a `Symbol()`-created binding
+    yields undefined in the engine and fails closed here).
+    Appends to *saw* and charges the F452 parts budget. Returns
+    (value, next_index). Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    # `Symbol.keyFor(IDENT)`.
+    m = _js_match_kw(text, q, "Symbol")
+    if m is not None:
+        r = _js_skip_ws(text, m)
+        if r < n and text[r] == ".":
+            r2 = _js_skip_ws(text, r + 1)
+            if text.startswith("keyFor", r2):
+                r3 = r2 + len("keyFor")
+                if r3 >= n or text[r3] not in _JS_IDENT_CONT:
+                    r = _js_skip_ws(text, r3)
+                    r = _js_expect(text, r, "(")
+                    r = _js_skip_ws(text, r)
+                    name, r = _js_parse_ident(text, r)
+                    r = _js_expect(text, _js_skip_ws(text, r), ")")
+                    if name not in syms:
+                        raise _JSExprFail("F779 keyFor unbound")
+                    desc, is_global = syms[name]
+                    if not is_global:
+                        raise _JSExprFail("F779 keyFor non-global")
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                    saw.append(True)
+                    return desc, r
+        raise _JSExprFail("F779 bad Symbol form")
+    # `IDENT.description` / `IDENT['description']`.
+    name, r = _js_parse_ident(text, q)
+    if name not in syms:
+        raise _JSExprFail("F779 not a symbol ident")
+    r = _js_skip_ws(text, r)
+    if r < n and text[r] == ".":
+        mm = _js_match_kw(text, _js_skip_ws(text, r + 1), "description")
+        if mm is None:
+            raise _JSExprFail("F779 bad member")
+        r = mm
+    elif r < n and text[r] == "[":
+        r = _js_skip_ws(text, r + 1)
+        if r >= n or text[r] not in "'\"":
+            raise _JSExprFail("F779 bad bracket key")
+        key, r = _js_parse_string(text, r)
+        if key != "description":
+            raise _JSExprFail("F779 bad bracket key")
+        r = _js_expect(text, _js_skip_ws(text, r), "]")
+    else:
+        raise _JSExprFail("F779 not a description read")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    saw.append(True)
+    return syms[name][0], r
+
+
+def _js_parse_f779_term(text, j, syms, state, saw):
+    """Parse one F779 return-expression term at text[j].
+
+    A Symbol-introspection form (tried first; appends to *saw*
+    on success; state counters restored on miss) or a plain
+    string literal (the additive tail). The term value is always
+    a plain str. Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    sp, so = state["parts"], state["ops"]
+    try:
+        return _js_parse_f779_symbol_form(text, q, syms, state, saw)
+    except _JSExprFail:
+        state["parts"], state["ops"] = sp, so
+    if q < n and text[q] in "'\"":
+        return _js_parse_string(text, q)
+    raise _JSExprFail("F779 term not modeled")
+
+
+def _js_parse_f779_symbol_introspection_iife(text, i, depth, state):
+    """Parse `(function(){DECLS return ADD;})()` (F779).
+
+    Symbol-introspection reads: DECLS bind
+    `var|let|const IDENT = Symbol('LIT');` /
+    `= Symbol.for('LIT');` (string-literal arg only; at least
+    one). ADD is `TERM (+ TERM)*` where TERM is an
+    introspection form (`s.description`, `s['description']`,
+    `Symbol.keyFor(s)`) or a plain string literal; at least one
+    introspection form is required (introspection-free shapes
+    belong to earlier routes, which keep decoding them
+    unchanged). Node-exact (v24.20.0).
+
+    Disjointness: tried after F778. No earlier route parses
+    `Symbol(` bindings (red-first verified: 3 BREAK on the open
+    tree); the `Symbol` / `keyFor` / `description` heads are
+    unique to this route, so no previously-decoded input
+    changes behavior.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    `Symbol()` / non-literal / extra args; `new Symbol()`;
+    `Symbol.keyFor` on a `Symbol()`-created binding (engine
+    undefined); `Symbol.keyFor` on an unbound ident (engine
+    ReferenceError); `.description` on anything but a bound
+    symbol ident; `toString`/`valueOf`/other members; computed
+    bracket keys; multi-decl statements; reassignment (no
+    reassignment production); extra statements; non-string
+    tails. Returns (value, next_index), or None when text[i] is
+    not this shape. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    if not text.startswith("function", k):
+        return None
+    k2 = k + len("function")
+    if k2 < n and text[k2] in _JS_IDENT_CONT:
+        return None  # functionx -- not our shape
+    if k2 < n and text[k2] in _JS_IDENT_START:
+        return None  # named function -- not our shape
+    try:
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        syms = {}
+        ndecl = 0
+        while True:
+            dkw, m = _js_match_decl_kw(text, sj)
+            if dkw is None:
+                break
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if name == "arguments" or name in syms:
+                raise _JSExprFail("F779 bad decl")
+            if name in ("null", "true", "false"):
+                # Reserved words are a SyntaxError as binding
+                # names in the engine (node v24.20.0); decoding
+                # them would mis-decode dead text. `undefined`
+                # stays legal (engine-verified shadowing).
+                raise _JSExprFail("F779 reserved decl name")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "=")
+            (desc, is_global), m = _js_f779_symbol_value(text, m)
+            m = _js_expect(text, _js_skip_ws(text, m), ";")
+            syms[name] = (desc, is_global)
+            ndecl += 1
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = m
+        if ndecl == 0:
+            raise _JSExprFail("F779 no decls")
+        m = _js_match_kw(text, _js_skip_ws(text, sj), "return")
+        if m is None:
+            raise _JSExprFail("F779 no return")
+        sj = _js_skip_ws(text, m)
+        saw = []
+        val, sj = _js_parse_f779_term(text, sj, syms, state, saw)
+        while True:
+            q = _js_skip_ws(text, sj)
+            if q >= n or text[q] != "+":
+                break
+            rhs, q = _js_parse_f779_term(text, _js_skip_ws(text, q + 1),
+                                        syms, state, saw)
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F779 tail too long")
+            val = val + rhs
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = q
+        if not saw:
+            raise _JSExprFail("F779 no introspection")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F779 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+
 def _js_parse_f647_nullish_right_iife(text, i, depth, state):
     """Parse `(function(){[var|let IDENT;]?return RET;})()` (F647).
 
@@ -62682,6 +63202,41 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f747_saved_parts; state['ops'] = _f747_saved_ops
         if _f747 is not None:
             val, i = _f747
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F778: (function(){DECLS return ADD;})() -- nullish
+        #   `??` with a computed right operand: `(NULLISH ??
+        #   IIFE)()` where the IIFE provably returns a plain
+        #   string (F647 models literal rights only; the
+        #   member-read right family already decodes via the
+        #   existing routes). Tried after F747: F747's group
+        #   grammar requires a plain-str FRAG and fails closed
+        #   on IIFE rights; this route requires at least one
+        #   `(NULLISH ?? IIFE)()` group, so no previously-decoded
+        #   input changes behavior.
+        _f778_saved_parts = state['parts']; _f778_saved_ops = state['ops']
+        _f778 = _js_parse_f778_nullish_computed_iife(text, i, depth,
+                                                     state)
+        if _f778 is None:
+            state['parts'] = _f778_saved_parts; state['ops'] = _f778_saved_ops
+        if _f778 is not None:
+            val, i = _f778
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F779: (function(){DECLS return ADD;})() -- Symbol
+        #   introspection reads: `s.description` /
+        #   `s['description']` on `Symbol('LIT')` /
+        #   `Symbol.for('LIT')` bindings and `Symbol.keyFor(s)`
+        #   on `Symbol.for` bindings. Tried after F778: no
+        #   earlier route parses `Symbol(` bindings (the
+        #   `Symbol` / `keyFor` / `description` heads are unique
+        #   to this route), so no previously-decoded input
+        #   changes behavior.
+        _f779_saved_parts = state['parts']; _f779_saved_ops = state['ops']
+        _f779 = _js_parse_f779_symbol_introspection_iife(text, i, depth,
+                                                         state)
+        if _f779 is None:
+            state['parts'] = _f779_saved_parts; state['ops'] = _f779_saved_ops
+        if _f779 is not None:
+            val, i = _f779
             return _js_parse_postfix(text, i, val, depth, state)
         # F652: (function(){(var|let) A(,B)*;return RET;})() --
         # comma/sequence expressions in additive position
