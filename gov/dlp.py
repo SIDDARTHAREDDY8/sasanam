@@ -28622,6 +28622,743 @@ def _js_parse_f631_asyncgen_iife(text, i, depth, state):
         return None
 
 
+def _f934_subst_param(src, pname, pval):
+    """Substitute param *pname* by the quoted literal of *pval* in *src* (F934).
+
+    Ident-boundary-aware: string literals are copied verbatim (the
+    param cannot occur inside one), and only whole-identifier
+    occurrences outside literals are replaced. The result re-parses
+    through the normal additive grammar, so member access on the
+    substituted literal (`v.length`) stays node-exact and unbound
+    idents still fail closed (the engine's ReferenceError). Never
+    evals.
+    """
+    out = []
+    i = 0
+    n = len(src)
+    lit = _js_quote_literal(pval)
+    plen = len(pname)
+    while i < n:
+        c = src[i]
+        if c in "'\"":
+            j = i + 1
+            while j < n:
+                if src[j] == "\\":
+                    j += 2
+                    continue
+                if src[j] == c:
+                    break
+                j += 1
+            out.append(src[i:j + 1])
+            i = j + 1
+            continue
+        if (src.startswith(pname, i)
+                and (i == 0 or src[i - 1] not in _JS_IDENT_CONT)
+                and (i + plen >= n
+                     or src[i + plen] not in _JS_IDENT_CONT)):
+            out.append(lit)
+            i += plen
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _f934_scan_expr(text, k, stop):
+    """Scan a callback-body expression at text[k] to its terminator (F934).
+
+    *stop* is ";" (block bodies: `function(P){return E;}`, `{return
+    E;}`) or ")" (expression-body arrows: `(P)=>E` -- the `)` that
+    closes the `.then(` call). Bracket depth (`()[]{}`) and string
+    literals are tracked, so a terminator inside a nested bracket
+    or a string does not end the scan. Returns (expr_text, next_k)
+    with next_k just past the terminator (`;` is consumed; `)` is
+    left for the caller). Never evals.
+    """
+    n = len(text)
+    depth = 0
+    i = k
+    while i < n:
+        c = text[i]
+        if c in "'\"":
+            q = c
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == q:
+                    break
+                i += 1
+            i += 1
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                if c == stop:
+                    return text[k:i], i
+                raise _JSExprFail("F934 unbalanced brackets")
+            depth -= 1
+        elif c == stop and depth == 0:
+            return text[k:i], i + 1
+        i += 1
+    raise _JSExprFail("F934 unterminated callback body")
+
+
+def _js_parse_f934_async_then_iife(text, i, depth, state):
+    """Parse `(function(){async function NAME(){return ADD;}return NAME().then(CB);})()` (F934).
+
+    F934 (LOW, filed 2026-10-09 by wave-388 attack round 56): async
+    function promise laundering -- the decoder has no async
+    production, so an async function whose promise resolves to the
+    credential, chained with .then, resolves node-exactly (awaited)
+    while the decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): `async function NAME(){return
+    ADD;}` resolves to the string ADD (ADD must be a plain string
+    additive -- the credential model); `NAME()` is the promise of
+    that string; `.then(CB)` applies CB to the resolved value, so
+    the chain's deterministic resolution is the callback body
+    evaluated with its single param bound to the resolved string.
+    The decoder cannot await, so the deterministic resolution is
+    modeled statically (F618/F631 precedent) and the resolved
+    string is the decoded value. CB is `function(P){return E;}`
+    (optional name) or the arrow twins `(P)=>E` / `P=>E` /
+    `(P)=>{return E;}` / `P=>{return E;}` with a single
+    simple-ident param; E is evaluated by ident-boundary
+    substitution of the quoted resolved value
+    (_f934_subst_param) through the normal additive grammar.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    parameters on the async function; a non-`return` async body; a
+    non-string ADD; `.then` on another ident; a non-`then` member;
+    callbacks with != 1 param, non-ident params, or non-return
+    bodies; `['then']` bracket form (documented residual).
+
+    Tried after F641: the `async function NAME(` declaration head
+    is disjoint from every earlier route (F631 needs the
+    `(async function(){` IIFE head; F640 the `(async()=>` head;
+    F735/F736 fail closed on `async` functions; all others need
+    var/let/const or other statement heads). None falls through to
+    the parenthesized-additive path like F641. F452 parts charged
+    per declaration/then/callback with snapshot/restore on miss
+    (wave-383 lesson); results bounded by _MAX_DECODE_BYTES. Never
+    evals. Returns (value, next_index) or None.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        saved_parts = state["parts"]
+        saved_ops = state["ops"]
+        k = _js_skip_ws(text, j + 1)
+        # `async function NAME(){return ADD;}`
+        ak = _js_match_kw(text, k, "async")
+        if ak is None:
+            raise _JSExprFail("F934 not an async decl")
+        k = _js_skip_ws(text, ak)
+        if _js_match_kw(text, k, "function") is None:
+            raise _JSExprFail("F934 not a function decl")
+        k = _js_skip_ws(text, k + len("function"))
+        name, k = _js_parse_ident(text, k)
+        if name == "arguments" or name in _F611_RESERVED:
+            raise _JSExprFail("F934 bad async name")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "(")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "{")
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            raise _JSExprFail("F934 async body not return")
+        rval, k = _js_parse_additive(text, _js_skip_ws(text, rk),
+                                     depth + 1, state)
+        if (not isinstance(rval, str)
+                or isinstance(rval, (_JSNumStr, _JSBigInt))):
+            raise _JSExprFail("F934 async resolves non-string")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k += 1
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "}")
+        state["parts"] += 1  # the async declaration
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        # `return NAME().then(CB);`
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k += 1
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            raise _JSExprFail("F934 body not return")
+        k = _js_skip_ws(text, rk)
+        cname, k = _js_parse_ident(text, k)
+        if cname != name:
+            raise _JSExprFail("F934 then on another ident")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "(")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ".")
+        mname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        if mname != "then":
+            raise _JSExprFail("F934 not then")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "(")
+        k = _js_skip_ws(text, k)
+        # CB: function(P){return E;} | (P)=>E | P=>E |
+        #     (P)=>{return E;} | P=>{return E;}
+        block_body = False
+        if text.startswith("function", k):
+            kk = k + len("function")
+            if kk < n and text[kk] in _JS_IDENT_CONT:
+                raise _JSExprFail("F934 bad function keyword")
+            k = _js_skip_ws(text, kk)
+            if k < n and text[k] in _JS_IDENT_START:
+                _, k = _js_parse_ident(text, k)  # optional name
+                k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "(")
+            param, k = _js_parse_ident(text, _js_skip_ws(text, k))
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ")")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "{")
+            block_body = True
+        else:
+            if k < n and text[k] == "(":
+                param, k = _js_parse_ident(
+                    text, _js_skip_ws(text, k + 1))
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ")")
+            else:
+                param, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if not text.startswith("=>", k):
+                raise _JSExprFail("F934 callback not arrow")
+            k = _js_skip_ws(text, k + 2)
+            if k < n and text[k] == "{":
+                k = _js_skip_ws(text, k + 1)
+                block_body = True
+        if param == "arguments" or param in _F611_RESERVED:
+            raise _JSExprFail("F934 bad callback param")
+        k = _js_skip_ws(text, k)
+        if block_body:
+            rk = _js_match_kw(text, k, "return")
+            if rk is None:
+                raise _JSExprFail("F934 callback not return")
+            expr_text, k = _f934_scan_expr(
+                text, _js_skip_ws(text, rk), ";")
+        else:
+            # Expression-body arrow: E runs to the `)` closing the
+            # .then( call.
+            expr_text, k = _f934_scan_expr(text, k, ")")
+        k = _js_skip_ws(text, k)
+        if block_body:
+            k = _js_expect(text, k, "}")
+            k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k += 1
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "}")
+        # Statically resolve: bind the param to the resolved string
+        # and evaluate the callback body through the additive
+        # grammar.
+        esub = _f934_subst_param(expr_text, param, rval)
+        val, ei = _js_parse_additive(esub, 0, depth + 1, state)
+        if _js_skip_ws(esub, ei) != len(esub):
+            raise _JSExprFail("F934 callback body trailing junk")
+        if (not isinstance(val, str)
+                or isinstance(val, (_JSNumStr, _JSBigInt))):
+            raise _JSExprFail("F934 callback resolves non-string")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F934 resolved too long")
+        state["ops"] += 1  # the then-application is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, k, depth, state, val)
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
+
+
+def _f936_first_unit(line):
+    """First UTF-16 code unit of *line*, or None when empty (F936).
+
+    Node-exact (v24.20.0): string indexing and charAt read UTF-16
+    code units, so an astral-leading line yields the lone high
+    surrogate. Never evals.
+    """
+    if not line:
+        return None
+    o = ord(line[0])
+    if o >= 0x10000:
+        return chr(0xd800 + ((o - 0x10000) >> 10))
+    return line[0]
+
+
+def _js_parse_f936_acrostic_iife(text, i, depth, state):
+    """Parse acrostic multi-hop extraction IIFEs (F936).
+
+    F936 (LOW, filed 2026-10-09 by wave-388 attack round 56): the
+    PoeLLM adversarial-poetry class -- a benign-looking poem string
+    carries the credential as an acrostic (first character of each
+    line), recovered only after the multi-hop extraction (split
+    lines -> first-character hop -> join). Three extraction forms
+    resolve node-exactly (v24.20.0) while the decoder produces zero
+    variants:
+      A. indexed loop:
+         `var|let S='';var|let L=POEM.split('\\n');`
+         `for(var|let I=0;I<L.length;I++){S+=L[I][0];}return S;`
+      B. for-of charAt loop:
+         `var|let S='';for(var|let X of POEM.split('\\n'))`
+         `{S+=X.charAt(0);}return S;`
+      C. map/join:
+         `return POEM.split('\\n').map(CB).join('');`
+         with CB `function(X){return X[0];}` (optional name) or the
+         arrow twins `(X)=>X[0]` / `X=>X[0]` /
+         `(X)=>{return X[0];}` / `X=>{return X[0];}`.
+
+    Node-exact desugar (v24.20.0): the poem is a string literal, so
+    the extraction is computed statically over its `\\n`-split
+    lines. Per-form empty-line semantics are honored exactly: form
+    A accumulates `undefined` (`s+=undefined` is `s+"undefined"`);
+    form B's `charAt(0)` yields `''`; form C's `join` skips
+    `undefined`. The first-character hop reads UTF-16 code units
+    (_f936_first_unit). The split separator must be exactly
+    `'\\n'`; the join separator exactly `''`.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    non-literal poems; other separators; `charAt` with non-zero
+    args; other index reads; other map callbacks; other for-heads;
+    `S=S+X` is admitted alongside `S+=X` (engine-identical).
+
+    Tried after F934: the `var POEM='LIT'` head is shared with many
+    earlier routes, but none accepts a `.split('\\n')`-fed
+    first-unit extraction tail (red-first verified: 4 BREAK on the
+    open tree), so no previously-decoded input changes behavior.
+    None falls through to the parenthesized-additive path like
+    F934. F452 parts charged per poem line with snapshot/restore
+    on miss (wave-383 lesson); results bounded by
+    _MAX_DECODE_BYTES. Never evals. Returns (value, next_index) or
+    None.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        saved_parts = state["parts"]
+        saved_ops = state["ops"]
+
+        def _charge(num=1):
+            state["parts"] += num
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+
+        def _parse_split_n(k, pname):
+            # `PNAME.split('\\n')` at text[k]; returns next_k.
+            nm, k = _js_parse_ident(text, k)
+            if nm != pname:
+                raise _JSExprFail("F936 split on another ident")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ".")
+            mn, k = _js_parse_ident(text, _js_skip_ws(text, k))
+            if mn != "split":
+                raise _JSExprFail("F936 not split")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "(")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F936 split sep not a literal")
+            sep, k = _js_parse_string(text, k)
+            if sep != "\n":
+                raise _JSExprFail("F936 split sep not newline")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ")")
+            return k
+
+        def _parse_accum_op(k, acc, recv, idx):
+            # `S+=RECV[IDX][0];` / `S=S+RECV[IDX][0];` at text[k].
+            k = _js_skip_ws(text, k)
+            an, k = _js_parse_ident(text, k)
+            if an != acc:
+                raise _JSExprFail("F936 accum body not S+=X")
+            k = _js_skip_ws(text, k)
+            if (k + 1 < n and text[k] == "+"
+                    and text[k + 1] == "="):
+                k = _js_skip_ws(text, k + 2)
+            elif k < n and text[k] == "=":
+                k = _js_skip_ws(text, k + 1)
+                an2, k = _js_parse_ident(text, k)
+                if an2 != acc:
+                    raise _JSExprFail("F936 accum body not S=S+X")
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "+":
+                    raise _JSExprFail("F936 accum body not S=S+X")
+                k = _js_skip_ws(text, k + 1)
+            else:
+                raise _JSExprFail("F936 accum body not S+=X")
+            rn, k = _js_parse_ident(text, k)
+            if rn != recv:
+                raise _JSExprFail("F936 accum over another ident")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "[")
+            ix, k = _js_parse_ident(text, _js_skip_ws(text, k))
+            if ix != idx:
+                raise _JSExprFail("F936 accum wrong index var")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "]")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "[")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "0":
+                raise _JSExprFail("F936 accum not [0]")
+            k += 1
+            if k < n and text[k] in _JS_IDENT_CONT:
+                raise _JSExprFail("F936 accum not [0]")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "]")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ";")
+            return k
+
+        def _parse_return_acc(k, acc):
+            # `return ACC;` at text[k] through end of body.
+            k = _js_skip_ws(text, k)
+            rk = _js_match_kw(text, k, "return")
+            if rk is None:
+                raise _JSExprFail("F936 body not return")
+            k = _js_skip_ws(text, rk)
+            an, k = _js_parse_ident(text, k)
+            if an != acc:
+                raise _JSExprFail("F936 return not the accum")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ";":
+                k += 1
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "}")
+            return k
+
+        k = _js_skip_ws(text, j + 1)
+        # `var|let|const POEM='LIT';`
+        dkw, k = _js_match_decl_kw(text, k)
+        if dkw is None:
+            raise _JSExprFail("F936 not a decl")
+        k = _js_skip_ws(text, k)
+        pname, k = _js_parse_ident(text, k)
+        if pname == "arguments" or pname in _F611_RESERVED:
+            raise _JSExprFail("F936 bad poem name")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "=")
+        if k < n and text[k] == "=":
+            raise _JSExprFail("F936 decl not =")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F936 poem not a literal")
+        poem, k = _js_parse_string(text, k)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        _charge()
+        lines = poem.split("\n")
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is not None:
+            # Form C: `return POEM.split('\n').map(CB).join('');`
+            k = _js_skip_ws(text, rk)
+            k = _parse_split_n(k, pname)
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ".")
+            mn, k = _js_parse_ident(text, _js_skip_ws(text, k))
+            if mn != "map":
+                raise _JSExprFail("F936 not map")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "(")
+            k = _js_skip_ws(text, k)
+            if text.startswith("function", k):
+                kk = k + len("function")
+                if kk < n and text[kk] in _JS_IDENT_CONT:
+                    raise _JSExprFail("F936 bad function keyword")
+                k = _js_skip_ws(text, kk)
+                if k < n and text[k] in _JS_IDENT_START:
+                    _, k = _js_parse_ident(text, k)  # optional name
+                    k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, "(")
+                xp, k = _js_parse_ident(text, _js_skip_ws(text, k))
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ")")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, "{")
+                k = _js_skip_ws(text, k)
+                rk2 = _js_match_kw(text, k, "return")
+                if rk2 is None:
+                    raise _JSExprFail("F936 map cb not return")
+                k = _js_skip_ws(text, rk2)
+                cb_block = True
+            else:
+                cb_block = False
+                if k < n and text[k] == "(":
+                    xp, k = _js_parse_ident(
+                        text, _js_skip_ws(text, k + 1))
+                    k = _js_skip_ws(text, k)
+                    k = _js_expect(text, k, ")")
+                else:
+                    xp, k = _js_parse_ident(text, k)
+                k = _js_skip_ws(text, k)
+                if not text.startswith("=>", k):
+                    raise _JSExprFail("F936 map cb not arrow")
+                k = _js_skip_ws(text, k + 2)
+                if k < n and text[k] == "{":
+                    k = _js_skip_ws(text, k + 1)
+                    rk2 = _js_match_kw(text, k, "return")
+                    if rk2 is None:
+                        raise _JSExprFail("F936 map cb not return")
+                    k = _js_skip_ws(text, rk2)
+                    cb_block = True
+            if xp == "arguments" or xp in _F611_RESERVED:
+                raise _JSExprFail("F936 bad map param")
+            # `X[0]` -- the first-unit projection.
+            xn, k = _js_parse_ident(text, k)
+            if xn != xp:
+                raise _JSExprFail("F936 map cb not X[0]")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "[")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "0":
+                raise _JSExprFail("F936 map cb not X[0]")
+            k += 1
+            if k < n and text[k] in _JS_IDENT_CONT:
+                raise _JSExprFail("F936 map cb not X[0]")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "]")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ";":
+                k += 1
+            k = _js_skip_ws(text, k)
+            if cb_block:
+                # A block-body callback still needs its `}` before
+                # the `)` closing `.map(`.
+                k = _js_expect(text, k, "}")
+                k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ")")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ".")
+            jn, k = _js_parse_ident(text, _js_skip_ws(text, k))
+            if jn != "join":
+                raise _JSExprFail("F936 not join")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "(")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F936 join sep not a literal")
+            jsep, k = _js_parse_string(text, k)
+            if jsep != "":
+                raise _JSExprFail("F936 join sep not empty")
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ")")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ";":
+                k += 1
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "}")
+            # Statically compute: join skips undefined.
+            parts = []
+            for ln in lines:
+                u = _f936_first_unit(ln)
+                parts.append(u if u is not None else "")
+                _charge()
+            val = "".join(parts)
+        else:
+            # Forms A/B: `var|let S='';` then indexed or for-of tail.
+            acc, k = _js_parse_f6xx_accum_decl(text, k)
+            k = _js_skip_ws(text, k)
+            fk = _js_match_kw(text, k, "for")
+            if fk is not None:
+                # Form B: `for(var|let X of POEM.split('\n'))
+                #          {S+=X.charAt(0);}return S;`
+                k = _js_skip_ws(text, fk)
+                k = _js_expect(text, k, "(")
+                k = _js_skip_ws(text, k)
+                dkw2, k = _js_match_decl_kw(text, k)
+                if dkw2 is None or dkw2 == "const":
+                    raise _JSExprFail("F936 for-of decl not var/let")
+                k = _js_skip_ws(text, k)
+                xname, k = _js_parse_ident(text, k)
+                if xname == "arguments" or xname in _F611_RESERVED:
+                    raise _JSExprFail("F936 bad for-of var")
+                k = _js_skip_ws(text, k)
+                if _js_match_kw(text, k, "of") is None:
+                    raise _JSExprFail("F936 not for-of")
+                k = _js_skip_ws(text, k + 2)
+                k = _parse_split_n(k, pname)
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ")")
+                k = _js_skip_ws(text, k)
+                braced = False
+                if k < n and text[k] == "{":
+                    braced = True
+                    k = _js_skip_ws(text, k + 1)
+                # `S+=X.charAt(0);` / `S=S+X.charAt(0);`
+                an, k = _js_parse_ident(text, _js_skip_ws(text, k))
+                if an != acc:
+                    raise _JSExprFail("F936 accum body not S+=X")
+                k = _js_skip_ws(text, k)
+                if (k + 1 < n and text[k] == "+"
+                        and text[k + 1] == "="):
+                    k = _js_skip_ws(text, k + 2)
+                elif k < n and text[k] == "=":
+                    k = _js_skip_ws(text, k + 1)
+                    an2, k = _js_parse_ident(text, k)
+                    if an2 != acc:
+                        raise _JSExprFail("F936 accum not S=S+X")
+                    k = _js_skip_ws(text, k)
+                    if k >= n or text[k] != "+":
+                        raise _JSExprFail("F936 accum not S=S+X")
+                    k = _js_skip_ws(text, k + 1)
+                else:
+                    raise _JSExprFail("F936 accum body not S+=X")
+                xn, k = _js_parse_ident(text, k)
+                if xn != xname:
+                    raise _JSExprFail("F936 accum wrong var")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ".")
+                mn, k = _js_parse_ident(text, _js_skip_ws(text, k))
+                if mn != "charAt":
+                    raise _JSExprFail("F936 not charAt")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, "(")
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "0":
+                    raise _JSExprFail("F936 charAt arg not 0")
+                k += 1
+                if k < n and text[k] in _JS_IDENT_CONT:
+                    raise _JSExprFail("F936 charAt arg not 0")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ")")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ";")
+                if braced:
+                    k = _js_skip_ws(text, k)
+                    k = _js_expect(text, k, "}")
+                k = _parse_return_acc(k, acc)
+                # Statically compute: charAt(0) of '' is ''.
+                aval = ""
+                for ln in lines:
+                    u = _f936_first_unit(ln)
+                    aval += u if u is not None else ""
+                    if len(aval) > _MAX_DECODE_BYTES:
+                        raise _JSExprFail("F936 accum too long")
+                    _charge()
+                val = aval
+            else:
+                # Form A: `var|let L=POEM.split('\n');`
+                #         `for(var|let I=0;I<L.length;I++)`
+                #         `{S+=L[I][0];}return S;`
+                dkw3, k = _js_match_decl_kw(text, k)
+                if dkw3 is None or dkw3 == "const":
+                    raise _JSExprFail("F936 lines decl not var/let")
+                k = _js_skip_ws(text, k)
+                lname, k = _js_parse_ident(text, k)
+                if lname == "arguments" or lname in _F611_RESERVED:
+                    raise _JSExprFail("F936 bad lines name")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, "=")
+                if k < n and text[k] == "=":
+                    raise _JSExprFail("F936 decl not =")
+                k = _js_skip_ws(text, k)
+                k = _parse_split_n(k, pname)
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ";")
+                _charge()
+                fk = _js_match_kw(text, _js_skip_ws(text, k), "for")
+                if fk is None:
+                    raise _JSExprFail("F936 not a for loop")
+                k = _js_skip_ws(text, fk)
+                k = _js_expect(text, k, "(")
+                k = _js_skip_ws(text, k)
+                dkw4, k = _js_match_decl_kw(text, k)
+                if dkw4 is None or dkw4 == "const":
+                    raise _JSExprFail("F936 for decl not var/let")
+                k = _js_skip_ws(text, k)
+                iname, k = _js_parse_ident(text, k)
+                if iname == "arguments" or iname in _F611_RESERVED:
+                    raise _JSExprFail("F936 bad index name")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, "=")
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "0":
+                    raise _JSExprFail("F936 index not 0")
+                k += 1
+                if k < n and text[k] in _JS_IDENT_CONT:
+                    raise _JSExprFail("F936 index not 0")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ";")
+                k = _js_skip_ws(text, k)
+                in2, k = _js_parse_ident(text, k)
+                if in2 != iname:
+                    raise _JSExprFail("F936 cond wrong var")
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "<":
+                    raise _JSExprFail("F936 cond not <")
+                k = _js_skip_ws(text, k + 1)
+                ln2, k = _js_parse_ident(text, k)
+                if ln2 != lname:
+                    raise _JSExprFail("F936 cond wrong array")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ".")
+                lm, k = _js_parse_ident(text, _js_skip_ws(text, k))
+                if lm != "length":
+                    raise _JSExprFail("F936 cond not length")
+                k = _js_skip_ws(text, k)
+                k = _js_expect(text, k, ";")
+                k = _js_skip_ws(text, k)
+                in3, k = _js_parse_ident(text, k)
+                if in3 != iname:
+                    raise _JSExprFail("F936 incr wrong var")
+                k = _js_skip_ws(text, k)
+                if not text.startswith("++", k):
+                    raise _JSExprFail("F936 incr not ++")
+                k = _js_skip_ws(text, k + 2)
+                k = _js_expect(text, k, ")")
+                k = _js_skip_ws(text, k)
+                braced = False
+                if k < n and text[k] == "{":
+                    braced = True
+                    k = _js_skip_ws(text, k + 1)
+                k = _parse_accum_op(k, acc, lname, iname)
+                if braced:
+                    k = _js_skip_ws(text, k)
+                    k = _js_expect(text, k, "}")
+                k = _parse_return_acc(k, acc)
+                # Statically compute: s+=undefined -> s+"undefined".
+                aval = ""
+                for ln in lines:
+                    u = _f936_first_unit(ln)
+                    aval += u if u is not None else "undefined"
+                    if len(aval) > _MAX_DECODE_BYTES:
+                        raise _JSExprFail("F936 accum too long")
+                    _charge()
+                val = aval
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F936 result too long")
+        state["ops"] += 1  # the extraction is obfuscation-shaped
+        return _js_parse_f6xx_iife_tail(text, k, depth, state, val)
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
+
+
 def _js_parse_f640_async_iife_head(text, i):
     """Match `(async()=>{` or `(async function(){` at text[i] (F640).
 
@@ -81312,6 +82049,34 @@ _F765_WS_CHARS = frozenset(
 )
 
 
+def _f935_class_escape(text, j):
+    """Parse a `\\uXXXX` escape at text[j] == '\\\\' inside an F765 class (F935).
+
+    Returns (char, next_j). Node-exact (v24.20.0): exactly four hex
+    digits name the BMP char -- lone surrogates are admitted (the
+    engine allows them without the `u` flag); the escape works as a
+    range endpoint too (`[\\u200b-\\u200d]`, range-out-of-order still
+    throws in the engine and fails closed here). Any other
+    backslash shape fails closed (the Annex B identity-escape
+    reading -- e.g. `[\\u20]` is `[u20]` in the engine -- is a
+    documented residual: rejected, never mis-decoded). Never evals.
+    """
+    n = len(text)
+    if text[j + 1:j + 2] == "u":
+        hexs = text[j + 2:j + 6]
+        if (len(hexs) == 4
+                and all(c in "0123456789abcdefABCDEF" for c in hexs)):
+            ch = chr(int(hexs, 16))
+            if 0xd800 <= ord(ch) <= 0xdfff:
+                # Lone surrogates fail closed: the engine matches
+                # UTF-16 code units, so [\ud83d] can match half of a
+                # pair -- the decoder's code-point scan cannot
+                # reproduce that (documented boundary).
+                raise _JSExprFail("F935 lone surrogate not modeled")
+            return ch, j + 6
+    raise _JSExprFail("F935 class escape not modeled")
+
+
 def _f765_parse_class(text, j):
     """Parse a `[...]` character class at text[j] == '[' (F765).
 
@@ -81344,28 +82109,37 @@ def _f765_parse_class(text, j):
     chars = set()
     while j < n and text[j] != "]":
         c = text[j]
-        if c in "\\[/":
+        if c in "[/":
             raise _JSExprFail("F765 class escape/nest/slash not modeled")
-        if not _litok(c):
-            raise _JSExprFail("F765 class char not modeled")
-        # Range X-Y? X is c; needs '-' next and a valid atom Y after.
+        if c == "\\":
+            # F935: \uXXXX escapes (and only those) are admitted as
+            # class atoms -- the Barracuda dual-target
+            # steganography-strip shape.
+            ch, j = _f935_class_escape(text, j)
+        else:
+            if not _litok(c):
+                raise _JSExprFail("F765 class char not modeled")
+            ch, j = c, j + 1
+        # Range X-Y? X is ch; needs '-' next and a valid atom Y after.
         # (A '-' not followed by '-Y' stays literal.)
-        if (j + 2 < n and text[j + 1] == "-" and text[j + 2] != "]"
-                and text[j + 2] != "/"):
-            d = text[j + 2]
-            if d in "\\[/":
+        if (j + 1 < n and text[j] == "-" and text[j + 1] != "]"
+                and text[j + 1] != "/"):
+            d = text[j + 1]
+            if d in "[/":
                 raise _JSExprFail(
                     "F765 class escape/nest/slash not modeled")
-            if not _litok(d):
-                raise _JSExprFail("F765 class char not modeled")
-            if ord(c) > ord(d):
+            if d == "\\":
+                yh, j = _f935_class_escape(text, j + 1)
+            else:
+                if not _litok(d):
+                    raise _JSExprFail("F765 class char not modeled")
+                yh, j = d, j + 2
+            if ord(ch) > ord(yh):
                 raise _JSExprFail("F765 class range out of order")
-            for o in range(ord(c), ord(d) + 1):
+            for o in range(ord(ch), ord(yh) + 1):
                 chars.add(chr(o))
-            j += 3
         else:
-            chars.add(c)
-            j += 1
+            chars.add(ch)
     if j >= n:
         raise _JSExprFail("F765 unterminated class")
     return frozenset(chars), neg, j + 1
@@ -81435,14 +82209,31 @@ def _f765_parse_terms(text, j, in_group):
         elif c == "\\":
             # F898: the `\S` shorthand (non-whitespace), desugared
             # to the negated ASCII-whitespace class -- the matcher
-            # handles negated classes natively, and the F765 atoms
-            # are ASCII-only by construction (a non-ASCII
-            # non-whitespace char is outside the modeled class, a
-            # documented boundary). Any other escape still fails
-            # closed, exactly as before.
+            # handles negated classes natively (a non-ASCII
+            # non-whitespace char matches, engine-exact). Any other
+            # escape still fails closed, exactly as before
+            # (F935 admits \uXXXX as a term atom below).
             if j + 1 < n and text[j + 1] == "S":
                 atoms.append(("class", _F765_WS_CHARS, True))
                 j += 2
+            elif text[j + 1:j + 2] == "u":
+                # F935: \uXXXX escapes in term position (the
+                # class-position twin is _f935_class_escape) --
+                # node-exact for BMP chars (v24.20.0); the matcher
+                # handles ("lit", ch) natively. Any other escape
+                # still fails closed.
+                hexs = text[j + 2:j + 6]
+                if (len(hexs) == 4
+                        and all(h in "0123456789abcdefABCDEF"
+                                for h in hexs)):
+                    _uch = chr(int(hexs, 16))
+                    if 0xd800 <= ord(_uch) <= 0xdfff:
+                        raise _JSExprFail(
+                            "F935 lone surrogate not modeled")
+                    atoms.append(("lit", _uch))
+                    j += 6
+                else:
+                    raise _JSExprFail("F765 regex atom not modeled")
             else:
                 raise _JSExprFail("F765 regex atom not modeled")
         elif c in "*?|^$":
@@ -81609,11 +82400,12 @@ def _f765_all_matches(value, atoms):
     order (node v24.20.0): at each scan position the greedy
     backtracking match wins; the scan resumes at the match end.
     Matches are never empty (every term consumes >= 1 char), so the
-    scan always advances. Group texts are code-point slices -- the
-    atoms are ASCII-only, so a match can never split a surrogate
-    pair and the text is engine-identical. Returns [] when nothing
-    matches (the caller fails closed: no match is null in the
-    engine) and also on matcher over-complexity. Never evals.
+    scan always advances. Group texts are code-point slices -- atoms
+    are BMP-only (F935 admits \\uXXXX escapes but lone surrogates
+    fail closed), so a match can never split a surrogate pair and
+    the text is engine-identical. Returns [] when nothing matches
+    (the caller fails closed: no match is null in the engine) and
+    also on matcher over-complexity. Never evals.
     """
     ngroups = _f765_count_groups(atoms)
     out = []
@@ -84344,6 +85136,13 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         #      function replacement fails closed (documented residual):
         #      the comma scope is defined for string replacements
         #      only.
+        #  (e) F935: a regex literal the F603 grammar rejects --
+        #      character classes (now with \uXXXX escapes) and `+`
+        #      quantifiers -- is modeled under the bounded F765
+        #      char-class grammar with "" (first match) or "g" (all
+        #      matches) flags and a literal-string replacement
+        #      ($-expanded via the F603 subset, groups from the F765
+        #      match); a function replacement fails closed here.
         # The replacement's $-patterns expand node-exactly for the
         # documented subset ($$, $&, $`, $', $n for a modeled group);
         # anything else $-shaped fails closed (documented). A regex
@@ -84361,6 +85160,8 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         _f603_is_regex = False
         _f603_comma_g = False
         _f688_alts = None
+        _f935_atoms = None
+        _f935_global = False
         if i < len(text) and text[i] in "'\"":
             _pattern, i = _js_parse_string(text, i)
         elif i < len(text) and text[i] == "/":
@@ -84373,18 +85174,35 @@ def _js_apply_method_at(text, i, name, value, depth, state):
                 if _f688_flags not in ("", "g"):
                     raise _JSExprFail("F688 replace flags not modeled")
             else:
-                _body, _flags, i = _js_parse_f603_regex_literal(text, i)
-                if _flags:
-                    # F464's comma scope only; any other flagged regex
-                    # fails closed (documented).
-                    if (_body != ","
-                            or _flags not in ("g", "i", "gi", "ig")):
-                        raise _JSExprFail("F603 replace flags not modeled")
-                    _f603_comma_g = "g" in _flags
-                    _pattern = ","
-                else:
-                    _f603_is_regex = True
-                    _pattern = _body
+                try:
+                    _body, _flags, i = _js_parse_f603_regex_literal(
+                        text, i)
+                except _JSExprFail:
+                    # F935: bodies the F603 grammar rejects (notably
+                    # character classes, now with \uXXXX escapes) fall
+                    # back to the bounded F765 char-class grammar --
+                    # disjoint by construction (F603 raises on `[`,
+                    # `\`, `+`). Flags "" (first match) or "g" (all
+                    # matches); anything else fails closed (the
+                    # engine's other flags change semantics).
+                    _f935_atoms, _f935_flags, i = (
+                        _js_parse_f765_regex_literal(text, i))
+                    if _f935_flags not in ("", "g"):
+                        raise _JSExprFail(
+                            "F935 replace flags not modeled")
+                    _f935_global = (_f935_flags == "g")
+                if _f935_atoms is None:
+                    if _flags:
+                        # F464's comma scope only; any other flagged regex
+                        # fails closed (documented).
+                        if (_body != ","
+                                or _flags not in ("g", "i", "gi", "ig")):
+                            raise _JSExprFail("F603 replace flags not modeled")
+                        _f603_comma_g = "g" in _flags
+                        _pattern = ","
+                    else:
+                        _f603_is_regex = True
+                        _pattern = _body
         else:
             raise _JSExprFail("F603 replace pattern not a literal")
         i = _js_skip_ws(text, i)
@@ -84433,6 +85251,33 @@ def _js_apply_method_at(text, i, name, value, depth, state):
                 raise _JSExprFail(
                     "F609 comma-g function replacement not modeled")
             result = _f603_replace_all_commas(value, rep)
+        elif _f935_atoms is not None:
+            # F935: bounded char-class grammar replace. "" replaces
+            # the first match; "g" replaces every leftmost match in
+            # engine order (_f765_all_matches advances past each
+            # match exactly as the engine's global replace does;
+            # F765 matches are never empty). The replacement is a
+            # literal string, $-expanded via the F603 subset with the
+            # F765 capture-group texts. A function replacement fails
+            # closed (documented residual).
+            if _f609_fn is not None:
+                raise _JSExprFail(
+                    "F935 function replacement not modeled")
+            _m765 = _f765_all_matches(value, _f935_atoms)
+            if not _f935_global:
+                _m765 = _m765[:1]
+            _out = []
+            _prev = 0
+            for _s, _e, _full, _gs in _m765:
+                _out.append(value[_prev:_s])
+                _out.append(_f603_expand_dollar(
+                    rep, value, _s, _e, _full, _gs))
+                _prev = _e
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("F935 replace too many matches")
+            _out.append(value[_prev:])
+            result = "".join(_out)
         else:
             # The modeled match span, or None when the pattern misses:
             # (start, end, match_text, groups).
@@ -94423,6 +95268,43 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                              state)
         if _f641 is not None:
             val, i = _f641
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F934: (function(){async function NAME(){return ADD;}
+        #   return NAME().then(CB);})() -- async-function promise
+        #   laundering, statically resolved (F618/F631 precedent).
+        #   Tried after F641: the `async function NAME(` declaration
+        #   head is disjoint from every earlier route (F631 needs the
+        #   `(async function(){` IIFE head, F640 the `(async()=>`
+        #   head, F735/F736 fail closed on `async` functions, all
+        #   others need var/let/const or other statement heads);
+        #   None falls through to the parenthesized-additive path
+        #   like F641.
+        _f934_saved_parts = state['parts']; _f934_saved_ops = state['ops']
+        _f934 = _js_parse_f934_async_then_iife(text, i, depth, state)
+        if _f934 is None:
+            state['parts'] = _f934_saved_parts; state['ops'] = _f934_saved_ops
+        if _f934 is not None:
+            val, i = _f934
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F936: (function(){var|let|const POEM='LIT';<ACROSTIC>})() --
+        #   poetic acrostic multi-hop carrier (PoeLLM class): the poem
+        #   carries the credential as first-characters-per-line,
+        #   extracted via an indexed loop (S+=L[I][0]), a for-of
+        #   charAt loop (S+=X.charAt(0)), or map/join
+        #   (POEM.split('\n').map(X=>X[0]).join('')). The poem is a
+        #   string literal, so the extraction is computed statically
+        #   with the engine's per-form empty-line and UTF-16
+        #   code-unit semantics. Tried after F934: no earlier route
+        #   accepts a `.split('\n')`-fed first-unit extraction tail
+        #   (red-first verified: 4 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the parenthesized-additive path like F934.
+        _f936_saved_parts = state['parts']; _f936_saved_ops = state['ops']
+        _f936 = _js_parse_f936_acrostic_iife(text, i, depth, state)
+        if _f936 is None:
+            state['parts'] = _f936_saved_parts; state['ops'] = _f936_saved_ops
+        if _f936 is not None:
+            val, i = _f936
             return _js_parse_postfix(text, i, val, depth, state)
         # F653: (function(){var|let|const FR=['LIT',...];var|let|const
         #   O={i:0};O[Symbol.iterator]=function(){var SELF=this;
