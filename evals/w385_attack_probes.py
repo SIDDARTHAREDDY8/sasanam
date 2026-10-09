@@ -301,28 +301,28 @@ def test_r53_f808_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f809_s1_open():
-    """F809 OPEN: miss reproduces."""
-    miss = _misses("(function(){var r;new Promise(function(res){r='%s';res();});return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f809_s1_closed():
+    """F809 CLOSED (wave-386 lane 8): Promise-executor assignment blocks coded."""
+    ok = _blocked("(function(){var r;new Promise(function(res){r='%s';res();});return r+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f809_s2_open():
-    """F809 OPEN: miss reproduces."""
-    miss = _misses("(function(){function f(a){return function(b){return a+b;};}return f('%s')('%s');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f809_s2_closed():
+    """F809 CLOSED (wave-386 lane 8): curried nested closure blocks coded."""
+    ok = _blocked("(function(){function f(a){return function(b){return a+b;};}return f('%s')('%s');})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f810_s1_open():
-    """F810 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={a:function(){return this;},b:function(){return '%s';}};return o.a().b()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f810_s1_closed():
+    """F810 CLOSED (wave-386 lane 8): this-returning method chain blocks coded."""
+    ok = _blocked("(function(){var o={a:function(){return this;},b:function(){return '%s';}};return o.a().b()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f810_s2_open():
-    """F810 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={a:function(){this.v='%s';return this;},b:function(){return this.v;}};return o.a().b()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f810_s2_closed():
+    """F810 CLOSED (wave-386 lane 8): this-assign method chain blocks coded."""
+    ok = _blocked("(function(){var o={a:function(){this.v='%s';return this;},b:function(){return this.v;}};return o.a().b()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r53_f811_s1_open():
