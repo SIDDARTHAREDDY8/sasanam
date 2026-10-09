@@ -44080,6 +44080,709 @@ def _js_parse_f757_newtarget_iife(text, i, depth, state):
         return None
 
 
+# ---------------------------------------------------------------------------
+# F786: continue-guarded accumulation (F602 residual)
+# ---------------------------------------------------------------------------
+
+
+def _js_f786_charge(state):
+    """Charge one F452 part and fail closed past the budget (F786)."""
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F786 too many parts")
+
+
+def _js_f786_parse_operand(stmts, j):
+    """Parse an element-read operand at stmts[j] (F786).
+
+    Either a bare identifier or `A[I]`. Returns
+    ((kind, name, index), next_index) with kind "ident"/"index".
+    Never evals.
+    """
+    name, k = _js_parse_ident(stmts, j)
+    k = _js_skip_ws(stmts, k)
+    if k < len(stmts) and stmts[k] == "[":
+        idx, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k + 1))
+        k = _js_expect(stmts, k, "]")
+        return ("index", name, idx), k
+    return ("ident", name, None), k
+
+
+def _js_f786_parse_guard(stmts, j, is_elem, state):
+    """Parse `if(EQ)continue;` / `if(EQ){continue;}` at stmts[j] (F786).
+
+    EQ compares an element read with a string literal via
+    `===`/`==`/`!==`/`!=` in either order (yoda allowed).
+    Returns ((skip_literal, negate), next_index); negate is True
+    for the `!==`/`!=` (accumulate-only-matching) form.
+    is_elem(operand) validates the element-read side. A
+    non-guard head returns None; anything else fails closed.
+    Never evals.
+    """
+    n = len(stmts)
+    m = _js_match_kw(stmts, j, "if")
+    if m is None:
+        return None
+    j = _js_expect(stmts, m, "(")
+    j = _js_skip_ws(stmts, j)
+
+    def _op(sj):
+        for op, is_neg in (("!==", True), ("===", False),
+                           ("!=", True), ("==", False)):
+            if stmts.startswith(op, sj):
+                return is_neg, _js_skip_ws(stmts, sj + len(op))
+        raise _JSExprFail("F786 guard not an equality")
+
+    elem = None
+    lit = None
+    if j < n and stmts[j] in "'\"":
+        lit, j = _js_parse_string(stmts, j)
+        negate, j = _op(_js_skip_ws(stmts, j))
+        elem, j = _js_f786_parse_operand(stmts, j)
+    else:
+        elem, j = _js_f786_parse_operand(stmts, j)
+        negate, j = _op(_js_skip_ws(stmts, j))
+        j = _js_skip_ws(stmts, j)
+        if j < n and stmts[j] in "'\"":
+            lit, j = _js_parse_string(stmts, j)
+        else:
+            raise _JSExprFail("F786 guard not literal-compared")
+    if not is_elem(elem):
+        raise _JSExprFail("F786 guard not on the element")
+    j = _js_expect(stmts, j, ")")
+    j = _js_skip_ws(stmts, j)
+    braced = False
+    if j < n and stmts[j] == "{":
+        braced = True
+        j = _js_skip_ws(stmts, j + 1)
+    ck = _js_match_kw(stmts, j, "continue")
+    if ck is None:
+        raise _JSExprFail("F786 guard not a continue")
+    j = _js_expect(stmts, ck, ";")
+    if braced:
+        j = _js_expect(stmts, j, "}")
+    _js_f786_charge(state)
+    return (lit, negate), j
+
+
+def _js_parse_f786_continue_accum_iife(text, i, depth, state):
+    """Parse continue-guarded accumulation IIFEs (F786).
+
+    F602 (CLOSED, wave-372) models for-of accumulation, but a
+    `continue` guard inside the loop misses: the skipped element
+    never accumulates node-exactly while the decoder produces zero
+    variants:
+      `(function(){var r='';for(var x of ['f1','xx','f2']){if(x==='xx')continue;r+=x;}return r;})()`
+      `(function(){var r='';var a=['f1','xx','f2'];for(var i=0;i<a.length;i++){if(a[i]==='xx')continue;r+=a[i];}return r;})()`
+    Node-exact desugar (v24.20.0): the loop iterates the
+    string-literal elements in order; each `if(EQ)continue;`
+    guard skips the matching elements (`===`/`==`) or the
+    non-matching ones (`!==`/`!=`); the accumulator joins the
+    rest. The for-of source is an inline `[LITS]` or a bound
+    `var|let ARR=[LITS]`; the C-style twin is
+    `for(var|let I=0;I<ARR.length;I++|++I|I+=1)` over a bound
+    array. Guards may be yoda-ordered and the `continue` may be
+    braced; `1+` guards union their skip sets.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-empty accumulator, a `const` accumulator, a loop variable
+    shadowing the accumulator or the array, non-literal
+    elements, holes, a guard on another variable, a labeled
+    continue, an `else` on the guard, a body other than
+    guards + `ACC+=E`, a mutated array, `new Set` sources (F602's
+    territory), call args on the IIFE. On miss the F452 budgets
+    are restored (wave-383 lesson). Returns (value, next_index),
+    or None. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F786 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        # Optional `var|let ARR=[LITS];` binding.
+        arrname = None
+        elements = None
+        dclk, dk = _js_match_decl_kw(stmts, sj)
+        if dclk is not None:
+            q = _js_skip_ws(stmts, dk)
+            if q < len(stmts) and stmts[q] in _JS_IDENT_START:
+                nm, q2 = _js_parse_ident(stmts, q)
+                q2 = _js_skip_ws(stmts, q2)
+                if q2 < len(stmts) and stmts[q2] == "=":
+                    q2 = _js_skip_ws(stmts, q2 + 1)
+                    if q2 < len(stmts) and stmts[q2] == "[":
+                        arrname = nm
+                        elements, sj = _js_parse_string_literal_list(
+                            stmts, q2 + 1, state, "]")
+                        sj = _js_expect(stmts, sj, ";")
+                        _js_f786_charge(state)
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "for")
+        if m is None:
+            raise _JSExprFail("F786 no for")
+        sj = _js_expect(stmts, m, "(")
+        sj = _js_skip_ws(stmts, sj)
+        lkw = _js_match_kw(stmts, sj, "var")
+        if lkw is None:
+            lkw = _js_match_kw(stmts, sj, "let")
+        if lkw is None:
+            lkw = _js_match_kw(stmts, sj, "const")
+        if lkw is None:
+            raise _JSExprFail("F786 loop decl not var/let/const")
+        loopvar, q = _js_parse_ident(stmts, _js_skip_ws(stmts, lkw))
+        if loopvar == acc or (arrname is not None and loopvar == arrname):
+            raise _JSExprFail("F786 loopvar shadows binding")
+        q = _js_skip_ws(stmts, q)
+        if _js_match_kw(stmts, q, "of") is not None:
+            # for-of form.
+            q = _js_skip_ws(stmts, _js_match_kw(stmts, q, "of"))
+            if q < len(stmts) and stmts[q] == "[":
+                elements, q = _js_parse_string_literal_list(
+                    stmts, q + 1, state, "]")
+            else:
+                src, q = _js_parse_ident(stmts, q)
+                if src != arrname:
+                    raise _JSExprFail("F786 for-of over unbound")
+            q = _js_expect(stmts, q, ")")
+
+            def _is_elem(op, _lv=loopvar):
+                return op[0] == "ident" and op[1] == _lv
+        elif q < len(stmts) and stmts[q] == "=":
+            # C-style form: `I=0;I<ARR.length;I++|++I|I+=1`. A
+            # `const` counter throws on the update in the engine
+            # (node v24.20.0: TypeError), so it fails closed here.
+            if lkw == "const":
+                raise _JSExprFail("F786 C-style const counter")
+            if arrname is None:
+                raise _JSExprFail("F786 C-style without array")
+            q = _js_skip_ws(stmts, q + 1)
+            if q >= len(stmts) or stmts[q] != "0":
+                raise _JSExprFail("F786 C-style not zero-init")
+            q = _js_expect(stmts, q + 1, ";")
+            iname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+            if iname != loopvar:
+                raise _JSExprFail("F786 C-style counter mismatch")
+            q = _js_skip_ws(stmts, q)
+            if q >= len(stmts) or stmts[q] != "<":
+                raise _JSExprFail("F786 C-style not <")
+            q = _js_skip_ws(stmts, q + 1)
+            aname, q = _js_parse_ident(stmts, q)
+            if aname != arrname:
+                raise _JSExprFail("F786 C-style not over array")
+            q = _js_skip_ws(stmts, q)
+            if q >= len(stmts) or stmts[q] != ".":
+                raise _JSExprFail("F786 C-style not .length")
+            lname, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q + 1))
+            if lname != "length":
+                raise _JSExprFail("F786 C-style not .length")
+            q = _js_expect(stmts, q, ";")
+            q = _js_skip_ws(stmts, q)
+            if stmts.startswith("++", q):
+                uname, q = _js_parse_ident(stmts, q + 2)
+            else:
+                uname, q = _js_parse_ident(stmts, q)
+                q = _js_skip_ws(stmts, q)
+                if stmts.startswith("++", q):
+                    q += 2
+                elif stmts.startswith("+=1", q):
+                    q += 3
+                else:
+                    raise _JSExprFail("F786 C-style bad update")
+            if uname != loopvar:
+                raise _JSExprFail("F786 C-style update mismatch")
+            q = _js_expect(stmts, q, ")")
+
+            def _is_elem(op, _an=arrname, _lv=loopvar):
+                return (op[0] == "index" and op[1] == _an
+                        and op[2] == _lv)
+        else:
+            raise _JSExprFail("F786 loop not for-of/C-style")
+        sj = _js_skip_ws(stmts, q)
+        sj = _js_expect(stmts, sj, "{")
+        sj = _js_skip_ws(stmts, sj)
+        guards = []
+        while True:
+            g = _js_f786_parse_guard(stmts, sj, _is_elem, state)
+            if g is None:
+                break
+            guards.append(g[0])
+            sj = _js_skip_ws(stmts, g[1])
+        if not guards:
+            raise _JSExprFail("F786 no continue guard")
+        acc2, sj = _js_parse_ident(stmts, sj)
+        if acc2 != acc:
+            raise _JSExprFail("F786 accum mismatch")
+        sj = _js_skip_ws(stmts, sj)
+        if not stmts.startswith("+=", sj):
+            raise _JSExprFail("F786 body not +=")
+        sj = _js_skip_ws(stmts, sj + 2)
+        (ek, ea, eb), sj = _js_f786_parse_operand(stmts, sj)
+        if not _is_elem((ek, ea, eb)):
+            raise _JSExprFail("F786 accumulates another read")
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_expect(stmts, sj, "}")
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj), acc)
+        kept = []
+        for el in elements:
+            skip = False
+            for slit, negate in guards:
+                if (el != slit) if negate else (el == slit):
+                    skip = True
+                    break
+            if not skip:
+                kept.append(el)
+        rval = "".join(kept)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F786 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F787: Error cause reads (F750 residual)
+# ---------------------------------------------------------------------------
+
+
+def _js_f787_parse_cause_options(text, j):
+    """Parse `{cause:'LIT'}` at text[j] (F787).
+
+    Exactly one property; the key is the identifier `cause` or
+    the string `'cause'`; the value is a string literal. Returns
+    (cause, next_index). Anything else fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        key, j = _js_parse_string(text, j)
+    else:
+        key, j = _js_parse_ident(text, j)
+    if key != "cause":
+        raise _JSExprFail("F787 not a cause option")
+    j = _js_expect(text, j, ":")
+    cause, j = _js_parse_string(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, "}")
+    return cause, j
+
+
+def _js_f787_parse_error_new(text, j, state):
+    """Parse `[new] CTOR('LIT'[, {cause:'LIT2'}])` at text[j] (F787).
+
+    CTOR is one of the Error constructors (the F750 family).
+    Returns (message, cause_or_None, next_index). A non-literal
+    message, a non-literal cause, extra arguments, or a
+    non-Error constructor fails closed -- never mis-decoded.
+    Never evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, j, "new")
+    if k is not None:
+        j = _js_skip_ws(text, k)
+    cname, j = _js_parse_ident(text, j)
+    if cname not in _F750_ERROR_CTORS:
+        raise _JSExprFail("F787 not an Error constructor")
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ")":
+        return "", None, j + 1
+    msg, j = _js_parse_string(text, j)
+    j = _js_skip_ws(text, j)
+    cause = None
+    if j < n and text[j] == ",":
+        j = _js_skip_ws(text, j + 1)
+        cause, j = _js_f787_parse_cause_options(text, j)
+        j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F787 too many parts")
+    return msg, cause, j
+
+
+def _js_f787_parse_additive(text, j, ename, state):
+    """Parse `TERM (+ TERM)*` at text[j] (F787).
+
+    TERM is a string literal, `E.cause` / `E['cause']`, or
+    `E.message` / `E['message']` where E is the bound error name.
+    Returns (terms, next_index) with terms as ("lit", s) /
+    ("cause",) / ("msg",) tuples. A bare `E` (the engine would
+    stringify the error object -- unmodeled) or any other term
+    fails closed. Never evals.
+    """
+    n = len(text)
+    terms = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            s, j = _js_parse_string(text, j)
+            terms.append(("lit", s))
+        else:
+            name, k = _js_parse_ident(text, j)
+            if name != ename:
+                raise _JSExprFail("F787 bad return term")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ".":
+                mname, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+            elif k < n and text[k] == "[":
+                mname, k = _js_parse_string(text,
+                                            _js_skip_ws(text, k + 1))
+                k = _js_expect(text, k, "]")
+            else:
+                raise _JSExprFail("F787 bad member read")
+            if mname == "cause":
+                terms.append(("cause",))
+            elif mname == "message":
+                terms.append(("msg",))
+            else:
+                raise _JSExprFail("F787 not cause/message")
+            j = k
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F787 too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j = j + 1
+            continue
+        return terms, j
+
+
+def _js_f787_join_terms(terms, msg, cause):
+    """Join F787 additive terms to the decoded value (F787)."""
+    return "".join(cause if t[0] == "cause"
+                   else (msg if t[0] == "msg" else t[1])
+                   for t in terms)
+
+
+def _js_parse_f787_cause_trycatch_iife(text, i, depth, state):
+    """Parse `(function(){try{throw [new] CTOR('LIT',{cause:'LIT2'});}catch(C){return ADD;}})()` (F787).
+
+    F750 (CLOSED, wave-384) covers Error `.message` reads, but
+    `.cause` misses: `new Error('x',{cause:'f1'})` and assigned
+    `e.cause='f1'` resolve node-exactly while the decoder
+    produces zero variants:
+      `(function(){try{throw new Error('x',{cause:'f1'});}catch(e){return e.cause+'f2';}})()`
+      `(function(){var e=new Error('x');e.cause='f1';return e.cause+'f2';})()`
+    Node-exact desugar (v24.20.0): the options object's `cause`
+    installs as an own data property (a missing/non-object
+    options leaves `.cause` undefined); the catch binds the
+    parameter to the thrown error; `C.cause` / `C['cause']` reads
+    the installed literal; the return additive concatenates
+    plain strings (`.message` terms resolve to the known message
+    literal, node-exact).
+
+    Disjoint from F750: F750's `[new] CTOR('LIT'|)` grammar fails
+    closed on the two-argument options form and its return
+    additive fails closed on `.cause` terms (red-first verified:
+    2 BREAK on the open tree); this route requires the cause and
+    fails closed on F750's shapes, so no previously-decoded
+    input changes behavior. On miss the F452 budgets are
+    restored (wave-383 lesson). Returns (value, next_index), or
+    None. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F787 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        tk = _js_match_kw(stmts, sj, "try")
+        if tk is None:
+            raise _JSExprFail("F787 no try")
+        sj = _js_expect(stmts, tk, "{")
+        th = _js_match_kw(stmts, sj, "throw")
+        if th is None:
+            raise _JSExprFail("F787 no throw")
+        msg, cause, sj = _js_f787_parse_error_new(
+            stmts, _js_skip_ws(stmts, th), state)
+        if cause is None:
+            raise _JSExprFail("F787 no cause option")
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_expect(stmts, sj, "}")
+        ck = _js_match_kw(stmts, sj, "catch")
+        if ck is None:
+            raise _JSExprFail("F787 no catch")
+        sj = _js_expect(stmts, ck, "(")
+        cname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_expect(stmts, sj, "{")
+        rk = _js_match_kw(stmts, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F787 catch without return")
+        terms, sj = _js_f787_parse_additive(stmts, _js_skip_ws(stmts, rk),
+                                            cname, state)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_expect(stmts, sj, "}")
+        rval = _js_f787_join_terms(terms, msg, cause)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F787 concat too long")
+        if _js_skip_ws(stmts, sj) != len(stmts):
+            raise _JSExprFail("F787 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f787_assigned_cause_iife(text, i, depth, state):
+    """Parse `(function(){DECL e=[new] CTOR('LIT'[,{cause:'LIT2'}]);[e.cause='LIT3';]return ADD;})()` (F787).
+
+    The assigned-cause twin of the try/catch production: a
+    var-bound Error gets its `cause` via a single
+    `e.cause='LIT'` / `e['cause']='LIT'` write statement (or via
+    the constructor options object). Node-exact (v24.20.0): the
+    write installs an own data property (later-wins is a single
+    write here -- a second write fails closed, documented); the
+    return additive resolves `e.cause` / `e.message` against the
+    tracked literals.
+
+    Bounds (all fail closed): a missing cause (the engine's
+    `.cause` is undefined -- no fragment), a non-literal cause,
+    a second cause write, a `delete`, any other statement, a
+    non-Error constructor. On miss the F452 budgets are restored
+    (wave-383 lesson). Returns (value, next_index), or None.
+    Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F787 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        dclk, dk = _js_match_decl_kw(stmts, sj)
+        if dclk is None:
+            raise _JSExprFail("F787 no decl")
+        ename, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, dk))
+        sj = _js_expect(stmts, sj, "=")
+        msg, cause, sj = _js_f787_parse_error_new(
+            stmts, _js_skip_ws(stmts, sj), state)
+        sj = _js_expect(stmts, sj, ";")
+        # Optional single `e.cause='LIT';` / `e['cause']='LIT';`.
+        q = _js_skip_ws(stmts, sj)
+        if q < len(stmts) and stmts[q] in _JS_IDENT_START:
+            nm, q2 = _js_parse_ident(stmts, q)
+            if nm == ename:
+                q2 = _js_skip_ws(stmts, q2)
+                is_write = False
+                if q2 < len(stmts) and stmts[q2] == ".":
+                    mn, q2 = _js_parse_ident(stmts,
+                                             _js_skip_ws(stmts, q2 + 1))
+                    is_write = (mn == "cause")
+                elif q2 < len(stmts) and stmts[q2] == "[":
+                    ms, q2 = _js_parse_string(stmts,
+                                              _js_skip_ws(stmts, q2 + 1))
+                    q2 = _js_expect(stmts, q2, "]")
+                    is_write = (ms == "cause")
+                if is_write:
+                    q2 = _js_expect(stmts, q2, "=")
+                    val, q2 = _js_parse_string(stmts,
+                                               _js_skip_ws(stmts, q2))
+                    q2 = _js_expect(stmts, q2, ";")
+                    cause = val
+                    sj = q2
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("F787 too many parts")
+        if cause is None:
+            raise _JSExprFail("F787 no cause value")
+        sj = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F787 no return")
+        terms, sj = _js_f787_parse_additive(stmts, _js_skip_ws(stmts, rk),
+                                            ename, state)
+        sj = _js_expect(stmts, sj, ";")
+        rval = _js_f787_join_terms(terms, msg, cause)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F787 concat too long")
+        if _js_skip_ws(stmts, sj) != len(stmts):
+            raise _JSExprFail("F787 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F788: AggregateError.errors reads
+# ---------------------------------------------------------------------------
+
+
+def _js_parse_f788_aggerrors_iife(text, i, depth, state):
+    """Parse `(function(){DECL e=[new] AggregateError([LITS](,'MSG')?);return ADD;})()` (F788).
+
+    The decoder has no AggregateError production:
+      `(function(){var e=new AggregateError(['f1'],'x');return e.errors[0]+'f2';})()`
+      `(function(){var e=new AggregateError(['f1','f2'],'x');return e.errors.join('');})()`
+    node-evaluate (v24.20.0) to the exact credential while the
+    decoder produces zero variants. Node-exact desugar: the
+    errors array literal is copied element-wise into the fresh
+    `.errors` array (string-literal elements only); the message
+    is the second argument or `''`; the return additive resolves
+    `e.errors[INT]` (in-range), `e.errors.join('SEP')` /
+    `e.errors.join()` (default `,`), a bare `e.errors`
+    (Array-toString, `,`-joined), and `e.message` against the
+    tracked literals. `[new]` is optional -- the engine accepts
+    both spellings.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-literal errors source, holes, non-string elements, an
+    out-of-range index, a non-literal join separator, a
+    reassigned `.errors`, extra statements, a missing message
+    read of another member. On miss the F452 budgets are restored
+    (wave-383 lesson). Returns (value, next_index), or None.
+    Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            raise _JSExprFail("F788 not our head")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        dclk, dk = _js_match_decl_kw(stmts, sj)
+        if dclk is None:
+            raise _JSExprFail("F788 no decl")
+        ename, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, dk))
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_skip_ws(stmts, sj)
+        nk = _js_match_kw(stmts, sj, "new")
+        if nk is not None:
+            sj = _js_skip_ws(stmts, nk)
+        cname, sj = _js_parse_ident(stmts, sj)
+        if cname != "AggregateError":
+            raise _JSExprFail("F788 not AggregateError")
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "[")
+        elements, sj = _js_parse_string_literal_list(stmts, sj, state,
+                                                     "]")
+        sj = _js_skip_ws(stmts, sj)
+        msg = ""
+        if sj < len(stmts) and stmts[sj] == ",":
+            msg, sj = _js_parse_string(stmts, _js_skip_ws(stmts, sj + 1))
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_expect(stmts, sj, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F788 too many parts")
+        sj = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F788 no return")
+        sj = _js_skip_ws(stmts, rk)
+        terms = []
+        while True:
+            sj = _js_skip_ws(stmts, sj)
+            if sj < len(stmts) and stmts[sj] in "'\"":
+                s, sj = _js_parse_string(stmts, sj)
+                terms.append(("lit", s))
+            else:
+                name, k = _js_parse_ident(stmts, sj)
+                if name != ename:
+                    raise _JSExprFail("F788 bad return term")
+                k = _js_skip_ws(stmts, k)
+                if k < len(stmts) and stmts[k] == ".":
+                    mname, k = _js_parse_ident(stmts,
+                                               _js_skip_ws(stmts, k + 1))
+                elif k < len(stmts) and stmts[k] == "[":
+                    mname, k = _js_parse_string(stmts,
+                                                _js_skip_ws(stmts, k + 1))
+                    k = _js_expect(stmts, k, "]")
+                else:
+                    raise _JSExprFail("F788 bad member read")
+                k = _js_skip_ws(stmts, k)
+                if mname == "message":
+                    terms.append(("msg",))
+                elif mname == "errors":
+                    if k < len(stmts) and stmts[k] == "[":
+                        k = _js_skip_ws(stmts, k + 1)
+                        d0 = k
+                        while k < len(stmts) and stmts[k] in "0123456789":
+                            k += 1
+                        idx = stmts[d0:k]
+                        # Only canonical non-negative integer
+                        # indices; anything else fails closed.
+                        if (not idx or (len(idx) > 1 and idx[0] == "0")):
+                            raise _JSExprFail("F788 bad index")
+                        ii = int(idx)
+                        if ii >= len(elements):
+                            raise _JSExprFail("F788 index oob")
+                        k = _js_expect(stmts, k, "]")
+                        terms.append(("idx", ii))
+                    elif k < len(stmts) and stmts[k] == ".":
+                        jm, k = _js_parse_ident(stmts,
+                                                _js_skip_ws(stmts, k + 1))
+                        if jm != "join":
+                            raise _JSExprFail("F788 not join")
+                        k = _js_expect(stmts, k, "(")
+                        k = _js_skip_ws(stmts, k)
+                        if k < len(stmts) and stmts[k] == ")":
+                            sep = ","
+                        else:
+                            sep, k = _js_parse_string(stmts, k)
+                            k = _js_skip_ws(stmts, k)
+                        k = _js_expect(stmts, k, ")")
+                        terms.append(("join", sep))
+                    else:
+                        # Bare `e.errors`: Array-toString.
+                        terms.append(("join", ","))
+                else:
+                    raise _JSExprFail("F788 not errors/message")
+                sj = k
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("F788 too many parts")
+            sj = _js_skip_ws(stmts, sj)
+            if sj < len(stmts) and stmts[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_expect(stmts, sj, ";")
+        parts = []
+        for t in terms:
+            if t[0] == "lit":
+                parts.append(t[1])
+            elif t[0] == "msg":
+                parts.append(msg)
+            elif t[0] == "idx":
+                parts.append(elements[t[1]])
+            else:
+                parts.append(t[1].join(elements))
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F788 concat too long")
+        if _js_skip_ws(stmts, sj) != len(stmts):
+            raise _JSExprFail("F788 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
 def _js_f67x_lookup(obj, key):
     """Resolve *key* on a _JSObj holding F67x bodies (F673/F674).
 
@@ -63953,6 +64656,71 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f757_saved_parts; state['ops'] = _f757_saved_ops
         if _f757 is not None:
             val, i = _f757
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F786: (function(){var|let S='';[var|let ARR=[LITS];]
+        #   for(var|let|const X of [LITS]|ARR){[if(EQ)continue;]+S+=X;}
+        #   return S;})() and the C-style twin
+        #   (function(){var|let S='';var|let ARR=[LITS];
+        #   for(var|let I=0;I<ARR.length;I++|++I|I+=1){
+        #   [if(ARR[I]EQ)continue;]+S+=ARR[I];}return S;})() --
+        #   continue-guarded accumulation (F602 residual). Tried
+        #   after F757: no earlier route accepts a `for(` head with
+        #   a continue guard -- F602/F719/F651/F646 require
+        #   Set/iterator/forEach sources and guard-free bodies, and
+        #   F679's statement simulation fails closed on these
+        #   shapes (red-first verified: 2 BREAK on the open tree),
+        #   so no previously-decoded input changes behavior. None
+        #   falls through to the parenthesized-additive path. The
+        #   F757 hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f786_saved_parts = state['parts']; _f786_saved_ops = state['ops']
+        _f786 = _js_parse_f786_continue_accum_iife(text, i, depth,
+                                                   state)
+        if _f786 is None:
+            state['parts'] = _f786_saved_parts; state['ops'] = _f786_saved_ops
+        if _f786 is not None:
+            val, i = _f786
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F787: (function(){try{throw [new] CTOR('LIT',{cause:'LIT2'});}
+        #   catch(C){return ADD;}})() and the assigned twin
+        #   (function(){DECL e=[new] CTOR('LIT'[,{cause:'LIT2'}]);
+        #   [e.cause='LIT3';]return ADD;})() -- Error cause reads
+        #   (F750 residual). Tried after F786: F750's
+        #   `[new] CTOR('LIT'|)` grammar fails closed on the
+        #   two-argument options form and its return additive fails
+        #   closed on `.cause` terms (red-first verified: 2 BREAK
+        #   on the open tree); F679 has no Error production; no
+        #   earlier route accepts an AggregateError head, so no
+        #   previously-decoded input changes behavior. The F786
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f787_saved_parts = state['parts']; _f787_saved_ops = state['ops']
+        _f787 = _js_parse_f787_cause_trycatch_iife(text, i, depth,
+                                                   state)
+        if _f787 is None:
+            _f787 = _js_parse_f787_assigned_cause_iife(text, i, depth,
+                                                       state)
+        if _f787 is None:
+            state['parts'] = _f787_saved_parts; state['ops'] = _f787_saved_ops
+        if _f787 is not None:
+            val, i = _f787
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F788: (function(){DECL e=[new] AggregateError([LITS]
+        #   (,'MSG')?);return ADD;})() -- AggregateError.errors
+        #   reads. Tried after F787: no earlier route has an
+        #   AggregateError production (red-first verified: 2 BREAK
+        #   on the open tree), so no previously-decoded input
+        #   changes behavior. The F787 hook and its trailing
+        #   `return` are untouched (wave-379 lesson). Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f788_saved_parts = state['parts']; _f788_saved_ops = state['ops']
+        _f788 = _js_parse_f788_aggerrors_iife(text, i, depth, state)
+        if _f788 is None:
+            state['parts'] = _f788_saved_parts; state['ops'] = _f788_saved_ops
+        if _f788 is not None:
+            val, i = _f788
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
