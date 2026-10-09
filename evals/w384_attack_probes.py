@@ -115,11 +115,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-385 lane-4 local footer (F768/F769 CLOSED; open F762-F767, F770-F794, next F795)."""
+    """Control: merged footer (lanes 1-9: F762-F779 CLOSED; open F780-F794, next F795)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F795**" in text  # Wave-385 lane 4: F768, F769 CLOSED; open F762-F767, F770-F794 (next F795)
-          and "Open findings: F762, F763, F764, F765, F766, F767, F770, F771, F772, F773, F774, F775, F776, F777, F778, F779, F780, F781, F782, F783, F784, F785, F786, F787, F788, F789, F790, F791, F792, F793, F794." in text)  # Wave-385 lane 4: F768, F769 CLOSED; open F762-F767, F770-F794 (next F795)
+    ok = ("Next free finding: **F795**" in text  # Wave-385 merge: lanes 1-9
+          and "Open findings: F780, F781, F782, F783, F784, F785, F786, F787, F788, F789, F790, F791, F792, F793, F794." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -476,10 +476,10 @@ def test_r52_f777_s2_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f778_s1_open():
-    """F778 OPEN: miss reproduces."""
-    miss = _misses("(function(){var f=null;return (f??(function(){return '%s';}))()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f778_s1_closed():
+    """F778 CLOSED (wave-385 lane 9): blocks."""
+    hit = _blocked("(function(){var f=null;return (f??(function(){return '%s';}))()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 @_t
 def test_r52_f778_s2_open():
@@ -490,16 +490,16 @@ def test_r52_f778_s2_open():
     return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 @_t
-def test_r52_f779_s1_open():
-    """F779 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s=Symbol('%s');return s.description+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f779_s1_closed():
+    """F779 CLOSED (wave-385 lane 9): blocks."""
+    hit = _blocked("(function(){var s=Symbol('%s');return s.description+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 @_t
-def test_r52_f779_s2_open():
-    """F779 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s=Symbol.for('%s');return Symbol.keyFor(s)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f779_s2_closed():
+    """F779 CLOSED (wave-385 lane 9): blocks."""
+    hit = _blocked("(function(){var s=Symbol.for('%s');return Symbol.keyFor(s)+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 @_t
 def test_r52_f780_s1_open():
