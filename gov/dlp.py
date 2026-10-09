@@ -31474,7 +31474,7 @@ def _js_f662_prehoist_vars(text, inner_start, inner_end, env):
 
 
 def _js_f662_static_block(text, j, env, state):
-    """Parse `static { STMT* }` at text[j] == '{' (F662).
+    """Parse `static { STMT* }` at text[j] == '{' (F662, extended F805).
 
     Node-exact (v24.20.0): static blocks run at class definition
     time against the enclosing function scope, so an assignment
@@ -31485,20 +31485,76 @@ def _js_f662_static_block(text, j, env, state):
     'undefinedLIT', outside the string-only discipline. Reads of
     class statics by bare name throw ReferenceError in the engine
     (node-verified), so only assignments to env-bound mutable
-    names are modeled; a bare `return`, a declaration, or an
-    unbound/`const` target fails closed. Returns the index just
-    past '}'. Never evals.
+    names are modeled; a bare `return`, an unbound/`const` target
+    fails closed. Returns the index just past '}'. Never evals.
+
+    F805 extension (node-verified v24.20.0): `var`/`let`/`const`
+    declarations inside a static block are scoped to the BLOCK
+    (the block has its own VarEnvironment -- `var` does NOT hoist
+    to the enclosing function, and a block `var` never overwrites
+    an outer binding of the same name). A block-local scope dict
+    models them: `var|let|const NAME='LIT';` binds locally
+    (`const` without init is a node SyntaxError -- fail closed;
+    only `var`+`var` redeclaration is legal -- anything else is a
+    node SyntaxError). Assignments may target a block-local
+    mutable binding (written locally) or an env-bound mutable
+    name (written to env, the F662 discipline). The RHS of `=` /
+    `+=` may be a string literal (F662) or a name bound in the
+    block-local scope or env to a string (an uninitialized/undefined
+    RHS yields 'undefined...' in the engine -- outside the
+    string-only discipline, fail closed). Anything else fails
+    closed.
     """
     n = len(text)
     j = _js_expect(text, j, "{")
+    # F805: block-local scope for var/let/const declared in the block.
+    local = {}
     while True:
         j = _js_skip_ws(text, j)
         if j >= n:
             raise _JSExprFail("F662 static block overrun")
         if text[j] == "}":
             return j + 1
+        # F805: `var|let|const NAME[='LIT'];` -- block-local binding.
+        dkw, dm = _js_match_decl_kw(text, j)
+        if dkw is not None:
+            q = _js_skip_ws(text, dm)
+            dname, q = _js_parse_ident(text, q)
+            prev = local.get(dname)
+            if prev is not None and not (dkw == "var"
+                                         and prev[3] == "var"):
+                # Only var+var redeclaration is legal in the engine
+                # (node SyntaxError otherwise) -- fail closed.
+                raise _JSExprFail("F805 static block redeclare")
+            q = _js_skip_ws(text, q)
+            dval = None
+            if (q < n and text[q] == "="
+                    and not text.startswith(("==", "=>"), q)):
+                q = _js_skip_ws(text, q + 1)
+                if q >= n or text[q] not in "'\"":
+                    raise _JSExprFail("F805 static block decl not literal")
+                dval, q = _js_parse_string(text, q)
+                q = _js_skip_ws(text, q)
+            elif dkw == "const":
+                # `const x;` is a node SyntaxError -- fail closed.
+                raise _JSExprFail("F805 static block const no init")
+            q = _js_expect(text, q, ";")
+            # F805: a bare `var x;` redeclare does NOT reset the value
+            # in the engine (node v24.20.0 keeps 'A' for
+            # `var x='A';var x;`) -- only (re)bind on first
+            # declaration or when an initializer is present.
+            if prev is None or dval is not None:
+                local[dname] = ("lit", dval, dkw != "const", dkw)
+            _js_f662_charge(state)
+            j = q
+            continue
         name, q = _js_parse_ident(text, j)
-        e = env.get(name)
+        # F805: resolve the assignment target -- block-local first,
+        # then the enclosing env (the F662 discipline).
+        e = local.get(name)
+        e_is_local = e is not None
+        if not e_is_local:
+            e = env.get(name)
         if e is None or e[0] != "lit" or not e[2]:
             # Unbound (ReferenceError), const (TypeError), or a
             # class/instance binding -- the engine throws; also
@@ -31519,12 +31575,30 @@ def _js_f662_static_block(text, j, env, state):
             # not a string-only value; fail closed (documented bound).
             raise _JSExprFail("F662 static block plus-eq uninit")
         q = _js_skip_ws(text, q)
-        if q >= n or text[q] not in "'\"":
+        if q < n and text[q] in "'\"":
+            rhs, q = _js_parse_string(text, q)
+        elif q < n and text[q] in _JS_IDENT_START:
+            # F805: `NAME=RHSNAME;` / `NAME+=RHSNAME;` -- the RHS
+            # name resolves block-local first, then in env, and must
+            # be a string (an undefined RHS yields 'undefined...'
+            # in the engine -- outside the string-only discipline).
+            rname, q = _js_parse_ident(text, q)
+            re_ = local.get(rname)
+            if re_ is None:
+                re_ = env.get(rname)
+            if re_ is None or re_[0] != "lit" \
+                    or not isinstance(re_[1], str):
+                raise _JSExprFail("F805 static block bad rhs name")
+            rhs = re_[1]
+        else:
             raise _JSExprFail("F662 static block not a literal")
-        rhs, q = _js_parse_string(text, q)
         q = _js_skip_ws(text, q)
         q = _js_expect(text, q, ";")
-        env[name] = ("lit", e[1] + rhs if is_plus else rhs, True, e[3])
+        newval = (e[1] + rhs) if is_plus else rhs
+        if e_is_local:
+            local[name] = ("lit", newval, True, e[3])
+        else:
+            env[name] = ("lit", newval, True, e[3])
         _js_f662_charge(state)
         j = q
 
@@ -32639,13 +32713,23 @@ def _js_f672_check_priv_scope(spec):
                 raise _JSExprFail("F672 private out of scope")
 
 
-def _js_f672_parse_extends(text, j, cenv):
-    """Parse `[extends TGT]` at text[j] (F672).
+def _js_f672_parse_extends(text, j, env, cenv, state, depth):
+    """Parse `[extends TGT]` at text[j] (F672, extended F806).
 
     The extends target must name a class already in cenv (the filed
     shapes extend a declared class; the mixin parameter form is
     handled by the caller). Returns (record_or_None, next_index).
     Never evals.
+
+    F806 extension (node-exact, v24.20.0): `extends MNAME(ARGNAME)`
+    -- mixin application in the extends clause. MNAME must be an
+    `("fn", param, brace)` mixin-function binding in env (exactly
+    the F672 mixin shape: `function(PARAM){return class extends
+    PARAM{BODY};}`) and ARGNAME a class in cenv. The mixin's
+    returned class body is parsed with the parameter bound to the
+    argument's record (the F672 `new (MNAME(CNAME))()` discipline),
+    and the resulting anonymous class record becomes the extends
+    record. Anything else fails closed.
     """
     n = len(text)
     ek = _js_match_kw(text, j, "extends")
@@ -32655,6 +32739,46 @@ def _js_f672_parse_extends(text, j, cenv):
     if j >= n:
         raise _JSExprFail("F672 extends overrun")
     tgt, j = _js_parse_ident(text, j)
+    q = _js_skip_ws(text, j)
+    if q < n and text[q] == "(":
+        # F806: `extends MNAME(ARGNAME)` -- mixin application.
+        e = env.get(tgt)
+        if e is None or e[0] != "fn":
+            raise _JSExprFail("F806 extends not a mixin fn")
+        _, param, brace = e
+        q = _js_skip_ws(text, q + 1)
+        # The mixin argument is a class in cenv, or an anonymous
+        # class expression `class [NAME] { BODY }` (the filed s2
+        # shape passes `class{}`).
+        arg_rec = None
+        ckw = _js_match_kw(text, q, "class")
+        if ckw is not None:
+            q2 = _js_skip_ws(text, ckw)
+            if q2 < n and text[q2] != "{":
+                # Optional inner name (discarded -- the F672
+                # class-expression discipline); an `extends` here
+                # fails closed.
+                _, q2 = _js_parse_ident(text, q2)
+                q2 = _js_skip_ws(text, q2)
+                if q2 >= n or text[q2] != "{":
+                    raise _JSExprFail("F806 mixin arg class form")
+            q = q2
+            arg_rec, q = _js_f672_parse_class_body(text, q, env,
+                                                   cenv, state,
+                                                   depth, None)
+        else:
+            aname, q = _js_parse_ident(text, q)
+            if aname not in cenv:
+                raise _JSExprFail("F806 mixin arg not a class")
+            arg_rec = cenv[aname]
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        env2 = dict(env)
+        env2[param] = ("param",)
+        rec, _ = _js_f672_parse_class_body(text, brace, env2, cenv,
+                                           state, depth, arg_rec)
+        _js_f672_charge(state)
+        return rec, q
     if tgt not in cenv:
         raise _JSExprFail("F672 extends target miss")
     return cenv[tgt], j
@@ -33150,8 +33274,9 @@ def _js_f672_top_stmt(text, j, inner_end, env, cenv, state, depth):
                     # subset never references it, so discard it.
                     _, q2 = _js_parse_ident(text, q2)
                     q2 = _js_skip_ws(text, q2)
-                extends_rec, q2 = _js_f672_parse_extends(text, q2,
-                                                         cenv)
+                extends_rec, q2 = _js_f672_parse_extends(text, q2, env,
+                                                         cenv, state,
+                                                         depth)
                 q2 = _js_skip_ws(text, q2)
                 if q2 >= n or text[q2] != "{":
                     raise _JSExprFail("F672 class expr no body")
@@ -33240,13 +33365,73 @@ def _js_f672_top_stmt(text, j, inner_end, env, cenv, state, depth):
                 or cname in env or cname in cenv):
             raise _JSExprFail("F672 bad class name")
         q = _js_skip_ws(text, q)
-        extends_rec, q = _js_f672_parse_extends(text, q, cenv)
+        extends_rec, q = _js_f672_parse_extends(text, q, env, cenv,
+                                                 state, depth)
         q = _js_skip_ws(text, q)
         if q >= n or text[q] != "{":
             raise _JSExprFail("F672 class no body")
         rec, q = _js_f672_parse_class_body(text, q, env, cenv, state,
                                            depth, extends_rec)
         cenv[cname] = rec
+        _js_f672_charge(state)
+        return q
+    fkw = _js_match_kw(text, j, "function")
+    if fkw is not None:
+        # F806: bare mixin-function declaration --
+        # `function NAME(PARAM){return class extends PARAM{BODY};}`.
+        # Mirrors the F672 `var NAME=function(PARAM){...};` mixin
+        # production (same body discipline); a bare declaration has
+        # no trailing `;`. Anything else fails closed.
+        q = _js_skip_ws(text, fkw)
+        fname, q = _js_parse_ident(text, q)
+        if (fname == "arguments" or fname in _F611_RESERVED
+                or fname in env or fname in cenv):
+            raise _JSExprFail("F806 bad fn name")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        param, q = _js_parse_ident(text, q)
+        if param == "arguments" or param in _F611_RESERVED:
+            raise _JSExprFail("F672 bad fn param")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "{")
+        q = _js_skip_ws(text, q)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F672 fn not return-class")
+        q = _js_skip_ws(text, rk)
+        ckw2 = _js_match_kw(text, q, "class")
+        if ckw2 is None:
+            raise _JSExprFail("F672 fn not return-class")
+        q = _js_skip_ws(text, ckw2)
+        ek = _js_match_kw(text, q, "extends")
+        if ek is None:
+            # Named: `class Name extends PARAM`.
+            _, q = _js_parse_ident(text, q)
+            q = _js_skip_ws(text, q)
+            ek = _js_match_kw(text, q, "extends")
+            if ek is None:
+                raise _JSExprFail("F672 mixin not extends")
+        q = _js_skip_ws(text, ek)
+        tgt, q = _js_parse_ident(text, q)
+        if tgt != param:
+            # The class must extend the parameter (the filed
+            # mixin shape); anything else fails closed.
+            raise _JSExprFail("F672 mixin extends not param")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "{":
+            raise _JSExprFail("F672 mixin no body")
+        brace = q
+        _, _, q = _js_span_braced(text, brace)
+        q = _js_skip_ws(text, q)
+        # F806: a bare function declaration needs no trailing `;`
+        # (node ASI accepts `...}}`); accept it when present.
+        if q < n and text[q] == ";":
+            q += 1
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "}")
+        env[fname] = ("fn", param, brace)
         _js_f672_charge(state)
         return q
     # `NAME+='LIT';` accumulation on an initialized string binding
