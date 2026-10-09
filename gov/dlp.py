@@ -16452,7 +16452,7 @@ def _js_parse_object_gopds_values(text, i, depth, state):
 # has no undefined value). No new regexes; never evals.
 _F478_ARRAY_METHODS = frozenset({
     "concat", "join", "slice", "splice", "reverse", "reduce", "reduceRight",
-    "map", "filter", "at",
+    "map", "filter", "find", "findLast", "at",
 })
 _F478_STRING_METHODS = frozenset({
     "concat", "replace",
@@ -16466,6 +16466,7 @@ _F478_DISPATCH_NAMES = ("call", "apply", "bind")
 # never drift apart.
 _JS_POSTFIX_METHOD_NAMES = (
     "concat", "repeat", "join", "reduce", "reduceRight", "map", "filter",
+    "find", "findLast",
     "fill", "reverse", "toString", "slice", "flat", "splice", "replace",
     "replaceAll", "matchAll", "match",
     "padStart", "padEnd", "at", "toReversed", "with", "split",
@@ -16849,30 +16850,41 @@ def _js_apply_method_values(method, recv, args, state):
         state["ops"] += 1
         return _JSArr(elements)
     if method == "splice":
-        # F511 mirrored over values: the direct form's literal (0,2)
-        # pair (F466 scope note) -- the filed .apply shapes use
-        # exactly (0,2); every other arg shape fails closed, exactly
-        # as the direct form does. The bound grammar mirrors the
-        # slice value branch (int or _JSNumStr digits).
+        # F767 mirrored over values: one or two literal-int args
+        # (start, optional deleteCount); a negative start counts back
+        # from the end; both are clamped exactly as the engine
+        # clamps them (via _js_splice_span, shared with the direct
+        # form so the two can never drift). The bound grammar
+        # mirrors the slice/at value branch (int or _JSNumStr digits
+        # with an optional ASCII '-', F566 precedent). Insert items
+        # fail closed. The receiver is mutated in place, mirroring
+        # the direct form (F681 precedent). Generalizes the F511/F466
+        # literal-(0,2) mirror (which stays node-exact under the
+        # general rule).
         if not isinstance(recv, _JSArr):
             raise _JSExprFail("splice on non-array")
-        if len(args) != 2:
-            raise _JSExprFail("splice takes two args")
+        if len(args) not in (1, 2):
+            raise _JSExprFail("splice takes one or two args")
         nums = []
         for a in args:
             if isinstance(a, int) and not isinstance(a, bool):
                 nums.append(a)
             elif isinstance(a, _JSNumStr):
                 s = str(a)
-                if not s or not all("0" <= c <= "9" for c in s):
+                neg = s.startswith("-")
+                digits = s[1:] if neg else s
+                if not digits or not all("0" <= c <= "9"
+                                         for c in digits):
                     raise _JSExprFail("splice non-literal bound")
-                nums.append(int(s))
+                nums.append(-int(digits) if neg else int(digits))
             else:
                 raise _JSExprFail("splice non-literal bound")
-        if tuple(nums) != (0, 2):
-            raise _JSExprFail("splice args unsupported")
+        actual, dc = _js_splice_span(len(recv.elements), nums[0],
+                                     nums[1] if len(nums) == 2 else None)
+        removed = recv.elements[actual:actual + dc]
+        del recv.elements[actual:actual + dc]
         state["ops"] += 1
-        return _JSArr(recv.elements[0:2])
+        return _JSArr(removed)
     if method == "reverse":
         # F518 mirrored over values: the direct form's no-arg reversal
         # (F461) -- the filed .apply shapes use no args; any args fail
@@ -57231,6 +57243,28 @@ def _js_parse_slice_int(text, i):
     return (-k if neg else k), i
 
 
+def _js_splice_span(n, start, delete_count):
+    """Compute the (actual_start, delete_count) span for Array.prototype
+    .splice (F767), node-exact (v24.20.0).
+
+    *n* is the array length, *start* the literal integer start,
+    *delete_count* the literal integer delete count or None when the
+    second argument is omitted. A negative start counts back from the
+    end; both values are clamped exactly as the engine clamps them
+    (ToIntegerOrInfinity is the identity on integer literals; the
+    caller fails fractional/non-literal args closed). Shared by the
+    direct text form and the F483 value mirror so the two can never
+    drift apart.
+    """
+    actual = n + start if start < 0 else start
+    actual = max(0, min(actual, n))
+    if delete_count is None:
+        dc = n - actual
+    else:
+        dc = max(0, min(delete_count, n - actual))
+    return actual, dc
+
+
 def _js_parse_f603_regex_literal(text, i):
     """Parse a regex literal `/source/flags` at text[i] (F603).
 
@@ -59081,6 +59115,40 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         elements = _js_filter_spec_apply(spec, value.elements)
         state["ops"] += 1
         return _JSArr(elements), i + 1
+    if name in ("find", "findLast"):
+        # F766: ARR.find(CB) / ARR.findLast(CB) -- the same predicate
+        # grammar as .filter (F437/F443/F447/F459/F467/F470/F607
+        # family, via _js_parse_filter_callback); find returns the
+        # first matching element, findLast the last, node-exact
+        # (v24.20.0). No match -> the engine yields undefined, and
+        # any subsequent member read throws TypeError -- the decoder
+        # never decodes a throw, so no-match fails closed. A thisArg
+        # (or any arg shape but the single callback) fails closed
+        # (documented bound). Budget snapshot/restore on miss (F452 /
+        # wave-383 lesson); the _js_filter_spec_apply mixed-type
+        # fail-closed discipline (F475/F479) applies unchanged.
+        if not isinstance(value, _JSArr):
+            raise _JSExprFail("find on non-array")
+        _ff_saved_parts = state["parts"]
+        _ff_saved_ops = state["ops"]
+        try:
+            spec, i = _js_parse_filter_callback(text,
+                                                _js_skip_ws(text, i))
+            i = _js_skip_ws(text, i)
+            if i < len(text) and text[i] == ",":
+                raise _JSExprFail("find thisArg unsupported")
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad find")
+            i += 1
+            filtered = _js_filter_spec_apply(spec, value.elements)
+        except _JSExprFail:
+            state["parts"] = _ff_saved_parts
+            state["ops"] = _ff_saved_ops
+            raise
+        if not filtered:
+            raise _JSExprFail("find no match")
+        state["ops"] += 1  # the predicate scan is obfuscation-shaped
+        return (filtered[0] if name == "find" else filtered[-1]), i
     if name == "fill":
         # F443: Array(N).fill(x) -- every element becomes x. Only the
         # single-arg form is modeled; start/end args fail closed
@@ -59595,25 +59663,51 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         state["ops"] += 1  # the reorder is obfuscation-shaped
         return _JSArr(elements), i
     if name == "splice":
-        # F466 scope note: ['a','b'].splice(0,2) -- returns the removed
-        # elements (node-verified), so the filed literal (0,2) pair
-        # yields elements[0:2]. Only the literal (0,2) form is
-        # modeled; every other arg shape fails closed.
+        # F767: ['a','b','c'].splice(1) / .splice(1,2) -- node-exact
+        # (v24.20.0): literal-integer start with an optional
+        # literal-integer deleteCount; a negative start counts back
+        # from the end; both are clamped exactly as the engine
+        # clamps them (via _js_splice_span; F681 precedent). The
+        # removed elements are returned as a fresh _JSArr and the
+        # receiver is mutated in place -- the engine mutates, so
+        # subsequent reads of the same array see the removal.
+        # Generalizes the F466 literal-(0,2) form (which stays
+        # node-exact under the general rule). Insert items (a 3rd+
+        # arg), fractional args (the '.5' is left unconsumed by
+        # _js_parse_slice_int and fails the ')' check -- F561
+        # precedent), and non-literal args fail closed. The mutation
+        # happens only after the full arg grammar validates, so a
+        # miss never mutates (wave-383 lesson); budget
+        # snapshot/restore on miss (F452).
         if not isinstance(value, _JSArr):
             raise _JSExprFail("splice on non-array")
-        i = _js_skip_ws(text, i)
-        a, i = _js_parse_number(text, i)
-        i = _js_skip_ws(text, i)
-        if i >= len(text) or text[i] != ",":
-            raise _JSExprFail("bad splice")
-        b, i = _js_parse_number(text, _js_skip_ws(text, i + 1))
-        i = _js_skip_ws(text, i)
-        if i >= len(text) or text[i] != ")":
-            raise _JSExprFail("bad splice")
-        if (a, b) != (0, 2):
-            raise _JSExprFail("splice args unsupported")
-        state["ops"] += 1
-        return _JSArr(value.elements[0:2]), i + 1
+        _sp_saved_parts = state["parts"]
+        _sp_saved_ops = state["ops"]
+        try:
+            start, i = _js_parse_slice_int(text, _js_skip_ws(text, i))
+            i = _js_skip_ws(text, i)
+            if i < len(text) and text[i] == ",":
+                dcount, i = _js_parse_slice_int(text,
+                                                _js_skip_ws(text, i + 1))
+                i = _js_skip_ws(text, i)
+                if i < len(text) and text[i] == ",":
+                    raise _JSExprFail("splice insert unsupported")
+                has_count = True
+            else:
+                has_count = False
+            if i >= len(text) or text[i] != ")":
+                raise _JSExprFail("bad splice")
+            i += 1
+        except _JSExprFail:
+            state["parts"] = _sp_saved_parts
+            state["ops"] = _sp_saved_ops
+            raise
+        actual, dc = _js_splice_span(len(value.elements), start,
+                                     dcount if has_count else None)
+        removed = value.elements[actual:actual + dc]
+        del value.elements[actual:actual + dc]
+        state["ops"] += 1  # the splice is obfuscation-shaped
+        return _JSArr(removed), i
     if name == "at":
         if isinstance(value, str) and not isinstance(
                 value, (_JSNumStr, _JSBigInt)):
