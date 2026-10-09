@@ -17656,7 +17656,9 @@ _F478_ARRAY_METHODS = frozenset({
     "map", "filter", "find", "findLast", "at",
 })
 _F478_STRING_METHODS = frozenset({
-    "concat", "replace",
+    "concat", "replace", "split",  # F869: split joins the table --
+    # String.prototype.split.call('a,b', ',') desugars through the
+    # node-exact F564 split production (v24.20.0 verified).
 })
 _F478_DISPATCH_METHODS = _F478_ARRAY_METHODS | _F478_STRING_METHODS
 _F478_DISPATCH_NAMES = ("call", "apply", "bind")
@@ -73505,6 +73507,10 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # 'A'.localeCompare('a') > 0 while 'A' < 'a' by code point).
         # Any other comparator (incl. a non-function arg -- the
         # engine THROWS TypeError, node-verified) fails closed.
+        # F872: the constant-zero comparator
+        # (function(x,y){return 0;} / (x,y)=>0 and twins) is a
+        # consistent all-equal comparator, so V8's stable sort
+        # preserves order node-exactly -- modeled as the identity.
         # Non-str elements (incl. _JSNumStr provenance
         # markers, _JSNil/_JSBool, nested arrays) fail closed.
         # Checked BEFORE the "method on unjoined array" guard below.
@@ -73523,7 +73529,20 @@ def _js_apply_method_at(text, i, name, value, depth, state):
                 # Not the F580 length comparator -- try the F604
                 # localeCompare comparator (restarted from the same
                 # position; the length parse mutates no state).
-                mode, i = _js_parse_f604_locale_cmp(text, _cmp_start)
+                try:
+                    mode, i = _js_parse_f604_locale_cmp(text, _cmp_start)
+                except _JSExprFail:
+                    # F872: constant-zero comparator
+                    # (function(x,y){return 0;} / (x,y)=>0 / ()=>0) --
+                    # a consistent all-equal comparator, so V8's
+                    # stable sort preserves the input order
+                    # node-exactly (v24.20.0 verified). Any other
+                    # comparator body fails closed (documented
+                    # residual -- a non-zero constant is an
+                    # inconsistent comparator with
+                    # implementation-defined order).
+                    i = _js_parse_f872_zero_cmp(text, _cmp_start)
+                    mode = "identity"
             i = _js_skip_ws(text, i)
             if i >= len(text) or text[i] != ")":
                 raise _JSExprFail("sort bad args")
@@ -73540,6 +73559,9 @@ def _js_apply_method_at(text, i, name, value, depth, state):
             elements = sorted(value.elements, key=len)
         elif mode == "locale_desc":
             elements = sorted(value.elements, reverse=True)
+        elif mode == "identity":
+            # F872: constant-zero comparator -- order preserved.
+            elements = list(value.elements)
         else:
             elements = sorted(value.elements)
         state["ops"] += 1  # the reorder is obfuscation-shaped
@@ -77136,6 +77158,869 @@ def _js_parse_f810_chain_iife(text, i, depth, state):
         return None
 
 
+# ---------------------------------------------------------------------------
+# F869/F870/F871/F872: statement-IIFE laundering closures
+# ---------------------------------------------------------------------------
+
+def _js_f869_expect_word(text, j, word):
+    """Match the exact identifier *word* at text[j] (F869).
+
+    Boundary-checked: `Arrayx` / `slicex` never match. Raises
+    _JSExprFail. Never evals.
+    """
+    n = len(text)
+    if not text.startswith(word, j):
+        raise _JSExprFail("F869 expected %s" % word)
+    k = j + len(word)
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F869 %sx" % word)
+    return k
+
+
+def _js_check_plain_strs(args, what):
+    """Reject _JSNumStr elements in a literal arg list (F869+).
+
+    A numeric-looking literal is not a plain string in the engine's
+    coercion lattice; carrying it as a string would mis-decode.
+    Raises _JSExprFail. Never evals.
+    """
+    for a in args:
+        if not isinstance(a, str) or isinstance(a, _JSNumStr):
+            raise _JSExprFail("plain-str check: %s not a plain string" % what)
+
+
+def _js_parse_f869_slicecall_iife(text, i, depth, state):
+    """Parse `(function(){function NAME(){return
+    Array.prototype.slice.call(arguments).join('SEP');}return ADD;})()`
+    (F869).
+
+    F869 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models `.call` on user functions (F614) but not builtin
+    borrowing -- `Array.prototype.slice.call(arguments)` inside a
+    named function resolves node-exactly while the decoder produces
+    zero variants:
+      `(function(){function f(){return
+        Array.prototype.slice.call(arguments).join('');}
+        return f('f1','f2');})()`
+    (The `String.prototype.split.call('f1,f2',',')` twin closes via
+    the F478 dispatch table -- "split" joins _F478_STRING_METHODS and
+    desugars through the node-exact F564 split production.)
+
+    Node-exact desugar (v24.20.0): `Array.prototype.slice.call(
+    arguments)` with no extra slice args copies the arguments
+    object into a real array; `.join('SEP')` joins it with the
+    literal separator; the call-site literals are the arguments
+    list.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (the F654 sync head).
+    - `function NAME(){return
+      Array.prototype.slice.call(arguments).join('SEP');}` --
+      named, non-generator, zero declared params (the filed shape;
+      declared params alongside `arguments` are a documented
+      residual), non-reserved name; the body is exactly the
+      slice.call/join chain -- extra slice args, a missing join
+      separator, and non-`arguments` receivers fail closed.
+    - `return ADD;` where ADD is a `+`-additive of string literals
+      and >=1 call terms `NAME(L1..Lm)` with string-literal args
+      (the F809 literal check; _JSNumStr rejected).
+    - exactly `()` invocation; no trailing statements.
+
+    Disjointness: no earlier route accepts a `function`-declaration
+    head with an `Array.prototype` body (the F614 additive body
+    fails closed on the `Array` identifier; red-first verified:
+    2 BREAK on the open tree), so no previously-decoded input
+    changes behavior. F452: one part per call arg and per return
+    term; the wrapper charges one op. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        q = _js_skip_ws(text, inner_start)
+        fk = _js_match_kw(text, q, "function")
+        if fk is None:
+            return None
+        q = _js_skip_ws(text, fk)
+        fname, q = _js_parse_ident(text, q)
+        if fname == "arguments" or fname in _F611_RESERVED:
+            raise _JSExprFail("F869 bad function name")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "*":
+            raise _JSExprFail("F869 generator")
+        oparams, q = _js_parse_fn_params(text, q)
+        if oparams:
+            # Declared params alongside `arguments` are a
+            # documented residual (node aliases them in sloppy
+            # mode; the static model does not).
+            raise _JSExprFail("F869 declared params")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "{":
+            raise _JSExprFail("F869 without body")
+        fstart, fend, q = _js_span_braced(text, q)
+        bq = _js_skip_ws(text, fstart)
+        rk = _js_match_kw(text, bq, "return")
+        if rk is None:
+            raise _JSExprFail("F869 body not a return")
+        bq = _js_skip_ws(text, rk)
+        # Array.prototype.slice.call(arguments).join('SEP')
+        bq = _js_f869_expect_word(text, bq, "Array")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ".")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_f869_expect_word(text, bq, "prototype")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ".")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_f869_expect_word(text, bq, "slice")
+        bq = _js_skip_ws(text, bq)
+        bd = _js_peek_dispatch_call(text, bq)
+        if bd is None or bd[0] != "call":
+            raise _JSExprFail("F869 not a .call dispatch")
+        bq = _js_skip_ws(text, bd[1] + 1)
+        aname, bq = _js_parse_ident(text, bq)
+        if aname != "arguments":
+            raise _JSExprFail("F869 receiver not arguments")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ")")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ".")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_f869_expect_word(text, bq, "join")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, "(")
+        bq = _js_skip_ws(text, bq)
+        if bq >= n or text[bq] not in "'\"":
+            raise _JSExprFail("F869 join separator not a literal")
+        sep, bq = _js_parse_string(text, bq)
+        if not isinstance(sep, str) or isinstance(sep, _JSNumStr):
+            raise _JSExprFail("F869 join separator not a plain string")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ")")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ";")
+        if _js_skip_ws(text, bq) != fend:
+            raise _JSExprFail("F869 body trailing statements")
+        q = _js_skip_ws(text, q)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F869 no return")
+        q = _js_skip_ws(text, rk)
+        parts = []
+        saw_call = False
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                lit, q = _js_parse_string(text, q)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F869 return term not a string")
+                parts.append(lit)
+            elif q < n and text[q] in _JS_IDENT_START:
+                nm, q = _js_parse_ident(text, q)
+                if nm != fname:
+                    raise _JSExprFail("F869 return calls unknown function")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "(")
+                args, q = _js_parse_string_literal_list(
+                    text, _js_skip_ws(text, q), state, ")")
+                _js_check_plain_strs(args, "F869 call arg")
+                parts.append(sep.join(args))
+                saw_call = True
+            else:
+                raise _JSExprFail("F869 return bad term")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "+":
+                q += 1
+                continue
+            break
+        if not saw_call:
+            raise _JSExprFail("F869 no call term")
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F869 concat too long")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F869 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f870_one_dispatch(text, k, depth, state):
+    """Parse one `.bind`/`.call`/`.apply` dispatch at text[k] (F870).
+
+    Returns (dname, args, next_index): the dispatch name, the
+    bound/call argument list (string literals only; `.apply` takes
+    a `[lit, ...]` array), and the index past the dispatch's `)`.
+    The thisArg is parsed and discarded -- the modeled function
+    bodies never reference `this` (the F614 additive-body
+    precedent), so every thisArg is engine-irrelevant. Raises
+    _JSExprFail. Never evals.
+    """
+    n = len(text)
+    bd = _js_peek_dispatch_call(text, k)
+    if bd is None:
+        raise _JSExprFail("F870 dispatch without member")
+    dname, paren = bd
+    p = _js_skip_ws(text, paren + 1)
+    _, p = _js_parse_ignored_value(text, p, depth, state)
+    p = _js_skip_ws(text, p)
+    if dname == "apply":
+        if p >= n or text[p] != ",":
+            raise _JSExprFail("F870 apply without args array")
+        p = _js_skip_ws(text, p + 1)
+        if p >= n or text[p] != "[":
+            raise _JSExprFail("F870 apply argsArray not an array")
+        args, p = _js_parse_f519_apply_args_array(text, p + 1, state)
+        p = _js_skip_ws(text, p)
+        if p >= n or text[p] != ")":
+            raise _JSExprFail("F870 apply dispatch not closed")
+        p += 1
+    else:
+        if p < n and text[p] == ",":
+            args, p = _js_parse_string_literal_list(
+                text, _js_skip_ws(text, p + 1), state, ")")
+        elif p < n and text[p] == ")":
+            args, p = [], p + 1
+        else:
+            raise _JSExprFail("F870 bad dispatch args")
+    _js_check_plain_strs(args, "F870 dispatch arg")
+    return dname, args, p
+
+
+def _js_parse_f870_chain_value(text, j, params, body, depth, state,
+                               prebound, two_hops):
+    """Parse an F870 bind-chain term at text[j] (past the target name).
+
+    *prebound* is the arg list already bound (twin 2's `var`
+    statement bind, else []). *two_hops* selects the twin: True for
+    twin 1 (`NAME.bind(...).bind|.call|.apply(...)` -- exactly two
+    dispatches; the first MUST be `.bind` since `.call`/`.apply`
+    invoke immediately), False for twin 2 (`GNAME.bind|.call|.apply`
+    -- one dispatch on the alias). A terminal `.bind` requires the
+    immediate invocation parens (a bound function with no call is
+    not a decodable value -- the F614/F636 precedent; a third
+    dispatch fails closed structurally). Returns (value,
+    next_index). Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    total = list(prebound)
+    d1, b1, q = _js_parse_f870_one_dispatch(text, q, depth, state)
+    total.extend(b1)
+    d = d1
+    if two_hops:
+        if d1 != "bind":
+            # .call/.apply invoke immediately and cannot chain --
+            # node would invoke, not bind (F636 precedent).
+            raise _JSExprFail("F870 chain first not bind")
+        q = _js_skip_ws(text, q)
+        d2, b2, q = _js_parse_f870_one_dispatch(text, q, depth, state)
+        total.extend(b2)
+        d = d2
+    q = _js_skip_ws(text, q)
+    if d == "bind":
+        if q >= n or text[q] != "(":
+            raise _JSExprFail("F870 chain without invocation")
+        callargs, q = _js_parse_string_literal_list(
+            text, _js_skip_ws(text, q + 1), state, ")")
+        _js_check_plain_strs(callargs, "F870 call arg")
+        total.extend(callargs)
+    # else: .call/.apply invoke immediately -- the dispatch itself
+    # is the terminal.
+    if len(total) < len(params):
+        # F614/F636 arity precedent: a referenced slot coerces to
+        # `undefined` in node -- fail closed, never mis-decoded.
+        raise _JSExprFail("F870 arity mismatch")
+    total = total[:len(params)]
+    state["ops"] += 1  # the bind chain is obfuscation-shaped
+    return _js_f556_apply(params, body, total), q
+
+
+def _js_parse_f870_bindchain_iife(text, i, depth, state):
+    """Parse `(function(){function NAME(P1..Pn){return ADD;}return
+    ADD2;})()` / `(function(){function NAME(P1..Pn){return ADD;}var
+    G=NAME.bind(BT,ARGS);return ADD2;})()` (F870).
+
+    F870 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models single `.bind` on arrows (F614/F556) but not
+    bind chains on named function declarations --
+    `f.bind(null).bind(null)()` resolves node-exactly while the
+    decoder produces zero variants:
+      `(function(){function f(){return 'f1';}
+        return f.bind(null).bind(null)()+'f2';})()`
+      `(function(){function f(){return 'f1';}var g=f.bind(null);
+        return g.bind(null)()+'f2';})())`
+
+    Node-exact desugar (v24.20.0): a `.bind` on an already-bound
+    function concatenates the bound arg lists (the earlier thisArg
+    wins, but the modeled bodies never reference `this`, so every
+    thisArg is parsed and discarded -- the F636 precedent); the
+    chain terminates in an immediate invocation paren (after a
+    `.bind`), a `.call` dispatch, or an `.apply` dispatch, whose
+    args fill the remaining params in order (the F556 arity
+    precedent: extras dropped, fewer args than params fail
+    closed). The dispatch member accepts the dot / F482
+    bracket-string / F490 `?.` twins (all engine-identical, node
+    v24.20.0 verified).
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (the F654 sync head).
+    - `function NAME(P1..Pn){return ADD;}` -- named, non-generator;
+      ADD is the F614 additive body over the declared params
+      (param/literal operands; `this`, calls, and undeclared names
+      fail closed there).
+    - twin 1: `return ADD2;` where ADD2 is a `+`-additive of string
+      literals and >=1 chain terms `NAME.bind(BT,...)[.bind|.call|
+      .apply](...)` with exactly two dispatches (3+ fail closed --
+      the F636 documented residual).
+    - twin 2: `var GNAME=NAME.bind(BT,ARGS);` then `return ADD2;`
+      where the chain terms are `GNAME.bind(BT,...)[...](...)`
+      with exactly one dispatch (the `var` bind is the first hop).
+    - the first dispatch MUST be `.bind` (`.call`/`.apply` invoke
+      immediately -- the F636 precedent); every bound/call arg is
+      a string literal (the F809 literal check); exactly `()`
+      invocation; no trailing statements.
+
+    Disjointness: F636 owns the parenthesized-function-expression
+    chains (this requires a named-declaration head, which F636's
+    `(FN)` target rejects); F614 owns single dispatches (its bind
+    branch requires immediate invocation parens, which the chained
+    shapes do not have); the F614 additive body fails closed on
+    the `.bind` member, so no previously-decoded input changes
+    behavior (red-first verified: 2 BREAK on the open tree).
+    F452: one part per bound/call arg and per return term; the
+    wrapper charges one op. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        q = _js_skip_ws(text, inner_start)
+        fk = _js_match_kw(text, q, "function")
+        if fk is None:
+            return None
+        q = _js_skip_ws(text, fk)
+        fname, q = _js_parse_ident(text, q)
+        if fname == "arguments" or fname in _F611_RESERVED:
+            raise _JSExprFail("F870 bad function name")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "*":
+            raise _JSExprFail("F870 generator")
+        params, q = _js_parse_fn_params(text, q)
+        for p in params:
+            if p in _F611_RESERVED or p == "arguments":
+                raise _JSExprFail("F870 bad param")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "{":
+            raise _JSExprFail("F870 without body")
+        fstart, fend, q = _js_span_braced(text, q)
+        bq = _js_skip_ws(text, fstart)
+        rk = _js_match_kw(text, bq, "return")
+        if rk is None:
+            raise _JSExprFail("F870 body not a return")
+        bq = _js_skip_ws(text, rk)
+        body, bq = _js_parse_f614_additive_body(text, bq, params, state)
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ";")
+        if _js_skip_ws(text, bq) != fend:
+            raise _JSExprFail("F870 body trailing statements")
+        q = _js_skip_ws(text, q)
+        # Twin 2: var GNAME=NAME.bind(BT,ARGS);
+        prebound = []
+        chain_name = fname
+        vk = _js_match_kw(text, q, "var")
+        if vk is not None:
+            q = _js_skip_ws(text, vk)
+            gname, q = _js_parse_ident(text, q)
+            if gname == "arguments" or gname in _F611_RESERVED:
+                raise _JSExprFail("F870 bad alias name")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "=")
+            q = _js_skip_ws(text, q)
+            fn2, q = _js_parse_ident(text, q)
+            if fn2 != fname:
+                raise _JSExprFail("F870 alias of unknown function")
+            q = _js_skip_ws(text, q)
+            d1, b1, q = _js_parse_f870_one_dispatch(text, q, depth,
+                                                    state)
+            if d1 != "bind":
+                raise _JSExprFail("F870 alias not a bind")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            prebound = b1
+            chain_name = gname
+            q = _js_skip_ws(text, q)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F870 no return")
+        q = _js_skip_ws(text, rk)
+        parts = []
+        saw_chain = False
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                lit, q = _js_parse_string(text, q)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F870 return term not a string")
+                parts.append(lit)
+            elif q < n and text[q] in _JS_IDENT_START:
+                nm, nq = _js_parse_ident(text, q)
+                if nm != chain_name:
+                    raise _JSExprFail("F870 return unknown target")
+                val, q = _js_parse_f870_chain_value(
+                    text, nq, params, body, depth, state,
+                    prebound, chain_name == fname)
+                parts.append(val)
+                saw_chain = True
+            else:
+                raise _JSExprFail("F870 return bad term")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "+":
+                q += 1
+                continue
+            break
+        if not saw_chain:
+            raise _JSExprFail("F870 no chain term")
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F870 concat too long")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F870 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f871_applyargs_iife(text, i, depth, state):
+    """Parse `(function(){function F(...){return G.apply(BT,arguments);}
+    function G(Q1..Qn){return ADD;}return ADD2;})()` (F871).
+
+    F871 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models indexed `arguments` (F809) but not `apply` with
+    the arguments object -- `g.apply(null,arguments)` resolves
+    node-exactly while the decoder produces zero variants:
+      `(function(){function f(){return g.apply(null,arguments);}
+        function g(a,b){return a+b;}return f('f1','f2');})()`
+
+    Node-exact desugar (v24.20.0): `arguments` inside F is the
+    call-site argument list (as an array-like); `G.apply(BT,
+    arguments)` invokes G with those values positionally; the
+    thisArg is parsed and discarded (the modeled G bodies never
+    reference `this` -- the F614 additive-body precedent).
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (the F654 sync head).
+    - `function FNAME(...){return GNAME.apply(BT,arguments);}` --
+      named, non-generator; the body is exactly the apply with the
+      bare `arguments` identifier (indexed `arguments[i]` and extra
+      apply args fail closed); FNAME's declared params are parsed
+      and validated but do not affect the model (`arguments`
+      always reflects the call args).
+    - `function GNAME(Q1..Qn){return ADD;}` -- named,
+      non-generator, declared after FNAME (the filed order; any
+      other order fails closed), GNAME != FNAME (a same-name second
+      declaration would overwrite the first under sloppy-mode
+      hoisting -- not modeled); ADD is the F614 additive body
+      over the declared params.
+    - `return ADD2;` where ADD2 is a `+`-additive of string
+      literals and >=1 call terms `FNAME(L1..Lm)` with
+      string-literal args (the F809 literal check).
+    - the GNAME in the apply must name the second declaration
+      (an undeclared apply target throws ReferenceError in node);
+      fewer call args than GNAME's params fail closed (the F614
+      arity precedent); extras are dropped engine-exactly;
+      exactly `()` invocation; no trailing statements.
+
+    Disjointness: no earlier route accepts two consecutive
+    `function`-declaration heads (F870's single-decl hook fails
+    closed at the second `function`; the F614 additive body fails
+    closed on the `g.apply` member; red-first verified: 2 BREAK
+    on the open tree), so no previously-decoded input changes
+    behavior. F452: one part per call arg and per return term;
+    the wrapper charges one op. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        q = _js_skip_ws(text, inner_start)
+        fk = _js_match_kw(text, q, "function")
+        if fk is None:
+            return None
+        q = _js_skip_ws(text, fk)
+        fname, q = _js_parse_ident(text, q)
+        if fname == "arguments" or fname in _F611_RESERVED:
+            raise _JSExprFail("F871 bad function name")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "*":
+            raise _JSExprFail("F871 generator")
+        fparams, q = _js_parse_fn_params(text, q)
+        for p in fparams:
+            if p in _F611_RESERVED or p == "arguments":
+                raise _JSExprFail("F871 bad param")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "{":
+            raise _JSExprFail("F871 without body")
+        fstart, fend, q = _js_span_braced(text, q)
+        bq = _js_skip_ws(text, fstart)
+        rk = _js_match_kw(text, bq, "return")
+        if rk is None:
+            raise _JSExprFail("F871 body not a return")
+        bq = _js_skip_ws(text, rk)
+        gname, bq = _js_parse_ident(text, bq)
+        if gname == "arguments" or gname in _F611_RESERVED:
+            raise _JSExprFail("F871 bad apply target")
+        bq = _js_skip_ws(text, bq)
+        bd = _js_peek_dispatch_call(text, bq)
+        if bd is None or bd[0] != "apply":
+            raise _JSExprFail("F871 not an .apply dispatch")
+        bq = _js_skip_ws(text, bd[1] + 1)
+        _, bq = _js_parse_ignored_value(text, bq, depth, state)
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ",")
+        bq = _js_skip_ws(text, bq)
+        aname, bq = _js_parse_ident(text, bq)
+        if aname != "arguments":
+            raise _JSExprFail("F871 apply arg not arguments")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ")")
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ";")
+        if _js_skip_ws(text, bq) != fend:
+            raise _JSExprFail("F871 body trailing statements")
+        # Second declaration: the apply target.
+        q = _js_skip_ws(text, q)
+        fk = _js_match_kw(text, q, "function")
+        if fk is None:
+            raise _JSExprFail("F871 no second declaration")
+        q = _js_skip_ws(text, fk)
+        gname2, q = _js_parse_ident(text, q)
+        if gname2 != gname:
+            raise _JSExprFail("F871 apply target undeclared")
+        if gname2 == fname:
+            # A same-name second declaration would overwrite the
+            # first under sloppy-mode hoisting -- the static model
+            # does not reason about hoisting; fail closed.
+            raise _JSExprFail("F871 target shadows caller")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "*":
+            raise _JSExprFail("F871 target generator")
+        gparams, q = _js_parse_fn_params(text, q)
+        for p in gparams:
+            if p in _F611_RESERVED or p == "arguments":
+                raise _JSExprFail("F871 bad target param")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "{":
+            raise _JSExprFail("F871 target without body")
+        gstart, gend, q = _js_span_braced(text, q)
+        gq = _js_skip_ws(text, gstart)
+        rk = _js_match_kw(text, gq, "return")
+        if rk is None:
+            raise _JSExprFail("F871 target body not a return")
+        gq = _js_skip_ws(text, rk)
+        gbody, gq = _js_parse_f614_additive_body(text, gq, gparams,
+                                                 state)
+        gq = _js_skip_ws(text, gq)
+        gq = _js_expect(text, gq, ";")
+        if _js_skip_ws(text, gq) != gend:
+            raise _JSExprFail("F871 target body trailing statements")
+        q = _js_skip_ws(text, q)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F871 no return")
+        q = _js_skip_ws(text, rk)
+        parts = []
+        saw_call = False
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                lit, q = _js_parse_string(text, q)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F871 return term not a string")
+                parts.append(lit)
+            elif q < n and text[q] in _JS_IDENT_START:
+                nm, q = _js_parse_ident(text, q)
+                if nm != fname:
+                    raise _JSExprFail("F871 return calls unknown function")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "(")
+                args, q = _js_parse_string_literal_list(
+                    text, _js_skip_ws(text, q), state, ")")
+                _js_check_plain_strs(args, "F871 call arg")
+                if len(args) < len(gparams):
+                    raise _JSExprFail("F871 arity mismatch")
+                parts.append(_js_f556_apply(gparams, gbody,
+                                            args[:len(gparams)]))
+                saw_call = True
+            else:
+                raise _JSExprFail("F871 return bad term")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "+":
+                q += 1
+                continue
+            break
+        if not saw_call:
+            raise _JSExprFail("F871 no call term")
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F871 concat too long")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F871 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f872_zero_cmp(text, i):
+    """Parse a constant-zero sort comparator at text[i] (F872).
+
+    Recognized (node-verified, v24.20.0): `function(x,y){return 0;}`
+    (name/params free, ws-tolerant), `(x,y)=>0`, `(x,y)=>{return 0;}`
+    -- any function whose body provably returns the numeric literal
+    `0` (an optional leading `-` is accepted: `-0` compares equal).
+    A consistent all-equal comparator makes V8's stable sort
+    preserve the input order, so the sort is node-exactly the
+    identity. Any other comparator body fails closed (a non-zero
+    constant is an inconsistent comparator with
+    implementation-defined order -- documented residual). Returns
+    the index past the comparator. Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, i)
+    fk = _js_match_kw(text, i, "function")
+    if fk is not None:
+        i = _js_skip_ws(text, fk)
+        if i < n and text[i] in _JS_IDENT_START:
+            nm, i = _js_parse_ident(text, i)
+            if nm in _F611_RESERVED or nm == "arguments":
+                raise _JSExprFail("F872 bad comparator name")
+            i = _js_skip_ws(text, i)
+        params, i = _js_parse_fn_params(text, i)
+        for p in params:
+            if p in _F611_RESERVED or p == "arguments":
+                raise _JSExprFail("F872 bad comparator param")
+        i = _js_skip_ws(text, i)
+        if i >= n or text[i] != "{":
+            raise _JSExprFail("F872 comparator without body")
+        i = _js_skip_ws(text, i + 1)
+        rk = _js_match_kw(text, i, "return")
+        if rk is None:
+            raise _JSExprFail("F872 comparator not a return")
+        i = _js_skip_ws(text, rk)
+        i = _js_parse_f872_zero_return(text, i)
+        i = _js_skip_ws(text, i)
+        i = _js_expect(text, i, ";")
+        i = _js_skip_ws(text, i)
+        i = _js_expect(text, i, "}")
+        return i
+    # Arrow form: (params)=>0 | (params)=>{return 0;}
+    params, i = _js_parse_fn_params(text, i)
+    for p in params:
+        if p in _F611_RESERVED or p == "arguments":
+            raise _JSExprFail("F872 bad comparator param")
+    i = _js_skip_ws(text, i)
+    if not text.startswith("=>", i):
+        raise _JSExprFail("F872 comparator without =>")
+    i = _js_skip_ws(text, i + 2)
+    if i < n and text[i] == "{":
+        i = _js_skip_ws(text, i + 1)
+        rk = _js_match_kw(text, i, "return")
+        if rk is None:
+            raise _JSExprFail("F872 arrow comparator not a return")
+        i = _js_skip_ws(text, rk)
+        i = _js_parse_f872_zero_return(text, i)
+        i = _js_skip_ws(text, i)
+        i = _js_expect(text, i, ";")
+        i = _js_skip_ws(text, i)
+        i = _js_expect(text, i, "}")
+        return i
+    return _js_parse_f872_zero_return(text, i)
+
+
+def _js_parse_f872_zero_return(text, i):
+    """Parse `[-]0` (numeric zero) at text[i] (F872).
+
+    Returns the index past the zero. Anything else raises
+    _JSExprFail. Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, i)
+    if i < n and text[i] == "-":
+        i = _js_skip_ws(text, i + 1)
+    val, i = _js_parse_number(text, i)
+    if val != 0:
+        raise _JSExprFail("F872 comparator not constant zero")
+    return i
+
+
+def _js_parse_f872_sortzero_iife(text, i, depth, state):
+    """Parse `(function(){var A=[L1..Ln];A.sort(ZEROCMP);return ADD;})()`
+    (F872).
+
+    F872 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models bare `sort()` but not comparators --
+    `['f1','f2'].sort(()=>0)` resolves node-exactly while the
+    decoder produces zero variants:
+      `(function(){var a=['f1','f2'];
+        a.sort(function(x,y){return 0;});return a[0]+a[1];})()`
+    (The `['f1','f2'].sort(function(){return 0;}).join('')` twin
+    closes at the expression level: the F872 constant-zero
+    comparator joins the `sort` production's comparator table.)
+
+    Node-exact desugar (v24.20.0): a constant-zero comparator is a
+    consistent all-equal comparator, so V8's stable sort preserves
+    the array order; the subsequent indexed reads see the original
+    elements.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (the F654 sync head).
+    - `var A=[L1..Ln];` -- `var` only (the filed shape; `let`/
+      `const` are a documented residual), string-literal elements
+      (the F809 literal check; _JSNumStr rejected).
+    - `A.sort(ZEROCMP);` -- the same array name; ZEROCMP is the
+      F872 constant-zero comparator (a bare `()` sort and any
+      other comparator fail closed -- documented residuals).
+    - `return ADD;` where ADD is a `+`-additive of string literals
+      and `A[INT]` indexed reads with INT in `[0, len)` (an
+      out-of-range index is `undefined` in node -- fail closed,
+      never mis-decoded).
+    - exactly `()` invocation; no trailing statements.
+
+    Disjointness: no earlier route accepts a `var A=[...];`
+    statement head followed by `.sort(` (red-first verified:
+    2 BREAK on the open tree), so no previously-decoded input
+    changes behavior. F452: one part per element, per arg, and
+    per return term; the wrapper charges one op. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        q = _js_skip_ws(text, inner_start)
+        vk = _js_match_kw(text, q, "var")
+        if vk is None:
+            return None
+        q = _js_skip_ws(text, vk)
+        aname, q = _js_parse_ident(text, q)
+        if aname == "arguments" or aname in _F611_RESERVED:
+            raise _JSExprFail("F872 bad array name")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "=")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "[")
+        elems, q = _js_parse_string_literal_list(
+            text, _js_skip_ws(text, q), state, "]")
+        _js_check_plain_strs(elems, "F872 array element")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        aname2, q = _js_parse_ident(text, q)
+        if aname2 != aname:
+            raise _JSExprFail("F872 sort on unknown array")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ".")
+        q = _js_skip_ws(text, q)
+        sname, q = _js_parse_ident(text, q)
+        if sname != "sort":
+            raise _JSExprFail("F872 not a sort statement")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_parse_f872_zero_cmp(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F872 no return")
+        q = _js_skip_ws(text, rk)
+        parts = []
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                lit, q = _js_parse_string(text, q)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F872 return term not a string")
+                parts.append(lit)
+            elif q < n and text[q] in _JS_IDENT_START:
+                nm, q = _js_parse_ident(text, q)
+                if nm != aname:
+                    raise _JSExprFail("F872 return unknown array")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "[")
+                q = _js_skip_ws(text, q)
+                num, q = _js_parse_number(text, q)
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "]")
+                if num >= len(elems):
+                    raise _JSExprFail("F872 index out of range")
+                parts.append(elems[num])
+            else:
+                raise _JSExprFail("F872 return bad term")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "+":
+                q += 1
+                continue
+            break
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F872 concat too long")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F872 trailing statements")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
 def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     """Parse one primary (literal / fromCharCode / parens / number / array /
     Array constructor / Reflect.construct).
@@ -80406,6 +81291,59 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f810_saved_parts; state['ops'] = _f810_saved_ops
         if _f810 is not None:
             val, i = _f810
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F869: (function(){function NAME(){return
+        #   Array.prototype.slice.call(arguments).join('SEP');}
+        #   return ADD;})() -- builtin method borrowing. Tried after
+        #   F810: the F810 object-literal head fails closed on the
+        #   `function`-declaration head, and no earlier route accepts
+        #   an `Array.prototype` body (red-first verified: 2 BREAK
+        #   on the open tree), so no previously-decoded input
+        #   changes behavior. None falls through like F810.
+        _f869_saved_parts = state['parts']; _f869_saved_ops = state['ops']
+        _f869 = _js_parse_f869_slicecall_iife(text, i, depth, state)
+        if _f869 is None:
+            state['parts'] = _f869_saved_parts; state['ops'] = _f869_saved_ops
+        if _f869 is not None:
+            val, i = _f869
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F870: (function(){function NAME(Ps){return ADD;}return
+        #   ADD2;})() / (...;var G=NAME.bind(BT,ARGS);return ADD2;})()
+        #   -- bind chains on named declarations. Tried after F869:
+        #   disjoint by head (F869 requires the exact
+        #   slice.call/join body; F870 requires the F614 additive
+        #   body) and by the single-vs-double `function` head vs
+        #   F871. Red-first verified: 2 BREAK on the open tree.
+        _f870_saved_parts = state['parts']; _f870_saved_ops = state['ops']
+        _f870 = _js_parse_f870_bindchain_iife(text, i, depth, state)
+        if _f870 is None:
+            state['parts'] = _f870_saved_parts; state['ops'] = _f870_saved_ops
+        if _f870 is not None:
+            val, i = _f870
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F871: (function(){function F(...){return G.apply(BT,
+        #   arguments);}function G(Qs){return ADD;}return ADD2;})() --
+        #   apply with the arguments object. Tried after F870:
+        #   F870's single-decl hook fails closed on the second
+        #   `function` head. Red-first verified: 2 BREAK on the
+        #   open tree.
+        _f871_saved_parts = state['parts']; _f871_saved_ops = state['ops']
+        _f871 = _js_parse_f871_applyargs_iife(text, i, depth, state)
+        if _f871 is None:
+            state['parts'] = _f871_saved_parts; state['ops'] = _f871_saved_ops
+        if _f871 is not None:
+            val, i = _f871
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F872: (function(){var A=[LITS];A.sort(ZEROCMP);return
+        #   ADD;})() -- sort with a constant-zero comparator.
+        #   Tried after F871: disjoint by the `var A=[` head.
+        #   Red-first verified: 2 BREAK on the open tree.
+        _f872_saved_parts = state['parts']; _f872_saved_ops = state['ops']
+        _f872 = _js_parse_f872_sortzero_iife(text, i, depth, state)
+        if _f872 is None:
+            state['parts'] = _f872_saved_parts; state['ops'] = _f872_saved_ops
+        if _f872 is not None:
+            val, i = _f872
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
