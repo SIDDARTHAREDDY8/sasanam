@@ -29822,15 +29822,33 @@ def _js_f672_member_access(text, j, state):
     raise _JSExprFail("F672 member not dot/bracket")
 
 
+def _js_f672_probe_zeroarg_call(text, q):
+    """Probe a zero-arg call `( )` at text[q] (F791).
+
+    Returns the index past `)` when text[q] opens a zero-arg call,
+    else None (the caller falls back to the non-call term). A `(`
+    without a closing `)` is malformed -- fails closed. Never
+    evals.
+    """
+    n = len(text)
+    q2 = _js_skip_ws(text, q)
+    if q2 < n and text[q2] == "(":
+        q3 = _js_skip_ws(text, q2 + 1)
+        return _js_expect(text, q3, ")")
+    return None
+
+
 def _js_f672_parse_body_additive(text, j, state):
     """Parse a method/getter `return` additive at text[j] (F672).
 
     Terms are string literals, parenthesized string literals,
     identifiers (resolved at access against the live scopes), and
-    private-field reads `this.#P` / `CNAME.#P`, joined by `+`.
+    private-field reads `this.#P` / `CNAME.#P`, plus zero-arg
+    private-method calls `this.#M()` / `CNAME.#M()` (F791), joined
+    by `+`.
     Returns (terms, next_index) with terms ("lit", value) /
-    ("ident", name) / ("priv", recv, pname) where recv is ("cls",
-    cname) or ("this",). Never evals.
+    ("ident", name) / ("priv", recv, pname) / ("pmcall", recv,
+    pname) where recv is ("cls", cname) or ("this",). Never evals.
     """
     n = len(text)
     terms = []
@@ -29862,8 +29880,17 @@ def _js_f672_parse_body_additive(text, j, state):
                     # outside the string-only discipline.
                     raise _JSExprFail("F672 body this term")
                 pn, q = _js_parse_ident(text, q + 1)
-                terms.append(("priv", ("this",), pn))
-                j = q
+                q3 = _js_f672_probe_zeroarg_call(text, q)
+                if q3 is not None:
+                    # F791: `this.#M()` -- zero-arg private method
+                    # call. (A `this.#P()` where P is a field, not a
+                    # method, throws in the engine -- fails closed at
+                    # eval.)
+                    terms.append(("pmcall", ("this",), pn))
+                    j = q3
+                else:
+                    terms.append(("priv", ("this",), pn))
+                    j = q
             else:
                 name, q = _js_parse_ident(text, j)
                 q2 = _js_skip_ws(text, q)
@@ -29874,8 +29901,15 @@ def _js_f672_parse_body_additive(text, j, state):
                         # are F674 territory -- fail closed here.
                         raise _JSExprFail("F672 body member term")
                     pn, q3 = _js_parse_ident(text, q3 + 1)
-                    terms.append(("priv", ("cls", name), pn))
-                    j = q3
+                    q5 = _js_f672_probe_zeroarg_call(text, q3)
+                    if q5 is not None:
+                        # F791: `CNAME.#M()` -- zero-arg private
+                        # static-method call on the named class.
+                        terms.append(("pmcall", ("cls", name), pn))
+                        j = q5
+                    else:
+                        terms.append(("priv", ("cls", name), pn))
+                        j = q3
                 else:
                     terms.append(("ident", name))
                     j = q
@@ -30010,6 +30044,14 @@ def _js_f672_eval_body(spec, env, cenv, thisv, state):
       (pstatic for a class receiver, pinst for an instance);
     - `CNAME.#P` reads the private static field P on the named
       class's own record;
+    - `this.#M()` / `CNAME.#M()` (F791) call the zero-arg private
+      method M: looked up on the LEXICALLY declaring class's own
+      record (spec["_decl"] -- privates are never inherited), with
+      the engine's brand check (an instance receiver must be an
+      instance of the declaring class or a subclass; a class
+      receiver looks up its own static private methods, so a
+      subclass receiver misses exactly where the engine throws);
+      non-string results fail closed;
     - a private read is legal only when P is lexically in scope
       (spec["pnames"] -- node-verified: cross-class `#x`
       references are a SyntaxError) AND the receiver's own record
@@ -30060,6 +30102,57 @@ def _js_f672_eval_body(spec, env, cenv, thisv, state):
                     if not isinstance(v, str):
                         raise _JSExprFail("F672 private miss")
                     out.append(v)
+                elif t[0] == "pmcall":
+                    # F791: zero-arg private-method call. Node-exact
+                    # (v24.20.0): the method is looked up on the
+                    # LEXICALLY declaring class's own record
+                    # (privates are never inherited -- node-verified:
+                    # a subclass's same-named #m does not shadow the
+                    # parent's inside the parent's method); the
+                    # receiver must carry that class's brand or the
+                    # engine throws (fail closed).
+                    recv, pn = t[1], t[2]
+                    if pn not in pnames:
+                        raise _JSExprFail("F791 private out of scope")
+                    decl = spec.get("_decl")
+                    if not isinstance(decl, dict):
+                        raise _JSExprFail("F791 no declaring class")
+                    if recv[0] == "cls":
+                        crec = cenv.get(recv[1])
+                        if not isinstance(crec, dict):
+                            raise _JSExprFail("F791 private class miss")
+                        mspec = crec["psmeth"].get(pn)
+                        if mspec is None:
+                            raise _JSExprFail("F791 private static miss")
+                        v = _js_f672_eval_body(mspec, env, cenv,
+                                               ("cls", crec), state)
+                    elif thisv[0] == "cls":
+                        # `this.#M()` in a static method: `this` is
+                        # the class object; the static private method
+                        # is looked up on its own record (a subclass
+                        # receiver lacks the brand -- node-verified
+                        # throw -- so the own-record miss fails
+                        # closed exactly there).
+                        crec = thisv[1]
+                        mspec = crec["psmeth"].get(pn)
+                        if mspec is None:
+                            raise _JSExprFail("F791 private static miss")
+                        v = _js_f672_eval_body(mspec, env, cenv,
+                                               thisv, state)
+                    else:
+                        r = thisv[1]
+                        while isinstance(r, dict) and r is not decl:
+                            r = r["extends"]
+                        if r is not decl:
+                            raise _JSExprFail("F791 private brand")
+                        mspec = decl["pmeth"].get(pn)
+                        if mspec is None:
+                            raise _JSExprFail("F791 private method miss")
+                        v = _js_f672_eval_body(mspec, env, cenv,
+                                               thisv, state)
+                    if not isinstance(v, str):
+                        raise _JSExprFail("F791 private method nonstring")
+                    out.append(v)
                 else:
                     raise _JSExprFail("F672 body bad term kind")
                 _js_f672_charge(state)
@@ -30104,7 +30197,7 @@ def _js_f672_check_priv_scope(spec):
         if op[0] != "return":
             continue
         for t in op[1]:
-            if t[0] == "priv" and t[2] not in pnames:
+            if t[0] in ("priv", "pmcall") and t[2] not in pnames:
                 raise _JSExprFail("F672 private out of scope")
 
 
@@ -30157,17 +30250,19 @@ def _js_f672_parse_class_body(text, j, env, cenv, state, depth,
     parent member (an uninitialized field shadows with undefined --
     node-verified); privates are never inherited.
 
-    Bounds (all fail closed): private methods, non-literal field
-    initializers, params, `constructor`, `set`, generators, async,
-    method/getter and field/method name collisions, non-literal
-    computed keys, member reads/calls/`+=` inside bodies, ASI forms.
+    Bounds (all fail closed): private methods with params (F791
+    models zero-arg private methods only), private getters/setters,
+    non-literal field initializers, `constructor`, `set`,
+    generators, async, method/getter and field/method name
+    collisions, non-literal computed keys, member reads/calls/`+=`
+    inside bodies, ASI forms.
     Returns (record, index_past_'}'). Never evals.
     """
     n = len(text)
     j = _js_expect(text, j, "{")
     rec = {"static": {}, "sget": {}, "inst": {}, "pstatic": {},
            "pinst": {}, "smeth": {}, "imeth": {}, "iget": {},
-           "extends": extends_rec}
+           "pmeth": {}, "psmeth": {}, "extends": extends_rec}
     # Private names declared by THIS class body (shared set object;
     # complete once the body is fully parsed -- node-verified: a
     # private name is lexically in scope for the whole class body,
@@ -30182,8 +30277,15 @@ def _js_f672_parse_class_body(text, j, env, cenv, state, depth,
             # a `#P` reference is an early SyntaxError unless P is
             # declared in an enclosing class -- even when the
             # method/getter is never called. pnames is complete now.
-            for _d in ("smeth", "imeth", "sget", "iget"):
+            # Each spec also records its declaring class record so
+            # F791 private-method calls can do the brand check
+            # against the LEXICAL class (node-verified: a subclass's
+            # same-named #m does not shadow the parent's inside the
+            # parent's method).
+            for _d in ("smeth", "imeth", "sget", "iget",
+                       "pmeth", "psmeth"):
                 for _spec in rec[_d].values():
+                    _spec["_decl"] = rec
                     _js_f672_check_priv_scope(_spec)
             return rec, j + 1
         # `static {` -- static block, executed at definition (F662).
@@ -30208,7 +30310,20 @@ def _js_f672_parse_class_body(text, j, env, cenv, state, depth,
             d = rec["pstatic"] if pstat else rec["pinst"]
             q = _js_skip_ws(text, q)
             if q < n and text[q] == "(":
-                raise _JSExprFail("F672 private method")
+                # F791: `[static] #name()` -- private method, zero
+                # params only (params, generators, async fail closed
+                # below). The body uses the F672 body discipline, so
+                # `this.#M()` / `CNAME.#M()` private calls inside are
+                # modeled too. Duplicate private names are already
+                # rejected above (node SyntaxError).
+                q = _js_skip_ws(text, q + 1)
+                q = _js_expect(text, q, ")")
+                spec, q = _js_f672_parse_body(text, q, state, pnames)
+                d = rec["psmeth"] if pstat else rec["pmeth"]
+                d[name] = spec
+                _js_f672_charge(state)
+                j = q
+                continue
             if q < n and text[q] == "=":
                 q = _js_skip_ws(text, q + 1)
                 if q >= n or text[q] not in "'\"":
@@ -44078,6 +44193,364 @@ def _js_parse_f757_newtarget_iife(text, i, depth, state):
         return val, j
     except _JSExprFail:
         return None
+
+
+def _js_parse_decimal_literal(text, j, what):
+    """Parse a decimal integer literal at text[j] (F792).
+
+    Returns (num, next_index); raises _JSExprFail when no digits
+    are present. Never evals.
+    """
+    n = len(text)
+    d0 = j
+    while j < n and text[j] in "0123456789":
+        j += 1
+    if j == d0:
+        raise _JSExprFail(what)
+    return int(text[d0:j]), j
+
+
+def _js_f792_parse_const_key(text, j):
+    """Parse a constant string-literal key at text[j] (F792).
+
+    Every item groups under the literal key (node-exact).
+    Returns (("const", key), next_index). Never evals.
+    """
+    key, q = _js_parse_string(text, j)
+    if not isinstance(key, str) or isinstance(key, _JSNumStr):
+        raise _JSExprFail("F792 const key not plain")
+    return ("const", key), q
+
+
+def _js_f792_parse_callback(text, j, state):
+    """Parse a groupBy callback at text[j] (F792).
+
+    `function(IDENT){return IDENT;}` /
+    `function(IDENT){return IDENT[NUM];}` and the arrow twins
+    `(IDENT)=>IDENT` / `(IDENT)=>IDENT[NUM]` / `IDENT=>IDENT` /
+    `IDENT=>IDENT[NUM]` (ws-tolerant). The returned ident must be
+    the parameter. A string-literal key (`return 'K';` / `=>'K'`)
+    groups every item under the constant K (node-exact).
+    Returns (("ident",) / ("index", num) / ("const", key),
+    next_index). Anything else (extra params, other bodies,
+    non-literal index) fails closed. Never evals.
+    """
+    n = len(text)
+    fk = _js_match_kw(text, j, "function")
+    if fk is not None:
+        q = _js_skip_ws(text, fk)
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        param, q = _js_parse_ident(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "{")
+        q = _js_skip_ws(text, q)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F792 callback no return")
+        q = _js_skip_ws(text, rk)
+        if q < n and text[q] in "'\"":
+            # Constant string-literal key: every item groups under K.
+            form, q = _js_f792_parse_const_key(text, q)
+            q = _js_skip_ws(text, q)
+        else:
+            name, q = _js_parse_ident(text, q)
+            if name != param:
+                raise _JSExprFail("F792 callback param mismatch")
+            form, q = _js_f792_parse_key_subscript(text, q)
+            q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "}")
+        _js_f792_charge(state)
+        return form, q
+    # Arrow: `(IDENT)=>` / `IDENT=>`, ws-tolerant.
+    q = _js_skip_ws(text, j)
+    if q < n and text[q] == "(":
+        q = _js_skip_ws(text, q + 1)
+        param, q = _js_parse_ident(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+    else:
+        param, q = _js_parse_ident(text, q)
+    q = _js_skip_ws(text, q)
+    if not text.startswith("=>", q):
+        raise _JSExprFail("F792 callback not arrow")
+    q = _js_skip_ws(text, q + 2)
+    if q < n and text[q] in "'\"":
+        # Constant string-literal key: every item groups under K.
+        form, q = _js_f792_parse_const_key(text, q)
+    else:
+        name, q = _js_parse_ident(text, q)
+        if name != param:
+            raise _JSExprFail("F792 callback param mismatch")
+        form, q = _js_f792_parse_key_subscript(text, q)
+    _js_f792_charge(state)
+    return form, q
+
+
+def _js_f792_parse_key_subscript(text, j):
+    """Parse the optional key subscript at text[j] (F792).
+
+    The caller has already consumed and validated the callback's
+    parameter ident; this parses the optional `[NUM]` subscript
+    (`IDENT[NUM]`), or nothing for the bare-ident form. Returns
+    (("ident",) / ("index", num), next_index). Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    if q < n and text[q] == "[":
+        q = _js_skip_ws(text, q + 1)
+        num, q = _js_parse_decimal_literal(
+            text, q, "F792 key index not literal")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "]")
+        return ("index", num), q
+    return ("ident",), j
+
+
+def _js_f792_charge(state):
+    """Charge one F452 part and fail closed past the budget (F792)."""
+    state["parts"] += 1  # the grouping step is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("F792 too many parts")
+
+
+def _js_parse_f792_groupby_iife(text, i, depth, state):
+    """Parse `(function(){var M=(Map|Object).groupBy([...],CB);return ADD;})()` (F792).
+
+    F792 (LOW, filed 2026-10-09 by wave-384 attack round 52): the
+    decoder has no groupBy production, so the ES2024
+    `Map.groupBy`/`Object.groupBy` builtins group fragments
+    node-exactly while the decoder produces zero variants:
+      `(function(){var m=Map.groupBy(['f1','f2'],function(x){return x[0];});`
+      `return m.get('x')[0]+m.get('4')[0];})()`
+      `(function(){var o=Object.groupBy(['f1','f2'],function(x){return x[0];});`
+      `return o.x[0]+o['4'][0];})()`
+    Node-exact (v24.20.0) on the modeled subset: items are string
+    literals; the callback is `function(IDENT){return IDENT;}` /
+    `function(IDENT){return IDENT[NUM];}` / the constant-key
+    `function(IDENT){return 'K';}` or the arrow twins (the
+    returned ident is the parameter); keys are the callback
+    results in order (insertion-ordered groups, engine-exact);
+    `Map` reads are `M.get('K')[NUM]`, `Object` reads are
+    `M.K[NUM]` / `M['K'][NUM]` (cross-kind accessors throw in the
+    engine -- fail closed); a missing group key throws in the
+    engine (reading `[NUM]` off `undefined`); an out-of-range
+    index yields `undefined` (non-string) -- both fail closed in
+    the string-only discipline.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - exactly one statement: `var|let|const M=(Map|Object).groupBy(`
+      `[LIT(,LIT)*], CB);` (exactly two call args).
+    - return: `ADD;` -- a `+`-additive of string literals and
+      group reads (at least one group read, else the grouping is
+      dead and an earlier route owns the shape).
+    - exactly `()` invocation; no trailing statements.
+
+    Tried after F757: every accepted shape carries a
+    `(Map|Object).groupBy(` statement head, which no earlier
+    route accepts (red-first verified: 2 BREAK on the open tree).
+    Only previously fail-closed inputs are newly decoded, so no
+    previously-decoded input changes behavior. None falls through
+    to the parenthesized-additive path. F452 parts charged per
+    array item, per callback, and per read term; results bounded
+    by _MAX_DECODE_BYTES. Returns (value, next_index), or None
+    when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            return None
+        q = _js_skip_ws(text, m)
+        mname, q = _js_parse_ident(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "=")
+        q = _js_skip_ws(text, q)
+        is_map = None
+        for holder in ("Map", "Object"):
+            hk = _js_match_kw(text, q, holder)
+            if hk is None:
+                continue
+            q2 = _js_skip_ws(text, hk)
+            if q2 >= n or text[q2] != ".":
+                continue
+            q3 = _js_skip_ws(text, q2 + 1)
+            gk = _js_match_kw(text, q3, "groupBy")
+            if gk is None:
+                continue
+            is_map = (holder == "Map")
+            q = _js_skip_ws(text, gk)
+            break
+        if is_map is None:
+            return None
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "[")
+        items, q = _js_parse_string_literal_list(text, q, state, "]")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ",")
+        cb, q = _js_f792_parse_callback(text, _js_skip_ws(text, q),
+                                        state)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        # Group node-exactly (insertion order, engine-exact).
+        groups = {}
+        for item in items:
+            if not isinstance(item, str) or isinstance(item, _JSNumStr):
+                raise _JSExprFail("F792 item not a plain string")
+            if cb[0] == "ident":
+                key = item
+            elif cb[0] == "const":
+                key = cb[1]
+            else:
+                num = cb[1]
+                if num >= len(item):
+                    # Engine groups under `undefined`; outside the
+                    # string-only discipline -- fail closed.
+                    raise _JSExprFail("F792 key index out of range")
+                key = item[num]
+            if key in groups:
+                groups[key].append(item)
+            else:
+                groups[key] = [item]
+            _js_f792_charge(state)
+        sj = _js_skip_ws(text, q)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F792 no return")
+        q = _js_skip_ws(text, rk)
+        val, saw_read, q = _js_f792_parse_return_additive(
+            text, q, mname, is_map, groups, state)
+        if not saw_read:
+            raise _JSExprFail("F792 no group read")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F792 concat too long")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F792 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f792_parse_return_additive(text, j, mname, is_map, groups,
+                                  state):
+    """Parse the F792 `return` additive at text[j].
+
+    Terms are string literals and group reads, joined by `+`:
+    `M.get('K')[NUM]` for Map, `M.K[NUM]` / `M['K'][NUM]` for
+    Object (cross-kind accessors throw in the engine -- fail
+    closed). Returns (value, saw_read, next_index). Never evals.
+    """
+    n = len(text)
+    out = []
+    saw_read = False
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F792 return term overrun")
+        if text[j] in "'\"":
+            lit, j = _js_parse_string(text, j)
+            if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                raise _JSExprFail("F792 return lit not plain")
+            out.append(lit)
+        elif text[j] in _JS_IDENT_START:
+            name, q = _js_parse_ident(text, j)
+            if name != mname:
+                raise _JSExprFail("F792 return not the group var")
+            arr = _js_f792_parse_group_read(text, q, is_map, groups)
+            q = arr[1]
+            out.append(arr[0])
+            saw_read = True
+            j = q
+        else:
+            raise _JSExprFail("F792 return bad term")
+        _js_f792_charge(state)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j += 1
+            continue
+        return "".join(out), saw_read, j
+
+
+def _js_f792_parse_group_read(text, j, is_map, groups):
+    """Parse one F792 group read at text[j] (past the var name).
+
+    Returns (element, next_index). A missing group key throws in
+    the engine (reading `[NUM]` off `undefined`); an out-of-range
+    index yields `undefined` (non-string) -- both fail closed in
+    the string-only discipline. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if is_map:
+        # `M.get('K')[NUM]`
+        if j >= n or text[j] != ".":
+            raise _JSExprFail("F792 map read not .get")
+        q = _js_skip_ws(text, j + 1)
+        gk = _js_match_kw(text, q, "get")
+        if gk is None:
+            raise _JSExprFail("F792 map read not .get")
+        q = _js_skip_ws(text, gk)
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail("F792 map key not literal")
+        key, q = _js_parse_string(text, q)
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+    else:
+        # `M.K[NUM]` / `M['K'][NUM]`
+        if j < n and text[j] == ".":
+            q = _js_skip_ws(text, j + 1)
+            key, q = _js_parse_ident(text, q)
+        elif j < n and text[j] == "[":
+            q = _js_skip_ws(text, j + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F792 obj key not literal")
+            key, q = _js_parse_string(text, q)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "]")
+        else:
+            raise _JSExprFail("F792 obj read not member")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, "[")
+    q = _js_skip_ws(text, q)
+    num, q = _js_parse_decimal_literal(text, q,
+                                       "F792 read index not literal")
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, "]")
+    arr = groups.get(key)
+    if arr is None:
+        raise _JSExprFail("F792 group missing")
+    if num >= len(arr):
+        raise _JSExprFail("F792 read index out of range")
+    return arr[num], q
 
 
 def _js_f67x_lookup(obj, key):
@@ -63953,6 +64426,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f757_saved_parts; state['ops'] = _f757_saved_ops
         if _f757 is not None:
             val, i = _f757
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F792: (function(){var M=(Map|Object).groupBy([...],CB);
+        #   return ADD;})() -- ES2024 groupBy fragment grouping.
+        #   Tried after F757: every accepted shape carries a
+        #   `(Map|Object).groupBy(` statement head, which no earlier
+        #   route accepts (red-first verified: 2 BREAK on the open
+        #   tree), so no previously-decoded input changes behavior.
+        #   None falls through to the parenthesized-additive path.
+        #   The F757 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f792_saved_parts = state['parts']; _f792_saved_ops = state['ops']
+        _f792 = _js_parse_f792_groupby_iife(text, i, depth, state)
+        if _f792 is None:
+            state['parts'] = _f792_saved_parts; state['ops'] = _f792_saved_ops
+        if _f792 is not None:
+            val, i = _f792
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
