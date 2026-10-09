@@ -12082,6 +12082,515 @@ def _js_parse_f542_delegation(text, i, params):
     return k + 1
 
 
+
+# ---------------------------------------------------------------------------
+# F789: Proxy construct-trap reads
+# ---------------------------------------------------------------------------
+
+def _js_parse_f789_skip_parens(text, j):
+    """Skip a balanced `( ... )` at text[j] == '(' (F789).
+
+    The construct-trap target's parameter list is dead code (the
+    modeled trap never touches the target), so it is skipped
+    without parsing. String literals are skipped with escape
+    handling; template literals fail closed. Returns the index just
+    past the matching ')'. Never evals.
+    """
+    n = len(text)
+    depth = 0
+    k = j
+    while k < n:
+        c = text[k]
+        if c in "'\"":
+            k = _js_skip_quoted(text, k)
+            continue
+        if c == "`":
+            raise _JSExprFail("f789 template in parens")
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return k + 1
+        k += 1
+    raise _JSExprFail("f789 unterminated parens")
+
+
+def _js_parse_f789_ctor_target(text, j):
+    """Parse the construct-trap Proxy target `function...{...}` (F789).
+
+    The target must be a plain `function` (optional name): the
+    engine only fires the construct trap when the target is a
+    constructor (node v24.20.0) -- an arrow target throws TypeError
+    on `new p()`, as do generator and async-function targets, so
+    all fail closed here. The body is dead code (the modeled trap
+    never touches the target), so it is skipped balanced. Returns
+    next_index. Never evals.
+    """
+    n = len(text)
+    if _js_match_kw(text, j, "async") is not None:
+        raise _JSExprFail("f789 async target")
+    k = _js_match_kw(text, j, "function")
+    if k is None:
+        raise _JSExprFail("f789 target not a function")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "*":
+        raise _JSExprFail("f789 generator target")
+    if k < n and text[k] in _JS_IDENT_START:
+        # Optional name: dead (the target is never invoked).
+        _, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("f789 target without parens")
+    k = _js_parse_f789_skip_parens(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("f789 target without body")
+    _, _, k = _js_span_braced(text, k)
+    return k
+
+
+def _js_parse_f789_trap_params(text, j):
+    """Parse the construct-trap `(target, args)` params at text[j] (F789).
+
+    Exactly two distinct plain identifiers (the engine passes
+    (target, argsArray, newTarget); a two-param trap is the filed
+    shape -- other arities fail closed, documented). Reserved-word
+    or `arguments` names fail closed (the F758 discipline).
+    Returns ((tname, aname), next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("f789 trap params without paren")
+    tname, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ",":
+        raise _JSExprFail("f789 trap params arity")
+    aname, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("f789 trap params without close")
+    if tname == aname:
+        raise _JSExprFail("f789 trap params not distinct")
+    for nm in (tname, aname):
+        if nm in _F611_RESERVED or nm == "arguments":
+            raise _JSExprFail("f789 reserved trap param")
+    return (tname, aname), k + 1
+
+
+def _js_parse_f789_trap_object(text, j, aname, state):
+    """Parse the trap's `return {K: V, ...}` object at text[j] (F789).
+
+    Keys are identifiers or string literals (`__proto__` fails
+    closed -- the engine sets the prototype instead of an own
+    property, node v24.20.0; duplicate keys are later-wins,
+    engine-exact). Values are string literals or `aname[N]`
+    element reads with a canonical decimal index (the trap's args
+    array). Anything else fails closed. Returns ([(key, ("lit",
+    s) | ("arg", idx))], next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_expect(text, j, "{")
+    props = []
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "}":
+        return props, k + 1
+    while True:
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in "'\"":
+            key, k = _js_parse_string(text, k)
+        elif k < n and text[k] in _JS_IDENT_START:
+            key, k = _js_parse_ident(text, k)
+        else:
+            raise _JSExprFail("f789 bad object key")
+        if key == "__proto__":
+            raise _JSExprFail("f789 __proto__ key")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ":")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in "'\"":
+            val, k = _js_parse_string(text, k)
+            entry = (key, "lit", val)
+        elif (k < n and text[k] in _JS_IDENT_START
+                and text.startswith(aname, k)
+                and (k + len(aname) >= n
+                     or text[k + len(aname)] not in _JS_IDENT_CONT)):
+            q = _js_skip_ws(text, k + len(aname))
+            q = _js_expect(text, q, "[")
+            qq = _js_skip_ws(text, q)
+            d0 = qq
+            while qq < n and text[qq] in _ASCII_DIGITS:
+                qq += 1
+            if qq == d0 or (qq - d0 > 1 and text[d0] == "0"):
+                raise _JSExprFail("f789 arg index not canonical")
+            idx = int(text[d0:qq])
+            qq = _js_expect(text, qq, "]")
+            entry = (key, "arg", idx)
+            k = qq
+        else:
+            raise _JSExprFail("f789 bad object value")
+        # Later-wins duplicates (engine-exact object literal).
+        props = [p for p in props if p[0] != key]
+        props.append(entry)
+        state["parts"] += 1  # the property is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if len(props) > 8:
+            raise _JSExprFail("f789 too many props")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k += 1
+            continue
+        k = _js_expect(text, k, "}")
+        break
+    return props, k
+
+
+def _js_parse_f789_trap_return_block(text, j, aname, state):
+    """Parse `{ return {K:V,...}; }` at text[j] == '{' (F789).
+
+    The single-return block body shared by the `function` and
+    arrow-block trap forms. Returns next_index. Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j + 1)
+    rk = _js_match_kw(text, k, "return")
+    if rk is None:
+        raise _JSExprFail("f789 trap without return")
+    props, k = _js_parse_f789_trap_object(text, _js_skip_ws(text, rk),
+                                          aname, state)
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ";":
+        k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "}":
+        raise _JSExprFail("f789 trap without close brace")
+    return props, k + 1
+
+
+def _js_parse_f789_trap_fn(text, j, state):
+    """Parse the construct-trap function at text[j] (F789).
+
+    Recognized (all engine-identical, node v24.20.0):
+    `function(t,a){return {K:V,...};}` (anonymous -- the F542
+    idiom rejects named function traps), `(t,a)=>({K:V,...})`,
+    and `(t,a)=>{return {K:V,...};}`. The method-shorthand form is
+    handled by the caller. Returns (aname, props, next_index).
+    Never evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, j, "function")
+    if k is not None:
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            raise _JSExprFail("f789 named trap")
+        (_, aname), k = _js_parse_f789_trap_params(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("f789 trap without brace")
+        props, k = _js_parse_f789_trap_return_block(text, k, aname,
+                                                   state)
+        return aname, props, k
+    (_, aname), k = _js_parse_f789_trap_params(text, j)
+    k = _js_skip_ws(text, k)
+    if not text.startswith("=>", k):
+        raise _JSExprFail("f789 trap without arrow")
+    k = _js_skip_ws(text, k + 2)
+    if k < n and text[k] == "(":
+        # Concise body: `({K:V,...})`.
+        k = _js_skip_ws(text, k + 1)
+        props, k = _js_parse_f789_trap_object(text, k, aname, state)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        return aname, props, k
+    if k < n and text[k] == "{":
+        props, k = _js_parse_f789_trap_return_block(text, k, aname,
+                                                   state)
+        return aname, props, k
+    raise _JSExprFail("f789 bad arrow trap body")
+
+
+def _js_parse_f789_handler(text, j, state):
+    """Parse the `{construct: TRAP}` handler at text[j] (F789).
+
+    Exactly one handler key (`construct`): the filed shapes carry
+    no other traps, and extra keys fail closed (documented
+    narrowness -- the engine would still fire the construct trap,
+    so this is a miss, never a mis-decode). Forms:
+    `{construct: function(t,a){...}}`,
+    `{construct: (t,a)=>...}`, and the method shorthand
+    `{construct(t,a){...}}`. Returns (props, next_index) where
+    props is the trap's [(key, kind, value)] return object.
+    Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j)
+    k = _js_expect(text, k, "{")
+    k = _js_skip_ws(text, k)
+    hname, k = _js_parse_ident(text, k)
+    if hname != "construct":
+        raise _JSExprFail("f789 not a construct trap")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ":":
+        _, props, k = _js_parse_f789_trap_fn(
+            text, _js_skip_ws(text, k + 1), state)
+    elif k < n and text[k] == "(":
+        # Method shorthand: `construct(t,a){return {...};}`.
+        (_, aname), k = _js_parse_f789_trap_params(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("f789 method trap without brace")
+        props, k = _js_parse_f789_trap_return_block(text, k, aname,
+                                                   state)
+    else:
+        raise _JSExprFail("f789 bad handler")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "}":
+        raise _JSExprFail("f789 extra handler keys")
+    return props, k + 1
+
+
+def _js_parse_f789_args(text, j, state):
+    """Parse the construct-call `('LIT',...)` args at text[j] (F789).
+
+    String-literal-only (the F519/F614 arg discipline), at most 16.
+    Returns (args, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_expect(text, j, "(")
+    args = []
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ")":
+        return args, k + 1
+    while True:
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("f789 arg not literal")
+        arg, k = _js_parse_string(text, k)
+        args.append(arg)
+        state["parts"] += 1  # the arg is a fragment
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if len(args) > 16:
+            raise _JSExprFail("f789 too many args")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k += 1
+            continue
+        k = _js_expect(text, k, ")")
+        break
+    return args, k
+
+
+def _js_parse_f789_return_additive(ret_text, pname, props, state):
+    """Parse the F789 return additive `TERM (+ TERM)*` (F789).
+
+    TERM is a string literal or a `new p('LIT',...).MEM` /
+    `new p('LIT',...)['MEM']` construct term, where the instance
+    is the trap's return object evaluated with the call-site args
+    (node-exact: the engine invokes the construct trap with the
+    args array and the returned object becomes the `new` result;
+    an out-of-range `a[N]` is the engine's undefined, which is
+    never decoded -- fail closed). Returns the decoded string, or
+    None when no construct term is present (the caller falls
+    through to the other IIFE routes). A malformed construct term
+    fails closed (raises _JSExprFail). Never evals.
+    """
+    n = len(ret_text)
+    j = 0
+    val = ""
+    constructs = 0
+    while True:
+        j = _js_skip_ws(ret_text, j)
+        if j >= n:
+            raise _JSExprFail("f789 empty operand")
+        if (ret_text.startswith("new", j)
+                and (j + 3 >= n or ret_text[j + 3] not in _JS_IDENT_CONT)
+                and (j == 0 or ret_text[j - 1] not in _JS_IDENT_CONT)):
+            q = _js_skip_ws(ret_text, j + 3)
+            if (not ret_text.startswith(pname, q)
+                    or (q + len(pname) < n
+                        and ret_text[q + len(pname)] in _JS_IDENT_CONT)):
+                raise _JSExprFail("f789 new of other")
+            q = _js_skip_ws(ret_text, q + len(pname))
+            args, q = _js_parse_f789_args(ret_text, q, state)
+            q = _js_skip_ws(ret_text, q)
+            if q < n and ret_text[q] == ".":
+                mname, q = _js_parse_ident(
+                    ret_text, _js_skip_ws(ret_text, q + 1))
+            elif q < n and ret_text[q] == "[":
+                qq = _js_skip_ws(ret_text, q + 1)
+                if qq >= n or ret_text[qq] not in "'\"":
+                    raise _JSExprFail("f789 member not literal")
+                mname, qq = _js_parse_string(ret_text, qq)
+                qq = _js_skip_ws(ret_text, qq)
+                qq = _js_expect(ret_text, qq, "]")
+                q = qq
+            else:
+                # A bare `new p(...)` reads "[object Object]" in the
+                # engine -- never decoded (the F671 discipline).
+                raise _JSExprFail("f789 construct without member")
+            inst = {}
+            for key, kind, v in props:
+                if kind == "lit":
+                    inst[key] = v
+                else:
+                    if v >= len(args):
+                        raise _JSExprFail("f789 arg index out of range")
+                    inst[key] = args[v]
+            if mname not in inst:
+                raise _JSExprFail("f789 missing member")
+            rhs = inst[mname]
+            constructs += 1
+            j = q
+        elif ret_text[j] in "'\"":
+            rhs, j = _js_parse_string(ret_text, j)
+        elif constructs:
+            # Committed (a construct term was seen): malformed.
+            raise _JSExprFail("f789 bad return term")
+        else:
+            # No construct term at all: not our shape.
+            return None
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("f789 concat too long")
+        val = val + rhs
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(ret_text, j)
+        if j >= n:
+            break
+        if ret_text[j] != "+":
+            if constructs:
+                raise _JSExprFail("f789 return trailing text")
+            return None
+        j += 1
+    if not constructs:
+        return None
+    return val
+
+
+def _js_parse_f789_construct_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const p=new Proxy(FN,{construct:TRAP});return ADD;})()` (F789).
+
+    F789 (LOW, attack round 52): Proxy construct-trap reads -- the
+    decoder modeled the Proxy apply trap (F542) but had no
+    construct-trap production:
+    `(function(){var p=new Proxy(function(){},{construct:
+    function(t,a){return {x:a[0]};}});return new
+    p('f1').x+'f2';})()` and the `a[1]` twin node-evaluate to the
+    exact credential (v24.20.0) while the decoder produced zero
+    variants.
+
+    Node-exact model (v24.20.0): `new p(...)` invokes the construct
+    trap as TRAP(FN, argsArray, newTarget); the trap's returned
+    object becomes the `new` result. The target must be a plain
+    `function` (an arrow/generator/async target throws TypeError in
+    the engine -- fail closed). The trap body is exactly `return
+    {K: V, ...}` with string-literal or `args[N]` values; the
+    handler carries exactly the `construct` key. The return is a
+    `+`-additive of string literals and `new p('LIT',...).MEM` /
+    `new p('LIT',...)['MEM']` terms (at least one construct term).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a named function expression IIFE, IIFE params, a second
+      declarator, a non-`new Proxy(` initializer;
+    - an arrow/generator/async Proxy target; a named trap
+      function; trap arities other than exactly (target, args);
+      a non-object trap return (the engine throws TypeError);
+      `__proto__` trap-return keys; extra handler keys;
+    - non-literal construct args (>16 fail closed); an out-of-range
+      `a[N]` (the engine's undefined is never decoded); a missing
+      member; a bare `new p(...)` without a member read;
+    - a return with no construct term (falls through to the other
+      IIFE routes -- F611 and friends fail closed on `new Proxy`
+      initializers, so no previously-decoded input changes
+      behavior).
+    Tried after F611. F611's hook and its trailing `return` are
+    untouched (wave-379 lesson). Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            return None  # named function: fail closed (documented)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        dkw, k = _js_match_decl_kw(text, k)
+        if dkw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        pname, k = _js_parse_ident(text, k)
+        if pname in _F611_RESERVED or pname == "arguments":
+            raise _JSExprFail("f789 reserved declarator")
+        k = _js_skip_ws(text, k)
+        if (k >= n or text[k] != "="
+                or text[k + 1:k + 2] in ("=", ">")):
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if not (text.startswith("new", k)
+                and (k + 3 >= n or text[k + 3] not in _JS_IDENT_CONT)):
+            return None
+        k = _js_skip_ws(text, k + 3)
+        if not (text.startswith("Proxy", k)
+                and (k + 5 >= n or text[k + 5] not in _JS_IDENT_CONT)):
+            return None
+        k = _js_skip_ws(text, k + 5)
+        k = _js_expect(text, k, "(")
+        k = _js_skip_ws(text, k)
+        k = _js_parse_f789_ctor_target(text, k)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ",")
+        props, k = _js_parse_f789_handler(text, _js_skip_ws(text, k),
+                                          state)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            raise _JSExprFail("f789 return required")
+        ret_text, k = _js_f748_scan_expr(text, _js_skip_ws(text, rk))
+        val = _js_parse_f789_return_additive(ret_text, pname, props,
+                                            state)
+        if val is None:
+            return None  # no construct term: fall through
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
+
 def _js_parse_f542_apply_trap(text, i):
     """Parse a delegating Proxy apply-trap function at text[i] (F542).
 
@@ -21730,6 +22239,792 @@ def _js_parse_f749_destructure_default_iife(text, i, depth, state):
     state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
     return val, k
 
+
+
+# ---------------------------------------------------------------------------
+# F790: destructuring binding reads (F749/F758 residual)
+# ---------------------------------------------------------------------------
+
+def _js_parse_f790_string_array(text, j, state):
+    """Parse `['LIT',...]` at text[j] (F790).
+
+    String-literal-only array (holes fail closed -- the engine's
+    undefined is never decoded). At most 16 elements. Returns
+    (list, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_expect(text, j, "[")
+    arr = []
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "]":
+        return arr, k + 1
+    while True:
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("f790 array element not literal")
+        s, k = _js_parse_string(text, k)
+        arr.append(s)
+        state["parts"] += 1  # the element is a fragment
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if len(arr) > 16:
+            raise _JSExprFail("f790 array too long")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k += 1
+            continue
+        k = _js_expect(text, k, "]")
+        break
+    return arr, k
+
+
+def _js_f790_check_name(name):
+    """Fail closed on reserved-word / `arguments` binding names (F790)."""
+    if name in _F611_RESERVED or name == "arguments":
+        raise _JSExprFail("f790 reserved name")
+
+
+def _js_f790_rest_operand(text, j, env, state):
+    """Parse one F790 return operand at text[j] (F790).
+
+    env maps bound names to ("str", s), ("dict", {k: s}),
+    ("list", [s]), or ("unbound",). Operands: string literals,
+    bare string-bound idents, `NAME.MEMBER` / `NAME['MEMBER']` on
+    dict-bound rest names, `NAME[INT]` (canonical decimal,
+    bounds-checked) on list-bound rest names. A bare rest read or
+    a member read on a string fails closed (the F671/F748
+    discipline: "[object Object]" and undefined are never
+    decoded). Returns (str, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        raise _JSExprFail("f790 empty operand")
+    c = text[j]
+    if c in "'\"":
+        return _js_parse_string(text, j)
+    if c not in _JS_IDENT_START:
+        raise _JSExprFail("f790 bad operand")
+    name, k = _js_parse_ident(text, j)
+    if name not in env:
+        raise _JSExprFail("f790 unbound ident")
+    kind = env[name][0]
+    k2 = _js_skip_ws(text, k)
+    if kind == "str":
+        if k2 < n and text[k2] in ".[(":
+            raise _JSExprFail("f790 member on string")
+        _js_f748_guard_assign(text, j, k)
+        return env[name][1], k
+    if kind == "unbound":
+        raise _JSExprFail("f790 unbound read")
+    if k2 < n and text[k2] == ".":
+        if kind != "dict":
+            raise _JSExprFail("f790 dot member on list")
+        mname, k3 = _js_parse_ident(text, _js_skip_ws(text, k2 + 1))
+        _js_f748_guard_assign(text, j, k3)
+        d = env[name][1]
+        if mname not in d:
+            raise _JSExprFail("f790 missing member")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return d[mname], k3
+    if k2 < n and text[k2] == "[":
+        kk = _js_skip_ws(text, k2 + 1)
+        if kind == "list":
+            d0 = kk
+            while kk < n and text[kk] in _ASCII_DIGITS:
+                kk += 1
+            if kk == d0 or (kk - d0 > 1 and text[d0] == "0"):
+                raise _JSExprFail("f790 index not canonical")
+            idx = int(text[d0:kk])
+            kk = _js_expect(text, kk, "]")
+            _js_f748_guard_assign(text, j, kk)
+            vals = env[name][1]
+            if idx >= len(vals):
+                raise _JSExprFail("f790 index out of range")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            return vals[idx], kk
+        if kk >= n or text[kk] not in "'\"":
+            raise _JSExprFail("f790 member not literal")
+        mname, kk = _js_parse_string(text, kk)
+        kk = _js_skip_ws(text, kk)
+        kk = _js_expect(text, kk, "]")
+        _js_f748_guard_assign(text, j, kk)
+        d = env[name][1]
+        if mname not in d:
+            raise _JSExprFail("f790 missing member")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return d[mname], kk
+    raise _JSExprFail("f790 bare rest read")
+
+
+def _js_f790_rest_additive(text, env, state):
+    """Parse the F790 return additive `OP (+ OP)*` (F790).
+
+    OP via _js_f790_rest_operand. Returns the decoded string.
+    Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    val, j = _js_f790_rest_operand(text, 0, env, state)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n:
+            return val
+        if text[k] != "+":
+            raise _JSExprFail("f790 return trailing text")
+        rhs, j = _js_f790_rest_operand(text, k + 1, env, state)
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("f790 concat too long")
+        val = val + rhs
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+
+
+def _js_parse_f790_object_rest_pattern(text, j, state):
+    """Parse `{K[:N][=D], ..., ...R}` at text[j] == '{' (F790).
+
+    Object destructuring pattern with a mandatory rest element
+    (the rest must be last -- engine syntax). Keys are identifiers
+    or string literals; each property is `KEY` (shorthand),
+    `KEY:NAME` (renamed), each optionally `=DEFAULT` with a
+    string-literal default. At most 4 properties. Returns
+    ([(key, pname, default)], rname, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j + 1)
+    props = []
+    rname = None
+    while True:
+        k = _js_skip_ws(text, k)
+        if text.startswith("...", k):
+            k = _js_skip_ws(text, k + 3)
+            rname, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "}":
+                raise _JSExprFail("f790 rest not last")
+            k += 1
+            break
+        if k < n and text[k] in "'\"":
+            key, k = _js_parse_string(text, k)
+        elif k < n and text[k] in _JS_IDENT_START:
+            key, k = _js_parse_ident(text, k)
+        else:
+            raise _JSExprFail("f790 bad pattern key")
+        k = _js_skip_ws(text, k)
+        pname = key
+        if k < n and text[k] == ":":
+            k = _js_skip_ws(text, k + 1)
+            pname, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        default = None
+        if (k < n and text[k] == "="
+                and text[k + 1:k + 2] not in ("=", ">")):
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("f790 default not string")
+            default, k = _js_parse_string(text, k)
+            state["parts"] += 1  # the default is a fragment
+            k = _js_skip_ws(text, k)
+        props.append((key, pname, default))
+        if len(props) > 4:
+            raise _JSExprFail("f790 too many props")
+        if k < n and text[k] == ",":
+            k += 1
+            continue
+        k = _js_skip_ws(text, k)
+        if text.startswith("...", k):
+            continue
+        raise _JSExprFail("f790 object pattern without rest")
+    pnames = [p for _, p, _ in props]
+    if len(set(pnames)) != len(pnames):
+        raise _JSExprFail("f790 duplicate names")
+    for pname in pnames:
+        _js_f790_check_name(pname)
+    _js_f790_check_name(rname)
+    if rname in pnames:
+        raise _JSExprFail("f790 rest shadows prop")
+    return props, rname, k
+
+
+def _js_parse_f790_array_rest_pattern(text, j, state):
+    """Parse `[E, ..., ...R]` at text[j] == '[' (F790).
+
+    Array destructuring pattern with a mandatory rest element
+    (last -- engine syntax). Elements are plain identifiers
+    (holes, defaults, and nested patterns fail closed,
+    documented). At most 4 elements. Returns ([names], rname,
+    next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j + 1)
+    elems = []
+    rname = None
+    while True:
+        k = _js_skip_ws(text, k)
+        if text.startswith("...", k):
+            k = _js_skip_ws(text, k + 3)
+            rname, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "]":
+                raise _JSExprFail("f790 rest not last")
+            k += 1
+            break
+        if k >= n or text[k] not in _JS_IDENT_START:
+            raise _JSExprFail("f790 bad array element")
+        ename, k = _js_parse_ident(text, k)
+        elems.append(ename)
+        if len(elems) > 4:
+            raise _JSExprFail("f790 too many elems")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k += 1
+            continue
+        k = _js_skip_ws(text, k)
+        if text.startswith("...", k):
+            continue
+        raise _JSExprFail("f790 array pattern without rest")
+    if len(set(elems)) != len(elems):
+        raise _JSExprFail("f790 duplicate names")
+    for ename in elems:
+        _js_f790_check_name(ename)
+    _js_f790_check_name(rname)
+    if rname in elems:
+        raise _JSExprFail("f790 rest shadows elem")
+    return elems, rname, k
+
+
+def _js_parse_f790_destructure_rest_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const {P..., ...R}=OBJLIT;return ADD;})()` / `(function(){var|let|const [E..., ...R]=ARRLIT;return ADD;})()` (F790).
+
+    F790 (LOW, attack round 52): F749/F758 residual -- object rest
+    (`{a,...r}`), array rest (`[a,...r]`), param destructuring,
+    and for-of destructuring have no production:
+    `(function(){var {a,...r}={a:'f1',b:'f2'};return a+r.b;})()`
+    and `(function(){var
+    [a,...r]=['f1','f2','xx'];return a+r[0];})()` node-evaluate to
+    the exact credential (v24.20.0) while the decoder produced zero
+    variants. (Param and for-of destructuring are separate
+    parsers below.)
+
+    Node-exact desugar (v24.20.0): the rest name gathers the
+    remaining own properties (object -- string keys only, the
+    `_js_parse_object_literal_keys_values` discipline) or the
+    remaining elements (array -- string-literal-only source).
+    Named properties bind positionally/by key, taking the source
+    value when present else the default; with neither, the name
+    stays unbound and reads of it fail closed (the engine's
+    undefined is never decoded). The return is a `+`-additive of
+    string literals, bare bound names, and rest reads
+    (`R.M`/`R['M']` on object rest, `R[INT]` on array rest).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-literal source; holes, nested patterns, computed keys
+      in the pattern; a rest element that is not last; duplicate
+      or reserved-word names; >4 pattern elements;
+    - an unbound or missing read; a bare rest read ("[object
+      Object]" is never decoded); a member read on a string;
+    - a named function, IIFE params, a second declarator, extra
+      statements, non-empty call args.
+    Tried after F749: F749's pattern grammar fails closed on
+    `...` (red-first verified: 2 BREAK on the open tree); this
+    requires the rest element and fails closed on every shape
+    F749 accepts, so no previously-decoded input changes behavior.
+    Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            return None  # named function: fail closed (documented)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        dkw, k = _js_match_decl_kw(text, k)
+        if dkw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "{[":
+            return None
+        is_obj = text[k] == "{"
+        env = {}
+        if is_obj:
+            props, rname, k = _js_parse_f790_object_rest_pattern(
+                text, k, state)
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "=")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "{":
+                raise _JSExprFail("f790 source not object")
+            skeys, svals, k = _js_parse_object_literal_keys_values(
+                text, k, depth, state)
+            src = dict(zip(skeys, svals))
+            for key, pname, default in props:
+                sval = src.get(key)
+                if sval is not None:
+                    env[pname] = ("str", sval)
+                elif default is not None:
+                    env[pname] = ("str", default)
+                else:
+                    env[pname] = ("unbound",)
+            pkeys = set(key for key, _, _ in props)
+            env[rname] = ("dict",
+                          {sk: sv for sk, sv in src.items()
+                           if sk not in pkeys})
+        else:
+            elems, rname, k = _js_parse_f790_array_rest_pattern(
+                text, k, state)
+            k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, "=")
+            k = _js_skip_ws(text, k)
+            arr, k = _js_parse_f790_string_array(text, k, state)
+            for idx, ename in enumerate(elems):
+                env[ename] = (("str", arr[idx]) if idx < len(arr)
+                              else ("unbound",))
+            env[rname] = ("list", arr[len(elems):])
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            raise _JSExprFail("f790 return required")
+        ret_text, k = _js_f748_scan_expr(text, _js_skip_ws(text, rk))
+        val = _js_f790_rest_additive(ret_text, env, state)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return val, k
+
+
+def _js_parse_f790_plain_pattern(text, j, state):
+    """Parse a plain `{K[:N],...}` / `[N,...]` param pattern (F790).
+
+    No rest, no defaults, no nesting (all fail closed --
+    documented narrowness; the var-form rest parser above owns
+    `...`). At most 4 entries. Returns (kind, entries, next)
+    where kind is "obj" ([(key, pname)]) or "arr" ([pname]).
+    Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j)
+    if k < n and text[k] == "{":
+        k = _js_skip_ws(text, k + 1)
+        entries = []
+        while True:
+            k = _js_skip_ws(text, k)
+            if text.startswith("...", k):
+                raise _JSExprFail("f790 rest param pattern")
+            if k < n and text[k] in "'\"":
+                key, k = _js_parse_string(text, k)
+            elif k < n and text[k] in _JS_IDENT_START:
+                key, k = _js_parse_ident(text, k)
+            else:
+                raise _JSExprFail("f790 bad pattern key")
+            k = _js_skip_ws(text, k)
+            pname = key
+            if k < n and text[k] == ":":
+                k = _js_skip_ws(text, k + 1)
+                pname, k = _js_parse_ident(text, k)
+                k = _js_skip_ws(text, k)
+            if k < n and text[k] == "=":
+                raise _JSExprFail("f790 default param pattern")
+            entries.append((key, pname))
+            if len(entries) > 4:
+                raise _JSExprFail("f790 too many props")
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            k = _js_expect(text, k, "}")
+            break
+        if not entries:
+            raise _JSExprFail("f790 empty pattern")
+        pnames = [p for _, p in entries]
+        if len(set(pnames)) != len(pnames):
+            raise _JSExprFail("f790 duplicate names")
+        for pname in pnames:
+            _js_f790_check_name(pname)
+        return "obj", entries, k
+    if k < n and text[k] == "[":
+        k = _js_skip_ws(text, k + 1)
+        entries = []
+        while True:
+            k = _js_skip_ws(text, k)
+            if text.startswith("...", k):
+                raise _JSExprFail("f790 rest param pattern")
+            if k >= n or text[k] not in _JS_IDENT_START:
+                raise _JSExprFail("f790 bad array pattern")
+            ename, k = _js_parse_ident(text, k)
+            entries.append(ename)
+            if len(entries) > 4:
+                raise _JSExprFail("f790 too many elems")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            k = _js_expect(text, k, "]")
+            break
+        if not entries:
+            raise _JSExprFail("f790 empty pattern")
+        if len(set(entries)) != len(entries):
+            raise _JSExprFail("f790 duplicate names")
+        for ename in entries:
+            _js_f790_check_name(ename)
+        return "arr", entries, k
+    raise _JSExprFail("f790 not a pattern")
+
+
+def _js_parse_f790_param_destructure_iife(text, i, depth, state):
+    """Parse `(function NAME?({P}|[P],...){return ADD;})(ARGS)` (F790).
+
+    Param destructuring: each parameter is a plain object pattern
+    `{K[:N],...}` or array pattern `[N,...]` (no rest, no
+    defaults, no nesting -- fail closed, documented); each call
+    arg is the matching object literal / string-literal array.
+    The body is exactly `return ADD;` with ADD a `+`-additive over
+    string literals and bare bound names (the F790 operand
+    discipline -- member reads on params are outside this
+    production). Arity must match exactly (the engine's undefined
+    is never decoded).
+
+    Bounds (all fail closed): a named/duplicate/reserved param
+    name (the function name itself is dead -- accepted); default
+    or rest patterns; non-literal args; arg-kind/pattern-kind
+    mismatch; `this`/`arguments` in the body (unbound idents fail
+    the additive); extra statements; a directive prologue.
+    Tried after F758: F735/F736 reject destructured params at
+    their param parse and F758 requires a rest parameter
+    (red-first verified: 2 BREAK on the open tree), so no
+    previously-decoded input changes behavior. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # Optional name: dead (only visible inside the body,
+            # which cannot reference it through the additive).
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k += 1
+        patterns = []
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ")":
+            return None  # no params: not our shape
+        while True:
+            kind, entries, k = _js_parse_f790_plain_pattern(text, k,
+                                                           state)
+            patterns.append((kind, entries))
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            k = _js_expect(text, k, ")")
+            break
+        # All bound names across patterns must be distinct.
+        allnames = []
+        for kind, entries in patterns:
+            allnames.extend(p for _, p in entries) if kind == "obj" \
+                else allnames.extend(entries)
+        if len(set(allnames)) != len(allnames):
+            raise _JSExprFail("f790 duplicate param names")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "{":
+            return None
+        bs, be, k = _js_span_braced(text, k)
+        body = text[bs:be]
+        rk = _js_match_kw(body, _js_skip_ws(body, 0), "return")
+        if rk is None:
+            raise _JSExprFail("f790 body not return")
+        ae = len(body)
+        while ae > rk and body[ae - 1] in " \t\n\r":
+            ae -= 1
+        if ae <= rk or body[ae - 1] != ";":
+            raise _JSExprFail("f790 body not ;-terminated")
+        add_text = body[rk:ae - 1]
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "(")
+        args = []
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ")":
+            k += 1
+        else:
+            while True:
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] not in "{[":
+                    raise _JSExprFail("f790 arg not literal")
+                if text[k] == "{":
+                    skeys, svals, k = \
+                        _js_parse_object_literal_keys_values(
+                            text, k, depth, state)
+                    args.append(("obj", dict(zip(skeys, svals))))
+                else:
+                    arr, k = _js_parse_f790_string_array(text, k,
+                                                        state)
+                    args.append(("arr", arr))
+                k = _js_skip_ws(text, k)
+                if k < n and text[k] == ",":
+                    k += 1
+                    continue
+                k = _js_expect(text, k, ")")
+                break
+        if len(args) != len(patterns):
+            raise _JSExprFail("f790 arity")
+        env = {}
+        for (kind, entries), (akind, aval) in zip(patterns, args):
+            if kind != akind:
+                raise _JSExprFail("f790 arg kind mismatch")
+            if kind == "obj":
+                for key, pname in entries:
+                    sval = aval.get(key)
+                    env[pname] = (("str", sval) if sval is not None
+                                  else ("unbound",))
+            else:
+                for idx, pname in enumerate(entries):
+                    env[pname] = (("str", aval[idx])
+                                  if idx < len(aval)
+                                  else ("unbound",))
+        val = _js_f790_rest_additive(add_text, env, state)
+        state["ops"] += 1  # the call is obfuscation-shaped
+        return val, k
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f790_forof_iife(text, i, depth, state):
+    """Parse `(function(){var|let ACC='LIT';for(var|let|const [P1,P2] of [[..],..]){STMT+}return ACC;})()` (F790).
+
+    For-of destructuring: the loop head declares exactly two
+    plain identifiers over an array literal of two-string-literal
+    arrays (1-8 pairs). The body is one or more `ACC+=ADD;` /
+    `ACC=ADD;` statements with ADD a `+`-additive over string
+    literals and the bare bound names (the F790 operand
+    discipline). The accumulator starts as a string literal
+    (`var`/`let` only -- a `const` accumulator cannot be
+    reassigned, so it fails closed).
+
+    Node-exact (v24.20.0): each iteration binds P1/P2 to the
+    pair's elements and runs the statements in order; the final
+    accumulator value is the result.
+
+    Bounds (all fail closed): a non-literal source or pair;
+    pairs not of length 2; loop names shadowing the accumulator
+    or each other; reserved-word names; statements other than
+    `ACC+=`/`ACC=`; reads of unbound names; a missing terminal
+    `return ACC;`; extra statements; a directive prologue.
+    Tried after F748: F748's statement grammar has no `for`
+    head (red-first verified: 2 BREAK on the open tree), so no
+    previously-decoded input changes behavior. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            return None  # named function: fail closed (documented)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        dkw, k = _js_match_decl_kw(text, k)
+        if dkw is None or dkw == "const":
+            return None
+        k = _js_skip_ws(text, k)
+        acc, k = _js_parse_ident(text, k)
+        _js_f790_check_name(acc)
+        k = _js_skip_ws(text, k)
+        if (k >= n or text[k] != "="
+                or text[k + 1:k + 2] in ("=", ">")):
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            return None
+        acc_val, k = _js_parse_string(text, k)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        fk = _js_match_kw(text, _js_skip_ws(text, k), "for")
+        if fk is None:
+            return None
+        k = _js_skip_ws(text, fk)
+        k = _js_expect(text, k, "(")
+        lkw, k = _js_match_decl_kw(text, _js_skip_ws(text, k))
+        if lkw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "[":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        p1, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ",")
+        p2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "]")
+        _js_f790_check_name(p1)
+        _js_f790_check_name(p2)
+        if p1 == p2 or p1 == acc or p2 == acc:
+            raise _JSExprFail("f790 loop name collision")
+        ok = _js_match_kw(text, _js_skip_ws(text, k), "of")
+        if ok is None:
+            return None
+        k = _js_skip_ws(text, ok)
+        # The source is an array literal of 2-string-literal
+        # arrays: `[[..],[..],...]` (1-8 pairs).
+        k = _js_expect(text, k, "[")
+        pairs = []
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == "]":
+            raise _JSExprFail("f790 empty for-of source")
+        while True:
+            k = _js_skip_ws(text, k)
+            pair, k = _js_parse_f790_string_array(text, k, state)
+            if len(pair) != 2:
+                raise _JSExprFail("f790 pair arity")
+            pairs.append(pair)
+            if len(pairs) > 8:
+                raise _JSExprFail("f790 too many pairs")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k += 1
+                continue
+            k = _js_expect(text, k, "]")
+            break
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "{":
+            return None
+        bs, be, k = _js_span_braced(text, k)
+        body = text[bs:be]
+        # One or more `ACC+=ADD;` / `ACC=ADD;` statements.
+        stmts = []
+        sj = 0
+        m = len(body)
+        while True:
+            sj = _js_skip_ws(body, sj)
+            if sj >= m:
+                break
+            stmt_text, sj = _js_f748_scan_expr(body, sj)
+            stmts.append(stmt_text)
+        if not stmts:
+            raise _JSExprFail("f790 empty loop body")
+        parsed = []
+        for stmt_text in stmts:
+            q = _js_skip_ws(stmt_text, 0)
+            sname, q = _js_parse_ident(stmt_text, q)
+            if sname != acc:
+                raise _JSExprFail("f790 stmt target not acc")
+            q = _js_skip_ws(stmt_text, q)
+            if stmt_text.startswith("+=", q):
+                op = "+="
+                q += 2
+            elif (q < len(stmt_text) and stmt_text[q] == "="
+                    and stmt_text[q + 1:q + 2] not in ("=", ">")):
+                op = "="
+                q += 1
+            else:
+                raise _JSExprFail("f790 bad stmt op")
+            add_text = stmt_text[_js_skip_ws(stmt_text, q):]
+            if not add_text.strip():
+                raise _JSExprFail("f790 empty stmt rhs")
+            parsed.append((op, add_text))
+        acc_val_cur = acc_val
+        for x, y in pairs:
+            env = {p1: ("str", x), p2: ("str", y),
+                   acc: ("str", acc_val_cur)}
+            for op, add_text in parsed:
+                rhs = _js_f790_rest_additive(add_text, env, state)
+                if op == "+=":
+                    if len(acc_val_cur) + len(rhs) > _MAX_DECODE_BYTES:
+                        raise _JSExprFail("f790 concat too long")
+                    acc_val_cur = acc_val_cur + rhs
+                else:
+                    acc_val_cur = rhs
+                env[acc] = ("str", acc_val_cur)
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            raise _JSExprFail("f790 return required")
+        k = _js_skip_ws(text, rk)
+        rname, k = _js_parse_ident(text, k)
+        if rname != acc:
+            raise _JSExprFail("f790 return not acc")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ";")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # invocation args: the filed shapes take none
+        k = k + 1
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+    return acc_val_cur, k
 
 def _js_parse_args_laundered_iife(text, i, depth, state):
     """Parse `(function(){var A=SRC;return BODY})(lit, ...)` or
@@ -68621,6 +69916,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f758 is not None:
             val, i = _f758
             return _js_parse_postfix(text, i, val, depth, state)
+        # F790-param: (function NAME?({P}|[P],...){return ADD;})(ARGS)
+        #   -- param destructuring. Tried after F758: F735/F736
+        #   reject destructured params at their param parse and F758
+        #   requires a rest parameter (red-first verified: 2 BREAK on
+        #   the open tree); this requires a destructuring-pattern
+        #   param and fails closed on every shape they accept, so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the parenthesized-additive path like F758.
+        #   F758's hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f790p_saved_parts = state['parts']; _f790p_saved_ops = state['ops']
+        _f790p = _js_parse_f790_param_destructure_iife(text, i, depth,
+                                                      state)
+        if _f790p is None:
+            state['parts'] = _f790p_saved_parts; state['ops'] = _f790p_saved_ops
+        if _f790p is not None:
+            val, i = _f790p
+            return _js_parse_postfix(text, i, val, depth, state)
         # F759: (function(){var|let|const o={...};
         #   o.P='LIT';[...]return ADD;})() -- setter value flows.
         #   Tried after F758: every earlier route requires its own
@@ -68800,6 +70113,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f611 is not None:
             val, i = _f611
             return _js_parse_postfix(text, i, val, depth, state)
+        # F789: (function(){var|let|const p=new Proxy(FN,{construct:TRAP});
+        #   return ADD;})() -- Proxy construct-trap reads. Tried after
+        #   F611: F611 requires literal/atob initializers and fails
+        #   closed on `new Proxy` initializers (red-first verified: 2
+        #   BREAK on the open tree); this requires the `new Proxy(`
+        #   construct-trap initializer and fails closed on every shape
+        #   F611 accepts, so no previously-decoded input changes
+        #   behavior. None falls through to the parenthesized-additive
+        #   path like F611. F611's hook and its trailing `return`
+        #   are untouched (wave-379 lesson).
+        _f789_saved_parts = state['parts']; _f789_saved_ops = state['ops']
+        _f789 = _js_parse_f789_construct_iife(text, i, depth, state)
+        if _f789 is None:
+            state['parts'] = _f789_saved_parts; state['ops'] = _f789_saved_ops
+        if _f789 is not None:
+            val, i = _f789
+            return _js_parse_postfix(text, i, val, depth, state)
         # F770: (function(){DECL NAME=ADDITIVE;
         #   return NAME.toLowerCase()|toUpperCase()(+'LIT')*;})() --
         #   case transform on a concat-initialized binding. Tried
@@ -68871,6 +70201,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f748 is not None:
             val, i = _f748
             return _js_parse_postfix(text, i, val, depth, state)
+        # F790-forof: (function(){var|let ACC='LIT';for(var|let|const
+        #   [P1,P2] of [[..],..]){STMT+}return ACC;})() -- for-of
+        #   destructuring. Tried after F748: F748's statement grammar
+        #   has no `for` head (red-first verified: 2 BREAK on the
+        #   open tree); this requires the `for` head and fails closed
+        #   on every shape F748 accepts, so no previously-decoded
+        #   input changes behavior. None falls through to the
+        #   parenthesized-additive path like F748. F748's hook and
+        #   its trailing `return` are untouched (wave-379 lesson).
+        _f790f_saved_parts = state['parts']; _f790f_saved_ops = state['ops']
+        _f790f = _js_parse_f790_forof_iife(text, i, depth, state)
+        if _f790f is None:
+            state['parts'] = _f790f_saved_parts; state['ops'] = _f790f_saved_ops
+        if _f790f is not None:
+            val, i = _f790f
+            return _js_parse_postfix(text, i, val, depth, state)
         # F749: (function(){var|let|const {K0(=D0)?,K1(=D1)?}=SRC;
         #   return EXPR;})() -- object-pattern destructuring with
         # string-literal default initializers. Tried after F748:
@@ -68887,6 +70233,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f749_saved_parts; state['ops'] = _f749_saved_ops
         if _f749 is not None:
             val, i = _f749
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F790: (function(){var|let|const {P..., ...R}=OBJLIT;return
+        #   ADD;})() / (function(){var|let|const [E..., ...R]=ARRLIT;
+        #   return ADD;})() -- object/array rest destructuring.
+        #   Tried after F749: F749's pattern grammar fails closed on
+        #   `...` (red-first verified: 2 BREAK on the open tree);
+        #   this requires the rest element and fails closed on every
+        #   shape F749 accepts, so no previously-decoded input
+        #   changes behavior. None falls through to the
+        #   parenthesized-additive path like F749. F749's hook and
+        #   its trailing `return` are untouched (wave-379 lesson).
+        _f790_saved_parts = state['parts']; _f790_saved_ops = state['ops']
+        _f790 = _js_parse_f790_destructure_rest_iife(text, i, depth,
+                                                     state)
+        if _f790 is None:
+            state['parts'] = _f790_saved_parts; state['ops'] = _f790_saved_ops
+        if _f790 is not None:
+            val, i = _f790
             return _js_parse_postfix(text, i, val, depth, state)
         # F668: (function(){function NAME(s){return ADD;}
         #   return NAME`T`;})() and the var-bound function-expression

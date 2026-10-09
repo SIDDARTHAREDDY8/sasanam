@@ -610,28 +610,28 @@ def test_r52_f788_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r52_f789_s1_open():
-    """F789 OPEN: miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy(function(){},{construct:function(t,a){return {x:a[0]};}});return new p('%s').x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f789_s1_closed():
+    """F789 CLOSED (wave-385 lane 14): Proxy construct-trap read: blocks coded."""
+    ok = _blocked("(function(){var p=new Proxy(function(){},{construct:function(t,a){return {x:a[0]};}});return new p('%s').x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f789_s2_open():
-    """F789 OPEN: miss reproduces."""
-    miss = _misses("(function(){var p=new Proxy(function(){},{construct:function(t,a){return {x:a[1]};}});return new p('xx','%s').x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f789_s2_closed():
+    """F789 CLOSED (wave-385 lane 14): Proxy construct-trap read (a[1] twin): blocks coded."""
+    ok = _blocked("(function(){var p=new Proxy(function(){},{construct:function(t,a){return {x:a[1]};}});return new p('xx','%s').x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f790_s1_open():
-    """F790 OPEN: miss reproduces."""
-    miss = _misses("(function(){var {a,...r}={a:'%s',b:'%s'};return a+r.b;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f790_s1_closed():
+    """F790 CLOSED (wave-385 lane 14): object rest destructuring: blocks coded."""
+    ok = _blocked("(function(){var {a,...r}={a:'%s',b:'%s'};return a+r.b;})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f790_s2_open():
-    """F790 OPEN: miss reproduces."""
-    miss = _misses("(function(){var [a,...r]=['%s','%s','xx'];return a+r[0];})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f790_s2_closed():
+    """F790 CLOSED (wave-385 lane 14): array rest destructuring: blocks coded."""
+    ok = _blocked("(function(){var [a,...r]=['%s','%s','xx'];return a+r[0];})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f791_s1_open():
