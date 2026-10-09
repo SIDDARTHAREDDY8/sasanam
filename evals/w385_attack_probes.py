@@ -112,11 +112,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F795-F821 filed, next F822)."""
+    """Control: merged footer (F795-F828 open, next F829)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F822**" in text  # Wave-385 attack round 53: F795-F821 FILED
-          and "Open findings: F762, F763, F764, F765, F766, F767, F768, F769, F770, F771, F772, F773, F774, F775, F776, F777, F778, F779, F780, F781, F782, F783, F784, F785, F786, F787, F788, F789, F790, F791, F792, F793, F794, F795, F796, F797, F798, F799, F800, F801, F802, F803, F804, F805, F806, F807, F808, F809, F810, F811, F812, F813, F814, F815, F816, F817, F818, F819, F820, F821." in text)
+    ok = ("Next free finding: **F829**" in text  # Wave-385 merge: F795-F828 OPEN
+          and "Open findings: F795, F796, F797, F798, F799, F800, F801, F802, F803, F804, F805, F806, F807, F808, F809, F810, F811, F812, F813, F814, F815, F816, F817, F818, F819, F820, F821, F822, F823, F824, F825, F826, F827, F828." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
