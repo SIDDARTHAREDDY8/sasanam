@@ -32406,6 +32406,730 @@ def _js_f95x_top_seq(text):
         return None
 
 
+
+def _js_f97x_member_read(text, j, oname):
+    """Parse `oname.prop` / `oname['prop']` / `oname["prop"]` at text[j] (F977/F978/F981).
+
+    Returns (prop_name, next_index), or (None, j) when the text is not
+    a member read on *oname*. Whitespace is allowed around the dot and
+    inside the brackets. Never evals.
+    """
+    try:
+        nm, k = _js_parse_ident(text, j)
+    except _JSExprFail:
+        return None, j
+    if nm != oname:
+        return None, j
+    n = len(text)
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ".":
+        k2 = _js_skip_ws(text, k + 1)
+        try:
+            pname, k3 = _js_parse_ident(text, k2)
+        except _JSExprFail:
+            return None, j
+        return pname, k3
+    if k < n and text[k] == "[":
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            return None, j
+        try:
+            pname, k = _js_parse_string(text, k)
+        except _JSExprFail:
+            return None, j
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "]":
+            return None, j
+        return pname, k + 1
+    return None, j
+
+
+def _js_f977_stmt_decode(text):
+    """Decode a delete/re-add property-lifecycle sequence (F977).
+
+    `var o={<string-literal props>}; (delete o.<p>; | o.<p>='<v>';)*
+    var RESULT=<additive>;`
+
+    Node-exact for plain data-property lifecycles (v24.20.0): `delete`
+    removes the binding (missing keys are a no-op), re-assignment
+    re-adds or updates it, and member reads resolve to the latest
+    value. A read of a missing property is `undefined` in node -- not
+    a string -- so it fails closed here (never mis-decoded). The
+    RESULT additive allows member reads and string literals joined by
+    `+`. Bracket forms (`o['p']`) are twins of the dot forms.
+    `__proto__` in any position (literal key, delete/assignment
+    target, read) fails closed -- node gives it prototype semantics,
+    not a data property (v24.20.0 verified).
+
+    Returns the assembled RESULT string, or None. The delete-less
+    add-only form (`var o={...}; o.p='v';* var RESULT=...;`) is a
+    twin handled by the same grammar. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        oname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "{":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        props = {}
+        if j < n and text[j] != "}":
+            while True:
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] in "'\"":
+                    pname, j = _js_parse_string(text, j)
+                else:
+                    pname, j = _js_parse_ident(text, j)
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] != ":":
+                    return None
+                j = _js_skip_ws(text, j + 1)
+                if j >= n or text[j] not in "'\"":
+                    return None
+                pval, j = _js_parse_string(text, j)
+                if pname == "__proto__":
+                    # node gives __proto__ prototype semantics, not a
+                    # data property -- fail closed, never mis-decode.
+                    return None
+                props[pname] = pval
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                break
+        if j >= n or text[j] != "}":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        # Lifecycle statements: delete / re-add.
+        while True:
+            j = _js_skip_ws(text, j)
+            kd = _js_match_kw(text, j, "delete")
+            if kd is not None:
+                k = _js_skip_ws(text, kd)
+                pname, k = _js_f97x_member_read(text, k, oname)
+                if pname is None:
+                    return None
+                if pname == "__proto__":
+                    # delete o.__proto__ has prototype semantics in node.
+                    return None
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != ";":
+                    return None
+                props.pop(pname, None)
+                j = _js_skip_ws(text, k + 1)
+                continue
+            pname, k = _js_f97x_member_read(text, j, oname)
+            if pname is None:
+                break
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "=" or \
+                    (k + 1 < n and text[k + 1] in "=>"):
+                return None
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] not in "'\"":
+                return None
+            pval, k = _js_parse_string(text, k)
+            if pname == "__proto__":
+                # o.__proto__ = 'v' invokes the prototype setter in
+                # node (ignored for primitives) -- fail closed.
+                return None
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ";":
+                return None
+            props[pname] = pval
+            j = _js_skip_ws(text, k + 1)
+        # RESULT additive.
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        rname, k = _js_parse_ident(text, k)
+        if rname != "RESULT":
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        out = []
+        while True:
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] in "'\"":
+                v, k = _js_parse_string(text, k)
+                out.append(v)
+            else:
+                pname, k2 = _js_f97x_member_read(text, k, oname)
+                if pname is None or pname == "__proto__" or \
+                        pname not in props:
+                    # node reads undefined -- not a string: fail closed.
+                    return None
+                out.append(props[pname])
+                k = k2
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == "+":
+                k += 1
+                continue
+            break
+        if k >= n or text[k] != ";":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k != n:
+            return None
+        return "".join(out)
+    except _JSExprFail:
+        return None
+    except RecursionError:
+        return None
+
+
+def _js_f978_splice(arr, start, delcount, items):
+    """Node-exact Array.prototype.splice (v24.20.0) over a string list.
+
+    start/delcount are integers (ToIntegerOrInfinity is exact on them);
+    delcount None means "omitted" (delete to the end). Never evals.
+    """
+    L = len(arr)
+    actual_start = L + start if start < 0 else start
+    actual_start = max(0, min(actual_start, L))
+    if delcount is None:
+        actual_del = L - actual_start
+    else:
+        actual_del = max(0, min(delcount, L - actual_start))
+    return arr[:actual_start] + items + arr[actual_start + actual_del:]
+
+
+def _js_f978_parse_int(text, j):
+    """Parse an optional-`-` integer literal (decimal/hex); returns (val, next)."""
+    n = len(text)
+    neg = False
+    if j < n and text[j] == "-":
+        neg = True
+        j = _js_skip_ws(text, j + 1)
+    val, j = _js_parse_number(text, j)
+    return (-val if neg else val), j
+
+
+def _js_f978_stmt_decode(text):
+    """Decode an Array.prototype.splice reassembly sequence (F978).
+
+    `var q=[<string literals>]; q.splice(...);* var RESULT=q.join('');`
+
+    Node-exact splice semantics (v24.20.0): negative-start clamp,
+    deleteCount clamp, omitted deleteCount deletes to the end, item
+    insertion at the actual start. Only string-literal elements and
+    string-literal splice items are modeled; numeric splice arguments
+    are integer literals only (a float start like `1.5` fails closed --
+    documented residual, never mis-decoded). The join separator must
+    be `''`/`""`. Returns the joined string, or None. Never evals.
+    """
+    if ".splice(" not in text:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        qname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "[":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        elems = []
+        if j < n and text[j] != "]":
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    return None
+                v, j = _js_parse_string(text, j)
+                elems.append(v)
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                break
+        if j >= n or text[j] != "]":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        # Splice statements.
+        while True:
+            j = _js_skip_ws(text, j)
+            pname, k = _js_f97x_member_read(text, j, qname)
+            if pname != "splice":
+                break
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "(":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            start, k = _js_f978_parse_int(text, k)
+            k = _js_skip_ws(text, k)
+            delcount = None
+            items = []
+            if k < n and text[k] == ",":
+                k = _js_skip_ws(text, k + 1)
+                delcount, k = _js_f978_parse_int(text, k)
+                k = _js_skip_ws(text, k)
+                while k < n and text[k] == ",":
+                    k = _js_skip_ws(text, k + 1)
+                    if k >= n or text[k] not in "'\"":
+                        return None
+                    v, k = _js_parse_string(text, k)
+                    items.append(v)
+                    k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ")":
+                return None
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != ";":
+                return None
+            elems = _js_f978_splice(elems, start, delcount, items)
+            j = _js_skip_ws(text, k + 1)
+        # RESULT join.
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        rname, k = _js_parse_ident(text, k)
+        if rname != "RESULT":
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        pname, k = _js_f97x_member_read(text, k, qname)
+        if pname != "join":
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            return None
+        sep, k = _js_parse_string(text, k)
+        if sep != "":
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ";":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k != n:
+            return None
+        return "".join(elems)
+    except _JSExprFail:
+        return None
+    except RecursionError:
+        return None
+
+
+def _js_f980_stmt_decode(text):
+    """Decode an arguments-spread fromCharCode IIFE (F980).
+
+    `(function(){return String.fromCharCode(...arguments);})(<codes>)`
+    is textually equivalent to `String.fromCharCode(<codes>)`: the
+    IIFE takes no parameters, so `arguments` always denotes the call's
+    argument list (v24.20.0). The rewritten text is fed to the
+    whole-text expression scan, which decodes the fromCharCode run for
+    the code range the scan models (out-of-range codes are refused by
+    the scan -- fail closed, same as the direct-call form).
+
+    Only the exact single-return body shape is rewritten; arrows
+    (unbound `arguments`), generators, async functions, and a `new`
+    prefix on the IIFE are all rejected -- the `new` form would be a
+    String object, not the primitive. Codes are integer literals
+    (optional leading `-`, hex allowed); anything else fails closed.
+
+    Returns the decoded string, or None. Never evals.
+    """
+    if "fromCharCode" not in text or "...arguments" not in text:
+        return None
+    n = len(text)
+    i = text.find("(function")
+    while i != -1:
+        try:
+            # Reject `new (function...)(...)` -- semantics differ.
+            b = i - 1
+            while b >= 0 and text[b] in " \t\n\r":
+                b -= 1
+            if b >= 2 and text[b - 2:b + 1] == "new" and \
+                    (b - 3 < 0 or text[b - 3] not in _JS_IDENT_CONT):
+                raise _JSExprFail("new-prefixed IIFE")
+            j = i + 1
+            kj = _js_match_kw(text, j, "function")
+            if kj is None:
+                raise _JSExprFail("not function")
+            if kj < n and text[kj] == "*":
+                raise _JSExprFail("generator")
+            k = _js_skip_ws(text, kj)
+            if k < n and text[k] in _JS_IDENT_START:
+                _, k = _js_parse_ident(text, k)  # optional IIFE name
+                k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "(":
+                raise _JSExprFail("no params")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("params not empty")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != "{":
+                raise _JSExprFail("no body")
+            k = _js_skip_ws(text, k + 1)
+            kr = _js_match_kw(text, k, "return")
+            if kr is None:
+                raise _JSExprFail("no return")
+            k = _js_skip_ws(text, kr)
+            if not text.startswith("String", k) or \
+                    (k + 6 < n and text[k + 6] in _JS_IDENT_CONT):
+                raise _JSExprFail("no String")
+            k = _js_skip_ws(text, k + 6)
+            if k >= n or text[k] != ".":
+                raise _JSExprFail("no dot")
+            k = _js_skip_ws(text, k + 1)
+            kf = _js_match_kw(text, k, "fromCharCode")
+            if kf is None:
+                raise _JSExprFail("no fcc")
+            k = _js_skip_ws(text, kf)
+            if k >= n or text[k] != "(":
+                raise _JSExprFail("no lparen")
+            k = _js_skip_ws(text, k + 1)
+            if not text.startswith("...", k):
+                raise _JSExprFail("no spread")
+            ka = _js_match_kw(text, k + 3, "arguments")
+            if ka is None:
+                raise _JSExprFail("no arguments")
+            k = _js_skip_ws(text, ka)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("no rparen")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != ";":
+                raise _JSExprFail("no semi")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != "}":
+                raise _JSExprFail("no rbrace")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("no iife close")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != "(":
+                raise _JSExprFail("no call")
+            k = _js_skip_ws(text, k + 1)
+            codes = []
+            if k < n and text[k] != ")":
+                while True:
+                    ck, k = _js_f978_parse_int(text, k)
+                    codes.append(str(ck))
+                    k = _js_skip_ws(text, k)
+                    if k < n and text[k] == ",":
+                        k = _js_skip_ws(text, k + 1)
+                        continue
+                    break
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("no call close")
+            call_end = k + 1
+            rewritten = (text[:i] + "String.fromCharCode(" +
+                         ",".join(codes) + ")" + text[call_end:])
+            decoded = _try_js_expr_decode_all(rewritten)
+            if decoded is not None:
+                return decoded
+        except _JSExprFail:
+            pass
+        i = text.find("(function", i + 1)
+    return None
+
+
+def _js_f981_parse_pop_call(text, j, qname):
+    """Parse `q.pop()` at text[j]; return the next index, or None."""
+    n = len(text)
+    pname, k = _js_f97x_member_read(text, j, qname)
+    if pname != "pop":
+        return None
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        return None
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        return None
+    return k + 1
+
+
+def _js_f981_parse_length_cond(text, j, qname):
+    """Parse `(q.length)` / `(q.length>0)` at text[j]; return next index, or None."""
+    n = len(text)
+    if j >= n or text[j] != "(":
+        return None
+    k = _js_skip_ws(text, j + 1)
+    pname, k = _js_f97x_member_read(text, k, qname)
+    if pname != "length":
+        return None
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ">":
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "0":
+            return None
+        k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != ")":
+        return None
+    return _js_skip_ws(text, k + 1)
+
+
+def _js_f981_parse_pop_body(text, j, sname, qname):
+    """Parse one pop-accumulation statement at text[j] (F981).
+
+    Accepts `s=s+q.pop();`, `s+=q.pop();`, `s=s.concat(q.pop());`,
+    and the prepend twin `s=q.pop()+s;`. Returns ("append"|"prepend",
+    next_index), or (None, j). Never evals.
+    """
+    n = len(text)
+    try:
+        nm, k = _js_parse_ident(text, j)
+    except _JSExprFail:
+        return None, j
+    if nm != sname:
+        return None, j
+    k = _js_skip_ws(text, k)
+    if k + 1 < n and text[k] == "+" and text[k + 1] == "=":
+        k = _js_skip_ws(text, k + 2)
+        k2 = _js_f981_parse_pop_call(text, k, qname)
+        if k2 is None:
+            return None, j
+        k = _js_skip_ws(text, k2)
+        if k >= n or text[k] != ";":
+            return None, j
+        return "append", k + 1
+    if k >= n or text[k] != "=" or \
+            (k + 1 < n and text[k + 1] in "=>"):
+        return None, j
+    k = _js_skip_ws(text, k + 1)
+    # Prepend twin: s = q.pop() + s;
+    p = _js_f981_parse_pop_call(text, k, qname)
+    if p is not None:
+        k = _js_skip_ws(text, p)
+        if k < n and text[k] == "+":
+            k = _js_skip_ws(text, k + 1)
+            try:
+                nm2, k = _js_parse_ident(text, k)
+            except _JSExprFail:
+                return None, j
+            if nm2 != sname:
+                return None, j
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ";":
+                return "prepend", k + 1
+        return None, j
+    # Append twins: s = s + q.pop(); / s = s.concat(q.pop());
+    try:
+        nm2, k = _js_parse_ident(text, k)
+    except _JSExprFail:
+        return None, j
+    if nm2 != sname:
+        return None, j
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "+":
+        k = _js_skip_ws(text, k + 1)
+        k2 = _js_f981_parse_pop_call(text, k, qname)
+        if k2 is None:
+            return None, j
+        k = _js_skip_ws(text, k2)
+        if k >= n or text[k] != ";":
+            return None, j
+        return "append", k + 1
+    if k < n and text[k] == ".":
+        k2 = _js_skip_ws(text, k + 1)
+        cm = _js_match_kw(text, k2, "concat")
+        if cm is None:
+            return None, j
+        k = _js_skip_ws(text, cm)
+        if k >= n or text[k] != "(":
+            return None, j
+        k = _js_skip_ws(text, k + 1)
+        k2 = _js_f981_parse_pop_call(text, k, qname)
+        if k2 is None:
+            return None, j
+        k = _js_skip_ws(text, k2)
+        if k >= n or text[k] != ")":
+            return None, j
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ";":
+            return None, j
+        return "append", k + 1
+    return None, j
+
+
+def _js_f981_stmt_decode(text):
+    """Decode a pop-based accumulation loop (F981, F938 residual).
+
+    `var q=[<string literals>]; var s=''; while(q.length){<pop body>}
+    var RESULT=s;`
+
+    F938 (CLOSED) models the `shift()` mirror; this models the `pop()`
+    mirror: each iteration pops the last element and appends it (or
+    prepends it, for the `s=q.pop()+s` twin). `while(q.length>0)` and
+    `do{...}while(...)` are twins; the body may be braced or bare but
+    is a single statement. A do-while runs the body at least once, so
+    an empty array yields one `"undefined"` pop (node-exact).
+    Node-exact (v24.20.0); anything else fails
+    closed. Returns the accumulated string, or None. Never evals.
+    """
+    if ".pop(" not in text:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        qname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "[":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        elems = []
+        if j < n and text[j] != "]":
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    return None
+                v, j = _js_parse_string(text, j)
+                elems.append(v)
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                break
+        if j >= n or text[j] != "]":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is None or kw == "const":
+            # node: s+= on a const binding throws -- reject.
+            return None
+        k = _js_skip_ws(text, k)
+        sname, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            return None
+        acc, k = _js_parse_string(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ";":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        # Loop: while / do-while.
+        do_form = False
+        kwd = _js_match_kw(text, k, "do")
+        kww = _js_match_kw(text, k, "while")
+        if kwd is not None:
+            do_form = True
+            k = _js_skip_ws(text, kwd)
+        elif kww is not None:
+            k = _js_skip_ws(text, kww)
+        else:
+            return None
+        if not do_form:
+            k = _js_f981_parse_length_cond(text, k, qname)
+            if k is None:
+                return None
+        k = _js_skip_ws(text, k)
+        braced = False
+        if k < n and text[k] == "{":
+            braced = True
+            k = _js_skip_ws(text, k + 1)
+        mode, k = _js_f981_parse_pop_body(text, k, sname, qname)
+        if mode is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if braced:
+            if k >= n or text[k] != "}":
+                return None
+            k = _js_skip_ws(text, k + 1)
+        if do_form:
+            kww = _js_match_kw(text, k, "while")
+            if kww is None:
+                return None
+            k = _js_f981_parse_length_cond(text, _js_skip_ws(text, kww),
+                                           qname)
+            if k is None:
+                return None
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ";":
+                k += 1
+        # Simulate: each iteration pops the last element. A do-while
+        # runs the body at least once; pop() on an empty array yields
+        # undefined, which string-concatenates as "undefined" (node).
+        arr = list(elems)
+        s = acc
+        guard = 0
+        if do_form:
+            while True:
+                guard += 1
+                if guard > 4096:
+                    return None
+                elem = arr.pop() if arr else "undefined"
+                s = elem + s if mode == "prepend" else s + elem
+                if not arr:
+                    break
+        else:
+            while arr:
+                guard += 1
+                if guard > 4096:
+                    return None
+                elem = arr.pop()
+                s = elem + s if mode == "prepend" else s + elem
+        # RESULT must be the accumulator.
+        k = _js_skip_ws(text, k)
+        kw, kk = _js_match_decl_kw(text, k)
+        if kw is None:
+            return None
+        kk = _js_skip_ws(text, kk)
+        rname, kk = _js_parse_ident(text, kk)
+        if rname != "RESULT":
+            return None
+        kk = _js_skip_ws(text, kk)
+        if kk >= n or text[kk] != "=":
+            return None
+        kk = _js_skip_ws(text, kk + 1)
+        s2, kk = _js_parse_ident(text, kk)
+        if s2 != sname:
+            return None
+        kk = _js_skip_ws(text, kk)
+        if kk >= n or text[kk] != ";":
+            return None
+        kk = _js_skip_ws(text, kk + 1)
+        if kk != n:
+            return None
+        return s
+    except _JSExprFail:
+        return None
+    except RecursionError:
+        return None
+
+
 class _JSF679Throw(Exception):
     """Internal control flow for F679: `throw VAL;`.
 
@@ -108836,6 +109560,21 @@ def _decode_layer(text):
         decoded = _try_utf16_null_decode(m.group(0))
         if decoded is not None:
             _add(text[:m.start()] + decoded + text[m.end():])
+    # F977/F978/F980/F981: narrow whole-text statement-sequence decoders
+    # (wave-392 lane 3). Each returns the decoded string or None; all
+    # filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint by leading keyword: F977 requires a `delete`
+    # statement on the leading object, F978 requires `.splice(` on the
+    # leading array, F980 requires the fromCharCode-spread IIFE, F981
+    # requires a pop-accumulation loop. Additive, in F-number order.
+    for _stmtdec in (_js_f977_stmt_decode, _js_f978_stmt_decode,
+                     _js_f980_stmt_decode, _js_f981_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
     # F953/F954/F955/F956: top-level statement-sequence decode --
     # `var` declaration runs with switch/for/for-in accumulation
     # ending in `var RESULT=...;` node-evaluate to the assembled
