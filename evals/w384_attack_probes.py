@@ -526,28 +526,28 @@ def test_r52_f781_s2_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f782_s1_open():
-    """F782 OPEN: miss reproduces."""
-    miss = _misses("(function(){function f(){return this.x;}return f.call({x:'%s'})+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f782_s1_closed():
+    """F782 CLOSED (wave-385 lane 11): thisArg binding blocks."""
+    hit = _blocked("(function(){function f(){return this.x;}return f.call({x:'%s'})+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f782_s2_open():
-    """F782 OPEN: miss reproduces."""
-    miss = _misses("(function(){function f(){return this.x;}var g=f.bind({x:'%s'});return g()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f782_s2_closed():
+    """F782 CLOSED (wave-385 lane 11): bound-function thisArg blocks."""
+    hit = _blocked("(function(){function f(){return this.x;}var g=f.bind({x:'%s'});return g()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f783_s1_open():
-    """F783 OPEN: miss reproduces."""
-    miss = _misses("(function(){class B{m(){return '%s';}}class C extends B{m(){return super.m();}}return new C().m()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f783_s1_closed():
+    """F783 CLOSED (wave-385 lane 11): super dispatch blocks."""
+    hit = _blocked("(function(){class B{m(){return '%s';}}class C extends B{m(){return super.m();}}return new C().m()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f783_s2_open():
-    """F783 OPEN: miss reproduces."""
-    miss = _misses("(function(){class B{m(){return '%s';}}class C extends B{m(){return super['m']();}}return new C().m()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f783_s2_closed():
+    """F783 CLOSED (wave-385 lane 11): super bracket dispatch blocks."""
+    hit = _blocked("(function(){class B{m(){return '%s';}}class C extends B{m(){return super['m']();}}return new C().m()+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r52_f784_s1_open():

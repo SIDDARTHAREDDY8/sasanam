@@ -46362,6 +46362,655 @@ def _js_f777_logical_at(text, j, env):
     return sval, j
 
 
+
+def _js_parse_f782_thisarg_obj(text, j, state):
+    """Parse `{k:'lit',...}` at text[j] (F782).
+
+    The thisArg object literal: identifier or string-literal keys,
+    plain string-literal values only. Getters, setters, method
+    shorthand, spreads, computed keys, `__proto__`, and non-literal
+    values all fail closed (rejected, never mis-decoded -- a getter
+    thisArg WOULD produce the credential in the engine, so this is
+    a documented fail-safe residual, not a mis-decode). Duplicate
+    keys are later-wins (node v24.20.0). Each property charges the
+    F452 parts budget. Returns (props, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    props = {}
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        return props, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F782 bad thisArg key")
+        if not isinstance(key, str) or isinstance(key, _JSNumStr):
+            raise _JSExprFail("F782 bad thisArg key")
+        if key == "__proto__":
+            raise _JSExprFail("F782 __proto__ thisArg key")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F782 thisArg value not a literal")
+        val, j = _js_parse_string(text, j)
+        if not isinstance(val, str) or isinstance(val, _JSNumStr):
+            raise _JSExprFail("F782 thisArg value not a plain string")
+        props[key] = val
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return props, j + 1
+            continue
+        if j < n and text[j] == "}":
+            return props, j + 1
+        raise _JSExprFail("F782 bad thisArg")
+
+
+def _js_parse_f782_dispatch_member(text, j):
+    """Parse `.call`/`.apply`/`.bind` or `['call']` etc. at text[j] (F782).
+
+    The dispatch member accepts the dot form and the F482
+    bracket-string form (engine-identical, node v24.20.0). The
+    `?.` form is unmodeled (fail closed, documented residual).
+    Returns (name, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ".":
+        j = _js_skip_ws(text, j + 1)
+        name, j = _js_parse_ident(text, j)
+    elif j < n and text[j] == "[":
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F782 bad dispatch member")
+        name, j = _js_parse_string(text, j)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "]")
+    else:
+        raise _JSExprFail("F782 no dispatch member")
+    if name not in ("call", "apply", "bind"):
+        raise _JSExprFail("F782 bad dispatch name")
+    return name, j
+
+
+def _js_parse_f782_this_return(fbody):
+    """Parse `return this.MEM[+'lit'*];` from a function body text (F782).
+
+    The declared function's body must be exactly a `this` member
+    read (dot or F482 bracket-string form) with an optional
+    string-literal additive tail. Anything else -- params use,
+    other statements, non-literal tails -- fails closed. Returns
+    (member, tail_value). Never evals.
+    """
+    n = len(fbody)
+    j = _js_skip_ws(fbody, 0)
+    rk = _js_match_kw(fbody, j, "return")
+    if rk is None:
+        raise _JSExprFail("F782 body not a return")
+    j = _js_skip_ws(fbody, rk)
+    tk = _js_match_kw(fbody, j, "this")
+    if tk is None:
+        raise _JSExprFail("F782 body not a this read")
+    j = _js_skip_ws(fbody, tk)
+    if j < n and fbody[j] == ".":
+        mem, j = _js_parse_ident(fbody, _js_skip_ws(fbody, j + 1))
+    elif j < n and fbody[j] == "[":
+        j = _js_skip_ws(fbody, j + 1)
+        if j >= n or fbody[j] not in "'\"":
+            raise _JSExprFail("F782 bad this member")
+        mem, j = _js_parse_string(fbody, j)
+        if not isinstance(mem, str) or isinstance(mem, _JSNumStr):
+            raise _JSExprFail("F782 bad this member")
+        j = _js_skip_ws(fbody, j)
+        j = _js_expect(fbody, j, "]")
+    else:
+        raise _JSExprFail("F782 bad this member")
+    tail = ""
+    while True:
+        j = _js_skip_ws(fbody, j)
+        if j >= n or fbody[j] != "+":
+            break
+        j = _js_skip_ws(fbody, j + 1)
+        if j >= n or fbody[j] not in "'\"":
+            raise _JSExprFail("F782 body tail not a literal")
+        lit, j = _js_parse_string(fbody, j)
+        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+            raise _JSExprFail("F782 body tail not a plain string")
+        tail += lit
+        if len(tail) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+    j = _js_skip_ws(fbody, j)
+    j = _js_expect(fbody, j, ";")
+    if _js_skip_ws(fbody, j) != n:
+        raise _JSExprFail("F782 body trailing statements")
+    return mem, tail
+
+
+def _js_parse_f782_dispatch_value(text, j, fname, thismem, body_tail,
+                                  boundname, boundval, state):
+    """Parse one F782 dispatch term at text[j]; returns (value, next).
+
+    Terms: `NAME.call(TA)` / `NAME.apply(TA[,[]])` /
+    `NAME.bind(TA)()` / `g()` (the var-bound twin). The thisArg must
+    be an object literal carrying thismem; a missing key fails
+    closed (the F614 arity precedent: the engine coerces to
+    `undefined`, so refusing is fail-safe). `.call` takes no extra
+    args (the function takes no params); `.apply` takes no array or
+    the empty array; `.bind` requires immediate invocation parens.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    name, j = _js_parse_ident(text, j)
+    if boundname is not None and name == boundname:
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the bound invocation is obfuscation-shaped
+        return boundval, j
+    if name != fname:
+        raise _JSExprFail("F782 bad dispatch receiver")
+    dname, j = _js_parse_f782_dispatch_member(text, j)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    props, j = _js_parse_f782_thisarg_obj(text, j, state)
+    if thismem not in props:
+        raise _JSExprFail("F782 this member absent from thisArg")
+    dval = props[thismem] + body_tail
+    if len(dval) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("concat too long")
+    j = _js_skip_ws(text, j)
+    if dname == "call":
+        j = _js_expect(text, j, ")")
+    elif dname == "apply":
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            j = _js_expect(text, j, "[")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+    else:  # bind: the bound function is not a decodable value until invoked
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+    state["ops"] += 1  # the dispatch is obfuscation-shaped
+    return dval, j
+
+
+def _js_parse_f782_thisarg_iife(text, i, depth, state):
+    """Parse `(function(){function NAME(){return this.MEM;} [DECL g=NAME.bind(TA);] return ADD;})()` (F782).
+
+    F782 (LOW, filed 2026-10-09 by wave-384 attack round 52): F614
+    (CLOSED) models call/apply/bind on function-expression
+    receivers with literal args but discards the thisArg (its
+    bodies never reference `this`); a named function declaration
+    whose body reads `this.MEM`, invoked via `NAME.call(TA)` /
+    `NAME.apply(TA)` / `NAME.bind(TA)()` / a var-bound
+    `g=NAME.bind(TA)` then `g()`, binds `this` node-exactly while
+    the decoder produces zero variants:
+      `(function(){function f(){return this.x;}
+       return f.call({x:'f1'})+'f2';})()`
+      `(function(){function f(){return this.x;}
+       var g=f.bind({x:'f1'});return g()+'f2';})()`
+    Node-exact (v24.20.0): an object-literal thisArg binds `this`
+    to the object in sloppy and strict mode alike; the read
+    `this.MEM` is the literal value (missing key -> `undefined`
+    in the engine, refused here -- fail-safe).
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - statement 1: `function NAME(){return this.MEM[+'lit'*];}`
+      (named declaration; no params; `this['MEM']` twin allowed;
+      an optional `;` empty statement may follow).
+    - statement 2 (optional): `var|let|const g=NAME.bind(TA);`
+      (the bound name must differ from NAME and `arguments`).
+    - statement 3: `return ADD;` where ADD is a `+`-additive of
+      string literals and >=1 dispatch terms
+      (`NAME.call(TA)` / `NAME.apply(TA[,[]])` /
+      `NAME.bind(TA)()` / `g()`); TA is the F782 object literal
+      and must carry MEM.
+    - exactly `()` invocation; no trailing statements.
+
+    Disjointness: F668 requires a tag-template return; F619
+    requires `function*`; F757's `_js_f757_this_assign` requires a
+    `this.M=...` assignment (this is a `return this.M` read);
+    every other IIFE route requires a declaration head or a
+    different statement grammar and fails closed on the
+    `function`-declaration head (red-first verified: 2 BREAK on
+    the open tree). Only previously fail-closed inputs are newly
+    decoded, so no previously-decoded input changes behavior.
+    F452 parts charged per additive term and per thisArg
+    property; the IIFE wrapper and each dispatch charge one op.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        fk = _js_match_kw(text, sj, "function")
+        if fk is None:
+            return None
+        q = _js_skip_ws(text, fk)
+        fname, q = _js_parse_ident(text, q)
+        if fname == "arguments" or fname in _F611_RESERVED:
+            raise _JSExprFail("F782 bad function name")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_expect(text, _js_skip_ws(text, q), ")")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "{":
+            raise _JSExprFail("F782 no function body")
+        fstart, fend, q = _js_span_braced(text, q)
+        thismem, body_tail = _js_parse_f782_this_return(text[fstart:fend])
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ";":
+            q = _js_skip_ws(text, q + 1)
+        boundname = None
+        boundval = None
+        dkw, dq = _js_match_decl_kw(text, q)
+        if dkw is not None:
+            dq = _js_skip_ws(text, dq)
+            gname, dq = _js_parse_ident(text, dq)
+            if gname in ("arguments", fname) or gname in _F611_RESERVED:
+                raise _JSExprFail("F782 bad bound name")
+            dq = _js_skip_ws(text, dq)
+            dq = _js_expect(text, dq, "=")
+            dq = _js_skip_ws(text, dq)
+            bname, dq = _js_parse_ident(text, dq)
+            if bname != fname:
+                raise _JSExprFail("F782 bind receiver mismatch")
+            dname, dq = _js_parse_f782_dispatch_member(text, dq)
+            if dname != "bind":
+                raise _JSExprFail("F782 bound decl not a bind")
+            dq = _js_skip_ws(text, dq)
+            dq = _js_expect(text, dq, "(")
+            dq = _js_skip_ws(text, dq)
+            props, dq = _js_parse_f782_thisarg_obj(text, dq, state)
+            if thismem not in props:
+                raise _JSExprFail("F782 bound this member absent")
+            boundval = props[thismem] + body_tail
+            if len(boundval) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            dq = _js_skip_ws(text, dq)
+            dq = _js_expect(text, dq, ")")
+            dq = _js_skip_ws(text, dq)
+            dq = _js_expect(text, dq, ";")
+            boundname = gname
+            q = dq
+        rk = _js_match_kw(text, _js_skip_ws(text, q), "return")
+        if rk is None:
+            raise _JSExprFail("F782 no return")
+        q = _js_skip_ws(text, rk)
+        parts = []
+        saw_dispatch = False
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                lit, q = _js_parse_string(text, q)
+                if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+                    raise _JSExprFail("F782 return term not a string")
+                parts.append(lit)
+            else:
+                dv, q = _js_parse_f782_dispatch_value(
+                    text, q, fname, thismem, body_tail,
+                    boundname, boundval, state)
+                parts.append(dv)
+                saw_dispatch = True
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == "+":
+                q += 1
+                continue
+            break
+        if not saw_dispatch:
+            raise _JSExprFail("F782 no dispatch term")
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F782 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f783_str_additive(text, j):
+    """Parse `'lit'(+'lit')*;` at text[j] (F783).
+
+    A string-literal additive terminated by `;`. Template
+    literals, identifiers, and non-string operands fail closed.
+    Returns (value, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F783 body not a string additive")
+    val = ""
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F783 body operand not a literal")
+        lit, j = _js_parse_string(text, j)
+        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+            raise _JSExprFail("F783 body operand not a plain string")
+        val += lit
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j += 1
+            continue
+        break
+    j = _js_expect(text, j, ";")
+    return val, j
+
+
+def _js_parse_f783_method(text, j):
+    """Parse one `m(){return BODY;}` method def at text[j] (F783).
+
+    BODY is a string-literal additive or a super method call
+    `super.m();` / `super['m']();`. Constructors, getters,
+    setters, statics, async/generator methods, private names,
+    fields, and computed names all fail closed (rejected, never
+    mis-decoded). Returns (name, kind, value, next_index) where
+    kind is "str" (value is the string) or "super" (value is the
+    parent method name). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    name, j = _js_parse_ident(text, j)
+    if name in ("constructor", "get", "set", "static", "async",
+                "arguments") or name in _F611_RESERVED:
+        raise _JSExprFail("F783 bad method name")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F783 no method body")
+    bstart, bend, j = _js_span_braced(text, j)
+    q = _js_skip_ws(text, bstart)
+    rk = _js_match_kw(text, q, "return")
+    if rk is None:
+        raise _JSExprFail("F783 method not a return")
+    q = _js_skip_ws(text, rk)
+    sk = _js_match_kw(text, q, "super")
+    if sk is not None:
+        q = _js_skip_ws(text, sk)
+        if q < n and text[q] == ".":
+            pname, q = _js_parse_ident(text, _js_skip_ws(text, q + 1))
+        elif q < n and text[q] == "[":
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F783 bad super member")
+            pname, q = _js_parse_string(text, q)
+            if not isinstance(pname, str) or isinstance(pname, _JSNumStr):
+                raise _JSExprFail("F783 bad super member")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "]")
+        else:
+            raise _JSExprFail("F783 bad super member")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_expect(text, _js_skip_ws(text, q), ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        if _js_skip_ws(text, q) != bend:
+            raise _JSExprFail("F783 method trailing")
+        return name, "super", pname, j
+    val, q = _js_parse_f783_str_additive(text, q)
+    if _js_skip_ws(text, q) != bend:
+        raise _JSExprFail("F783 method trailing")
+    return name, "str", val, j
+
+
+def _js_parse_f783_class(text, j, classes, state):
+    """Parse `class NAME [extends BASE] { methods }` at text[j] (F783).
+
+    Registers the class into *classes*: name -> {"methods": {m:
+    (kind, value)}, "super": base_name or None}. The base must be
+    a previously declared class (forward references fail closed).
+    Duplicate class names fail closed. Returns next_index. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    ck = _js_match_kw(text, j, "class")
+    if ck is None:
+        raise _JSExprFail("F783 not a class")
+    j = _js_skip_ws(text, ck)
+    name, j = _js_parse_ident(text, j)
+    if name == "arguments" or name in _F611_RESERVED or name in classes:
+        raise _JSExprFail("F783 bad class name")
+    base = None
+    j = _js_skip_ws(text, j)
+    ek = _js_match_kw(text, j, "extends")
+    if ek is not None:
+        j = _js_skip_ws(text, ek)
+        base, j = _js_parse_ident(text, j)
+        if base not in classes:
+            raise _JSExprFail("F783 unknown superclass")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F783 no class body")
+    cstart, cend, j = _js_span_braced(text, j)
+    methods = {}
+    q = _js_skip_ws(text, cstart)
+    while q != cend:
+        mname, kind, mval, q = _js_parse_f783_method(text, q)
+        if mname in methods:
+            raise _JSExprFail("F783 duplicate method")
+        methods[mname] = (kind, mval)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        q = _js_skip_ws(text, q)
+    classes[name] = {"methods": methods, "super": base}
+    return j
+
+
+def _js_parse_f783_super_iife(text, i, depth, state):
+    """Parse `(function(){class B{...}class C extends B{...}return new C().m()+...;})()` (F783).
+
+    F783 (LOW, filed 2026-10-09 by wave-384 attack round 52): the
+    decoder has no super-dispatch production, so `class C extends
+    B` with `super.m()` dispatches to the parent method
+    node-exactly while the decoder produces zero variants:
+      `(function(){class B{m(){return 'f1';}}
+       class C extends B{m(){return super.m();}}
+       return new C().m()+'f2';})()`
+      `(function(){class B{m(){return 'f1';}}
+       class C extends B{m(){return super['m']();}}
+       return new C().m()+'f2';})()`
+    Node-exact (v24.20.0): `super.m()` in C's method resolves via
+    C's home-object prototype (B.prototype) to B's method; the
+    call runs with `this` = the new C instance (the modeled
+    parent bodies never reference `this`, so no binding is
+    needed).
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - one or more class declarations; each method is
+      `m(){return 'lit'(+'lit')*;}` or
+      `m(){return super.m();}` / `m(){return super['m']();}`.
+      Constructors, getters/setters, statics, async/generator,
+      private/computed members, and fields fail closed.
+      `extends` takes a previously declared class only.
+    - return: `new C().m` (no construction args; the read member
+      may use the F482 bracket-string twin) followed by zero or
+      more `+'LIT'` terms. The dispatch resolves along the
+      home-object prototype chain node-exactly: a super-dispatch
+      in C resolves P against C's superclass chain (skipping
+      levels that lack P); a super-dispatch found mid-chain
+      resolves against its own base. Missing methods anywhere
+      fail closed (the engine throws TypeError there -- never
+      decode a throw). Inherited-without-override reads (C never
+      defines m) fail closed (documented boundary).
+    - exactly `()` invocation; no trailing statements.
+
+    Disjointness: F757's class twin requires a `constructor`
+    with a `new.target` condition (this fails closed on any
+    constructor); every other IIFE route requires a declaration
+    head or a different statement grammar and fails closed on
+    the `class`-declaration head (red-first verified: 2 BREAK on
+    the open tree). Only previously fail-closed inputs are newly
+    decoded, so no previously-decoded input changes behavior.
+    F452 parts charged per method; the IIFE wrapper charges one
+    op. Returns (value, next_index), or None when text[i] is not
+    this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        classes = {}
+        q = _js_skip_ws(text, inner_start)
+        ck = _js_match_kw(text, q, "class")
+        if ck is None:
+            return None
+        while True:
+            q = _js_parse_f783_class(text, q, classes, state)
+            q = _js_skip_ws(text, q)
+            if _js_match_kw(text, q, "class") is None:
+                break
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F783 no return")
+        q = _js_skip_ws(text, rk)
+        nk = _js_match_kw(text, q, "new")
+        if nk is None:
+            raise _JSExprFail("F783 no new")
+        q = _js_skip_ws(text, nk)
+        cname, q = _js_parse_ident(text, q)
+        if cname not in classes:
+            raise _JSExprFail("F783 unknown class")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_expect(text, _js_skip_ws(text, q), ")")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ".":
+            mname, q = _js_parse_ident(text, _js_skip_ws(text, q + 1))
+        elif q < n and text[q] == "[":
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F783 bad terminal member")
+            mname, q = _js_parse_string(text, q)
+            if not isinstance(mname, str) or isinstance(mname, _JSNumStr):
+                raise _JSExprFail("F783 bad terminal member")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "]")
+        else:
+            raise _JSExprFail("F783 bad terminal member")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_expect(text, _js_skip_ws(text, q), ")")
+        cls = classes[cname]
+        entry = cls["methods"].get(mname)
+        if entry is None:
+            raise _JSExprFail("F783 unknown method")
+        kind, mval = entry
+        if kind == "str":
+            val = mval
+        else:
+            # Super dispatch: walk the home-object prototype chain
+            # node-exactly (v24.20.0). `super.P()` in C's method
+            # resolves P against C.prototype's proto chain; a
+            # super-dispatch found mid-chain resolves against ITS
+            # home object's base (the chain walk continues with the
+            # new name). The hierarchy is acyclic (every base is a
+            # previously declared class), so the walk terminates.
+            pname = mval
+            cur = cls["super"]
+            val = None
+            while cur is not None:
+                bentry = classes[cur]["methods"].get(pname)
+                if bentry is None:
+                    cur = classes[cur]["super"]
+                    continue
+                bkind, bval = bentry
+                if bkind == "str":
+                    val = bval
+                    break
+                pname = bval
+                cur = classes[cur]["super"]
+            if val is None:
+                raise _JSExprFail("F783 super target not found")
+        while True:
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "+":
+                break
+            q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F783 tail not a literal")
+            tail, q = _js_parse_string(text, q)
+            if not isinstance(tail, str) or isinstance(tail, _JSNumStr):
+                raise _JSExprFail("F783 tail not a plain string")
+            if len(val) + len(tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            val = val + tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != inner_end:
+            raise _JSExprFail("F783 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+
 def _js_parse_f777_logical_iife(text, i, depth, state):
     """Parse `(function(){DECL;* return ADD;})()` with plain || / && value flows (F777).
 
@@ -67731,6 +68380,46 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f777_saved_parts; state['ops'] = _f777_saved_ops
         if _f777 is not None:
             val, i = _f777
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F782: (function(){function NAME(){return this.MEM;}
+        #   [DECL g=NAME.bind(TA);] return ADD;})() -- call/apply/bind
+        #   thisArg binding reads on a named function declaration
+        #   (F614's residual: F614 discards the thisArg because its
+        #   bodies never reference `this`). Tried after F757: F757
+        #   requires a `this.M=...` assignment (this is a `return
+        #   this.M` read) or a `new.target` condition; F668 requires
+        #   a tag-template return; F619 requires `function*`; every
+        #   other route requires a declaration head and fails closed
+        #   on the `function`-declaration head (red-first verified:
+        #   2 BREAK on the open tree), so no previously-decoded
+        #   input changes behavior. None falls through to the F783
+        #   route. The F757 hook and its trailing `return` are
+        #   untouched (wave-379 lesson).
+        _f782_saved_parts = state['parts']; _f782_saved_ops = state['ops']
+        _f782 = _js_parse_f782_thisarg_iife(text, i, depth, state)
+        if _f782 is None:
+            state['parts'] = _f782_saved_parts; state['ops'] = _f782_saved_ops
+        if _f782 is not None:
+            val, i = _f782
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F783: (function(){class B{...}class C extends B{...}
+        #   return new C().m()+...;})() -- super method dispatch
+        #   reads. Tried after F782: F782 requires a `function`
+        #   declaration head; F757's class twin requires a
+        #   `constructor` with a `new.target` condition (this fails
+        #   closed on any constructor); every other route fails
+        #   closed on the `class`-declaration head (red-first
+        #   verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the parenthesized-additive path. The F782
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f783_saved_parts = state['parts']; _f783_saved_ops = state['ops']
+        _f783 = _js_parse_f783_super_iife(text, i, depth, state)
+        if _f783 is None:
+            state['parts'] = _f783_saved_parts; state['ops'] = _f783_saved_ops
+        if _f783 is not None:
+            val, i = _f783
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
