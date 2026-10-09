@@ -42246,6 +42246,553 @@ def _js_parse_f760_template_member_iife(text, i, depth, state):
         return None
 
 
+def _js_f784f785_bool_lit(stmts, j):
+    """Parse a decidable boolean literal at stmts[j] (F784/F785).
+
+    Forms: `true`, `false`, `!0`, `!1`, `1`, `0` (ws-tolerant).
+    `!0` is true and `!1` is false (node v24.20.0). Multi-digit
+    forms (`!01`, `10`) and `!=` fail closed -- outside the
+    modeled subset. Returns (bool_value, next_index). Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    m = _js_match_kw(stmts, j, "true")
+    if m is not None:
+        return True, m
+    m = _js_match_kw(stmts, j, "false")
+    if m is not None:
+        return False, m
+    if j < n and stmts[j] == "!":
+        q = _js_skip_ws(stmts, j + 1)
+        if q < n and stmts[q] == "=":
+            raise _JSExprFail("F784/F785 != not a bool literal")
+        if q < n and stmts[q] in "01":
+            d = stmts[q]
+            r = q + 1
+            if r < n and stmts[r] in _ASCII_DIGITS:
+                raise _JSExprFail("F784/F785 !<multi-digit> not modeled")
+            return (d == "0"), r
+        raise _JSExprFail("F784/F785 !<non-digit> not a bool literal")
+    if j < n and stmts[j] in "01":
+        d = stmts[j]
+        r = j + 1
+        if r < n and stmts[r] in _ASCII_DIGITS:
+            raise _JSExprFail("F784/F785 multi-digit not a bool literal")
+        return (d == "1"), r
+    raise _JSExprFail("F784/F785 not a bool literal")
+
+
+def _js_f784f785_accum_stmt(stmts, j, acc, depth, state):
+    """Parse `ACC+='LIT';` or `ACC=ACC+'LIT';` at stmts[j] (F784/F785).
+
+    Returns (folded_value, next_index). The literal operand folds
+    `'a'+'b'` additives via the F642 bound-operand grammar
+    (node-exact, v24.20.0; F452-charged per `+`). Never evals.
+    """
+    n = len(stmts)
+    q = _js_skip_ws(stmts, j)
+    aname, q = _js_parse_ident(stmts, q)
+    if aname != acc:
+        raise _JSExprFail("F784/F785 accum name mismatch")
+    q = _js_skip_ws(stmts, q)
+    if stmts.startswith("+=", q):
+        q = _js_skip_ws(stmts, q + 2)
+    elif q < n and stmts[q] == "=":
+        q = _js_skip_ws(stmts, q + 1)
+        rname, q = _js_parse_ident(stmts, q)
+        if rname != acc:
+            raise _JSExprFail("F784/F785 accum rhs not the accum")
+        q = _js_skip_ws(stmts, q)
+        if q >= n or stmts[q] != "+":
+            raise _JSExprFail("F784/F785 accum rhs not plus")
+        q = _js_skip_ws(stmts, q + 1)
+    else:
+        raise _JSExprFail("F784/F785 not an accum stmt")
+    lit, q = _js_parse_f642_bound_additive(stmts, q, depth, state, {})
+    q = _js_skip_ws(stmts, q)
+    q = _js_expect(stmts, q, ";")
+    return lit, q
+
+
+def _js_f784f785_return_additive(stmts, j, acc, rval, depth, state):
+    """Parse `return ADD;` through end of body at stmts[j] (F784/F785).
+
+    ADD is `LIT|ACC (+ LIT|ACC)*` (F642 discipline, F452-charged
+    per `+`). Returns the decoded value. Never evals.
+    """
+    j = _js_skip_ws(stmts, j)
+    m = _js_match_kw(stmts, j, "return")
+    if m is None:
+        raise _JSExprFail("F784/F785 no return")
+    j = _js_skip_ws(stmts, m)
+    val, j = _js_parse_f642_bound_additive(stmts, j, depth, state,
+                                           {acc: rval})
+    j = _js_skip_ws(stmts, j)
+    if j < len(stmts) and stmts[j] == ";":
+        j += 1
+    if _js_skip_ws(stmts, j) != len(stmts):
+        raise _JSExprFail("F784/F785 trailing statements")
+    return val
+
+
+def _js_f784_no_line_terminator(stmts, kw_end, lbl_start):
+    """Reject a LineTerminator between a jump keyword and its label.
+
+    `break`/`continue` are restricted productions: node parses
+    `break\\nlbl;` as `break;` + an expression statement (a node
+    SyntaxError here, since a label is not a value) -- never as a
+    labeled jump. Fail closed on any LineTerminator in the gap.
+    """
+    gap = stmts[kw_end:lbl_start]
+    if any(ch in "\r\n\u2028\u2029" for ch in gap):
+        raise _JSExprFail("F784 line terminator before label")
+
+
+def _js_parse_f784_labeled_block_iife(text, i, depth, state):
+    """Parse labeled-block conditional-break accumulation (F784).
+
+    `(function(){var|let R='';LBL:{BODY}return ADD;})()`
+
+    BODY is one or more statements, each `R+='LIT';` /
+    `R=R+'LIT';`, `break LBL;`, `if(BOOL)break LBL;`, or
+    `if(BOOL)ACCUM;` with BOOL a decidable literal
+    (`true`/`false`/`!0`/`!1`/`1`/`0`); at least one `if(`
+    statement is required -- F655's inner grammar has no `if`
+    production, so this hook only fires where F655 fails closed
+    (the unconditional-break-only subset stays F655's).
+    Node-exact (v24.20.0): statements run in order; a taken break
+    skips the rest of the block; an `if(BOOL)` guard applies its
+    truthiness to the consequent. A break for another label, any
+    `continue` (a node SyntaxError in a non-loop block), or a
+    reserved-word label fails closed -- rejected, never
+    mis-decoded.
+
+    F452 charges 1 part per body statement; the result is bounded
+    by _MAX_DECODE_BYTES. Returns (value, next_index), or None
+    when the head does not match or a guard fails. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        lbl, sj = _js_parse_ident(stmts, sj)
+        if lbl in _F611_RESERVED:
+            raise _JSExprFail("F784 reserved label")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ":")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "{")
+        # Block span for skipping dead code after a taken break.
+        _, block_inner_end, _ = _js_span_braced(stmts, sj - 1)
+        frags = []
+        cond_stmts = 0
+        broken = False
+        while not broken:
+            q = _js_skip_ws(stmts, sj)
+            if q >= n:
+                raise _JSExprFail("F784 block overrun")
+            if stmts[q] == "}":
+                sj = q + 1
+                break
+            try:
+                lit, q2 = _js_f784f785_accum_stmt(stmts, q, acc, depth, state)
+            except _JSExprFail:
+                q2 = None
+            if q2 is not None:
+                frags.append(lit)
+                state["parts"] += 1  # F452: charge per body stmt
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sj = q2
+                continue
+            ik = _js_match_kw(stmts, q, "if")
+            if ik is not None:
+                q2 = _js_skip_ws(stmts, ik)
+                q2 = _js_expect(stmts, q2, "(")
+                truthy, q2 = _js_f784f785_bool_lit(stmts, q2)
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ")")
+                q2 = _js_skip_ws(stmts, q2)
+                bk = _js_match_kw(stmts, q2, "break")
+                if bk is not None:
+                    lq = _js_skip_ws(stmts, bk)
+                    _js_f784_no_line_terminator(stmts, bk, lq)
+                    blbl, q2 = _js_parse_ident(stmts, lq)
+                    if blbl != lbl:
+                        raise _JSExprFail("F784 break wrong label")
+                    q2 = _js_skip_ws(stmts, q2)
+                    q2 = _js_expect(stmts, q2, ";")
+                    cond_stmts += 1
+                    state["parts"] += 1  # F452: charge per body stmt
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                    if truthy:
+                        broken = True
+                        # Dead code after a taken break is never
+                        # simulated; skip to the block's `}` via the
+                        # brace-matched span (string-aware).
+                        sj = block_inner_end + 1
+                    else:
+                        sj = q2
+                    continue
+                # `if(BOOL)ACCUM;` -- guarded accumulation.
+                try:
+                    lit, q3 = _js_f784f785_accum_stmt(stmts, q2, acc, depth, state)
+                except _JSExprFail:
+                    raise _JSExprFail("F784 if consequent not break/accum")
+                cond_stmts += 1
+                if truthy:
+                    frags.append(lit)
+                state["parts"] += 1  # F452: charge per body stmt
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sj = q3
+                continue
+            bk = _js_match_kw(stmts, q, "break")
+            if bk is not None:
+                lq = _js_skip_ws(stmts, bk)
+                _js_f784_no_line_terminator(stmts, bk, lq)
+                blbl, q2 = _js_parse_ident(stmts, lq)
+                if blbl != lbl:
+                    raise _JSExprFail("F784 break wrong label")
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ";")
+                state["parts"] += 1  # F452: charge per body stmt
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                broken = True
+                # Dead code after the break is never simulated;
+                # skip to the block's `}` via the brace-matched span.
+                sj = block_inner_end + 1
+                continue
+            raise _JSExprFail("F784 block stmt not modeled")
+        if cond_stmts < 1:
+            # Every accepted shape carries an `if(` head, which
+            # F655 cannot parse -- this hook must not claim
+            # F655's unconditional-break-only subset (disjointness).
+            raise _JSExprFail("F784 no conditional statement")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        rval = "".join(frags)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F784 concat too long")
+        rval = _js_f784f785_return_additive(stmts, sj, acc, rval,
+                                            depth, state)
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f784_labeled_for_iife(text, i, depth, state):
+    """Parse labeled for-loop continue/break accumulation (F784).
+
+    `(function(){var|let R='';LBL:for(var|let I=INIT;I<BOUND;I++)
+    {BODY}return ADD;})()`
+
+    BODY is one or more statements, each `R+='LIT';` /
+    `R=R+'LIT';`, `continue LBL;` / `continue;`, `break LBL;` /
+    `break;`, or the `if(BOOL)`-guarded twins with BOOL a
+    decidable literal (`true`/`false`/`!0`/`!1`/`1`/`0`).
+    Node-exact (v24.20.0): the counter runs the F709 integer
+    sequence (`<` and `<=`); `continue` skips to the next
+    iteration; `break` exits the loop; an `if(BOOL)` guard
+    applies its truthiness to the consequent. A continue/break
+    for another label is a node SyntaxError -- fail closed.
+    Unlabeled jumps target the innermost loop, which is this one
+    by construction.
+
+    At most _JS_F679_MAX_ITERS iterations; F452 charges 1 part
+    per iteration; the result is bounded by _MAX_DECODE_BYTES.
+    Returns (value, next_index), or None when the head does not
+    match or a guard fails. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        lbl, sj = _js_parse_ident(stmts, sj)
+        if lbl in _F611_RESERVED:
+            raise _JSExprFail("F784 reserved label")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ":")
+        sj = _js_skip_ws(stmts, sj)
+        fk = _js_match_kw(stmts, sj, "for")
+        if fk is None:
+            raise _JSExprFail("F784 not a labeled for")
+        sj = _js_skip_ws(stmts, fk)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "var")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "let")
+        if m is None:
+            raise _JSExprFail("F784 for init not var/let")
+        sj = _js_skip_ws(stmts, m)
+        iname, sj = _js_parse_ident(stmts, sj)
+        if iname in (acc, "arguments"):
+            raise _JSExprFail("F784 counter shadows accum")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != "=" or stmts.startswith(("==", "=>"),
+                                                           sj):
+            raise _JSExprFail("F784 for init not an assignment")
+        sj = _js_skip_ws(stmts, sj + 1)
+        init, sj = _js_f709_int(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        cname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if cname != iname:
+            raise _JSExprFail("F784 cond not the counter")
+        sj = _js_skip_ws(stmts, sj)
+        if stmts.startswith("<=", sj):
+            le, sj = True, sj + 2
+        elif sj < n and stmts[sj] == "<":
+            le, sj = False, sj + 1
+        else:
+            raise _JSExprFail("F784 cond not </<=")
+        bound, sj = _js_f709_int(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        uname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if uname != iname:
+            raise _JSExprFail("F784 update not the counter")
+        sj = _js_skip_ws(stmts, sj)
+        if not stmts.startswith("++", sj):
+            raise _JSExprFail("F784 update not ++")
+        sj += 2
+        if sj < n and stmts[sj] == "+":
+            raise _JSExprFail("F784 update not plain ++")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "{")
+        # BODY -> op list: ("accum", lit) | ("accum_if", lit, truthy)
+        # | ("jump", is_continue, truthy).
+        ops = []
+        while True:
+            q = _js_skip_ws(stmts, sj)
+            if q >= n:
+                raise _JSExprFail("F784 for body overrun")
+            if stmts[q] == "}":
+                sj = q + 1
+                break
+            try:
+                lit, q2 = _js_f784f785_accum_stmt(stmts, q, acc, depth, state)
+            except _JSExprFail:
+                q2 = None
+            if q2 is not None:
+                ops.append(("accum", lit))
+                sj = q2
+                continue
+            ik = _js_match_kw(stmts, q, "if")
+            truthy = True
+            q2 = q
+            if ik is not None:
+                q2 = _js_skip_ws(stmts, ik)
+                q2 = _js_expect(stmts, q2, "(")
+                truthy, q2 = _js_f784f785_bool_lit(stmts, q2)
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, ")")
+                q2 = _js_skip_ws(stmts, q2)
+            ck = _js_match_kw(stmts, q2, "continue")
+            is_cont = ck is not None
+            if not is_cont:
+                ck = _js_match_kw(stmts, q2, "break")
+            if ck is not None:
+                lq = _js_skip_ws(stmts, ck)
+                if lq < n and stmts[lq] in _JS_IDENT_START:
+                    _js_f784_no_line_terminator(stmts, ck, lq)
+                    tlbl, lq = _js_parse_ident(stmts, lq)
+                    if tlbl != lbl:
+                        raise _JSExprFail("F784 jump wrong label")
+                lq = _js_skip_ws(stmts, lq)
+                lq = _js_expect(stmts, lq, ";")
+                ops.append(("jump", is_cont, truthy))
+                sj = lq
+                continue
+            if ik is not None:
+                # `if(BOOL)ACCUM;` -- guarded accumulation.
+                try:
+                    lit, q3 = _js_f784f785_accum_stmt(stmts, q2, acc, depth, state)
+                except _JSExprFail:
+                    raise _JSExprFail("F784 for body stmt not modeled")
+                ops.append(("accum_if", lit, truthy))
+                sj = q3
+                continue
+            raise _JSExprFail("F784 for body stmt not modeled")
+        if not ops:
+            raise _JSExprFail("F784 empty loop body")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        # Node-exact simulation (v24.20.0).
+        frags = []
+        c = init
+        iters = 0
+        while (c <= bound) if le else (c < bound):
+            if iters >= _JS_F679_MAX_ITERS:
+                raise _JSExprFail("F784 too many iterations")
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            iters += 1
+            broke = False
+            for op in ops:
+                if op[0] == "accum":
+                    frags.append(op[1])
+                elif op[0] == "accum_if":
+                    if op[2]:
+                        frags.append(op[1])
+                else:
+                    _, is_cont, truthy = op
+                    if truthy:
+                        if not is_cont:
+                            broke = True
+                        break
+            if broke:
+                break
+            c += 1
+        rval = "".join(frags)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F784 concat too long")
+        rval = _js_f784f785_return_additive(stmts, sj, acc, rval,
+                                            depth, state)
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f785_flagwhile_iife(text, i, depth, state):
+    """Parse boolean-flag while-loop accumulation (F785).
+
+    `(function(){var|let R='';var|let FLAG=true|!0|!1|false;
+    while(FLAG){BODY}return ADD;})()`
+
+    BODY is one or more `R+='LIT';` / `R=R+'LIT';` accumulation
+    statements plus exactly one unconditional `FLAG=false;` /
+    `FLAG=!1;` clear. Node-exact (v24.20.0): a truthy initializer
+    runs the body exactly once (the clear is unconditional, so
+    the re-check fails); a falsy initializer runs it zero times.
+    Any other flag mutation, a missing clear (the engine would
+    spin forever -- the decoder never hangs), a `const` flag, or
+    a non-literal accumulation fails closed -- rejected, never
+    mis-decoded. F709's while twin requires `while(I<BOUND)`
+    with a comparison and F727 requires `do`, so this bare-ident
+    condition is disjoint from both.
+
+    At most 1 iteration; F452 charges 1 part per iteration; the
+    result is bounded by _MAX_DECODE_BYTES. Returns (value,
+    next_index), or None when the head does not match or a guard
+    fails. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        m = _js_match_kw(stmts, sj, "var")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "let")
+        if m is None:
+            raise _JSExprFail("F785 flag decl not var/let")
+        sj = _js_skip_ws(stmts, m)
+        flag, sj = _js_parse_ident(stmts, sj)
+        if flag in (acc, "arguments"):
+            raise _JSExprFail("F785 flag shadows accum")
+        sj = _js_skip_ws(stmts, sj)
+        if sj >= n or stmts[sj] != "=" or stmts.startswith(("==", "=>"),
+                                                           sj):
+            raise _JSExprFail("F785 flag decl not an assignment")
+        sj = _js_skip_ws(stmts, sj + 1)
+        init_truthy, sj = _js_f784f785_bool_lit(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        wk = _js_match_kw(stmts, sj, "while")
+        if wk is None:
+            raise _JSExprFail("F785 not a while loop")
+        sj = _js_skip_ws(stmts, wk)
+        sj = _js_expect(stmts, sj, "(")
+        cname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if cname != flag:
+            raise _JSExprFail("F785 cond not the flag")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "{")
+        frags = []
+        clears = 0
+        while True:
+            q = _js_skip_ws(stmts, sj)
+            if q >= n:
+                raise _JSExprFail("F785 body overrun")
+            if stmts[q] == "}":
+                sj = q + 1
+                break
+            try:
+                lit, q2 = _js_f784f785_accum_stmt(stmts, q, acc, depth, state)
+            except _JSExprFail:
+                q2 = None
+            if q2 is not None:
+                frags.append(lit)
+                sj = q2
+                continue
+            fname, q2 = _js_parse_ident(stmts, q)
+            if fname != flag:
+                raise _JSExprFail("F785 body stmt not accum/clear")
+            q2 = _js_skip_ws(stmts, q2)
+            if q2 >= n or stmts[q2] != "=" or stmts.startswith(
+                    ("==", "=>"), q2):
+                raise _JSExprFail("F785 flag clear not an assignment")
+            q2 = _js_skip_ws(stmts, q2 + 1)
+            clear_truthy, q2 = _js_f784f785_bool_lit(stmts, q2)
+            if clear_truthy:
+                # Re-arming the flag would spin forever --
+                # fail closed (the decoder never hangs).
+                raise _JSExprFail("F785 flag re-armed")
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, ";")
+            clears += 1
+            sj = q2
+        if not frags:
+            raise _JSExprFail("F785 body has no accumulation")
+        if clears != 1:
+            raise _JSExprFail("F785 body clear count != 1")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        rval = ""
+        if init_truthy:
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            rval = "".join(frags)
+            if len(rval) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F785 concat too long")
+        rval = _js_f784f785_return_additive(stmts, sj, acc, rval,
+                                            depth, state)
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f702f703_assign_getter_iife(text, i, depth, state):
     """Parse `(function(){DECL;* return ADD;})()` at text[i] (F702/F703).
 
@@ -63953,6 +64500,53 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f757_saved_parts; state['ops'] = _f757_saved_ops
         if _f757 is not None:
             val, i = _f757
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F784: labeled break/continue value flows --
+        #   (function(){var|let R='';LBL:{BODY}return ADD;})() with
+        #   >=1 `if(BOOL)break LBL;` in BODY (the
+        #   unconditional-break-only subset is F655's), and
+        #   (function(){var|let R='';LBL:for(var|let I=INIT;I<BOUND;I++)
+        #   {BODY}return ADD;})() with continue/break (labeled or
+        #   unlabeled, optionally `if(BOOL)`-guarded) in BODY.
+        #   Tried after F757: F757 requires a new.target condition
+        #   head; F655's inner grammar has no `if` production and
+        #   no loop/continue production, so it fails closed on
+        #   every shape this accepts; F709's for/while twins
+        #   require the loop keyword where this requires a `LBL:`
+        #   head (red-first verified: 2 BREAK on the open tree), so
+        #   no previously-decoded input changes behavior. The F757
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f784_saved_parts = state['parts']; _f784_saved_ops = state['ops']
+        _f784 = _js_parse_f784_labeled_block_iife(text, i, depth, state)
+        if _f784 is None:
+            # Per-hook snapshot/restore (wave-383 rule): the block
+            # hook's speculative charges must not bleed into the for
+            # hook's attempt.
+            state['parts'] = _f784_saved_parts; state['ops'] = _f784_saved_ops
+            _f784 = _js_parse_f784_labeled_for_iife(text, i, depth, state)
+        if _f784 is None:
+            state['parts'] = _f784_saved_parts; state['ops'] = _f784_saved_ops
+        if _f784 is not None:
+            val, i = _f784
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F785: (function(){var|let R='';var|let FLAG=true|!0|!1|false;
+        #   while(FLAG){BODY}return ADD;})() -- boolean-flag
+        #   while-loop accumulation (BODY = accums + exactly one
+        #   unconditional FLAG=false/!1 clear). Tried after F784:
+        #   F784 requires a `LBL:` head; F709's while twin requires
+        #   `while(I<BOUND)` with a comparison and F727 requires
+        #   `do`, so no earlier route accepts `while(FLAG)` with a
+        #   bare-ident condition (red-first verified: 2 BREAK on
+        #   the open tree) and no previously-decoded input changes
+        #   behavior. The F784 hook and its trailing `return` are
+        #   untouched (wave-379 lesson).
+        _f785_saved_parts = state['parts']; _f785_saved_ops = state['ops']
+        _f785 = _js_parse_f785_flagwhile_iife(text, i, depth, state)
+        if _f785 is None:
+            state['parts'] = _f785_saved_parts; state['ops'] = _f785_saved_ops
+        if _f785 is not None:
+            val, i = _f785
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")

@@ -550,28 +550,28 @@ def test_r52_f783_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r52_f784_s1_open():
-    """F784 OPEN: miss reproduces."""
-    miss = _misses("(function(){var r='';lbl:{r+='%s';if(1)break lbl;r+='xx';}return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f784_s1_closed():
+    """F784 CLOSED (wave-385 lane 12): blocks."""
+    hit = _blocked("(function(){var r='';lbl:{r+='%s';if(1)break lbl;r+='xx';}return r+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f784_s2_open():
-    """F784 OPEN: miss reproduces."""
-    miss = _misses("(function(){var r='';outer:for(var i=0;i<1;i++){r+='%s';continue outer;r+='xx';}return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f784_s2_closed():
+    """F784 CLOSED (wave-385 lane 12): blocks."""
+    hit = _blocked("(function(){var r='';outer:for(var i=0;i<1;i++){r+='%s';continue outer;r+='xx';}return r+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f785_s1_open():
-    """F785 OPEN: miss reproduces."""
-    miss = _misses("(function(){var r='';var go=true;while(go){r+='%s';go=false;}return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f785_s1_closed():
+    """F785 CLOSED (wave-385 lane 12): blocks."""
+    hit = _blocked("(function(){var r='';var go=true;while(go){r+='%s';go=false;}return r+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f785_s2_open():
-    """F785 OPEN: miss reproduces."""
-    miss = _misses("(function(){var r='';var go=!0;while(go){r+='%s';go=false;}return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f785_s2_closed():
+    """F785 CLOSED (wave-385 lane 12): blocks."""
+    hit = _blocked("(function(){var r='';var go=!0;while(go){r+='%s';go=false;}return r+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r52_f786_s1_open():
