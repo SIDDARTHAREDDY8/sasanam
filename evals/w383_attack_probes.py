@@ -30,7 +30,8 @@ Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
 F713 (lane-7 kept) + F714-F737 (round 50), F740-F760 (this round).
 
-Closed pins (must BLOCK, else BREAK): F700-F712 (wave-382 closures).
+Closed pins (must BLOCK, else BREAK): F700-F712 (wave-382 closures),
+F713-F737 (wave-383 closures), F746, F747 (wave-384 lane 5).
 
 Rides-with-documented-scope (validated, NOT filed):
 - F723 variant (Object.create proto-chain getter, filed shape verbatim) -- still misses; same open finding, not re-filed.
@@ -666,27 +667,27 @@ def test_r51_f743_s2_open():
 
 @_t
 def test_r51_f744_s1_open():
-    """F746 OPEN (class extends builtin construction): miss reproduces."""
-    miss = _misses("(function(){class M extends Map{}var m=new M();m.set('k','%s');return [...m.values()].join('')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F746 CLOSED (wave-384 lane 5): blocks."""
+    blocked = _blocked("(function(){class M extends Map{}var m=new M();m.set('k','%s');return [...m.values()].join('')+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r51_f744_s2_open():
-    """F746 OPEN (class extends builtin construction): miss reproduces."""
-    miss = _misses("(function(){class M extends Map{}var m=new M([['k','%s']]);var s='';for(var v of m.values())s+=v;return s+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F746 CLOSED (wave-384 lane 5): blocks."""
+    blocked = _blocked("(function(){class M extends Map{}var m=new M([['k','%s']]);var s='';for(var v of m.values())s+=v;return s+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r51_f745_s1_open():
-    """F747 OPEN (F647 residual: missing-key nullish-LEFT + ??=): miss reproduces."""
-    miss = _misses("(function(){var o={};return (o.x??'%s')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F747 CLOSED (wave-384 lane 5): blocks."""
+    blocked = _blocked("(function(){var o={};return (o.x??'%s')+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r51_f745_s2_open():
-    """F747 OPEN (F647 residual: missing-key nullish-LEFT + ??=): miss reproduces."""
-    miss = _misses("(function(){var x=null;var y=x??'%s';return y+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    """F747 CLOSED (wave-384 lane 5): blocks."""
+    blocked = _blocked("(function(){var x=null;var y=x??'%s';return y+'%s';})()" % (_A, _B))
+    return ("HELD" if blocked else "BREAK", "blocked=%s" % blocked)
 
 @_t
 def test_r51_f746_s1_open():
