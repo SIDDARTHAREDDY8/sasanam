@@ -35262,6 +35262,284 @@ def _js_parse_f781_proto_method_iife(text, i, depth, state):
 
 
 
+# ---------------------------------------------------------------------------
+# F823: param'd-constructor + prototype-method hybrid (F780+F781 residual)
+# ---------------------------------------------------------------------------
+
+def _js_f823_parse_method_call(text, j, ctors, protos, vcnames, state):
+    """Parse `new C('L',...).m()` / `new C('L',...)['m']()` /
+    `o.m()` / `o['m']()` at text[j] (F823).
+
+    The constructor must be declared (F780-style, param'd); the
+    call takes zero args. Dispatch is node-exact: the method
+    resolves on the prototype map (later installs win); a missing
+    method fails closed (the engine throws TypeError calling
+    undefined). If the method name is also a constructor-assigned
+    own member, the engine resolves the own data property
+    (calling it throws) -- fail closed, never mis-decode.
+    Returns (value, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    nk = _js_match_kw(text, j, "new")
+    if nk is not None:
+        q = _js_skip_ws(text, nk)
+        cname, q = _js_parse_ident(text, q)
+        if cname not in ctors:
+            raise _JSExprFail("F823 new of undeclared")
+        q = _js_expect(text, q, "(")
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ")":
+                break
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F823 new arg not literal")
+            _, q = _js_parse_string(text, q)
+            _js_f672_charge(state)
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ",":
+                q += 1
+                continue
+            if q < n and text[q] == ")":
+                break
+            raise _JSExprFail("F823 new args malformed")
+        q = _js_expect(text, q, ")")
+    else:
+        cname, q = _js_parse_ident(text, j)
+        vc = vcnames.get(cname)
+        if vc is None:
+            raise _JSExprFail("F823 unbound receiver")
+        cname = vc
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] == ".":
+        mname, q = _js_parse_ident(text, _js_skip_ws(text, q + 1))
+    elif q < n and text[q] == "[":
+        mname, q = _js_parse_bracket_member(text, q)
+    else:
+        raise _JSExprFail("F823 not a method read")
+    q = _js_expect(text, q, "(")
+    q = _js_expect(text, q, ")")
+    _params, assigns = ctors[cname]
+    if any(k == mname for k, _ in assigns):
+        # Own data property shadows the prototype in the engine;
+        # calling it throws -- fail closed, never mis-decode.
+        raise _JSExprFail("F823 own member shadows method")
+    methods = protos.get(cname, {})
+    if mname not in methods:
+        raise _JSExprFail("F823 method miss")
+    _js_f672_charge(state)
+    return methods[mname], q
+
+
+def _js_parse_f823_hybrid_iife(text, i, depth, state):
+    """Parse `(function(){[STMT;]* return ADD;})()` with a
+    param'd-constructor + prototype-method hybrid at text[i]
+    (F823).
+
+    F823 (LOW, filed 2026-10-09 by wave-385 lane 10): F780 models
+    param'd-constructor this-binding and F781 models prototype
+    method reads, but the hybrid -- a param'd constructor combined
+    with a prototype method dispatch -- is modeled by neither:
+      `(function(){function C(x){this.x=x;}C.prototype.m=function(){return 'f1';};return new C('f1').m()+'f2';})()`
+      `(function(){function C(x){this.x=x;}C.prototype.m=function(){return 'f1';};var o=new C('f1');return o['m']()+'f2';})()`
+    Both dispatch node-exactly while the decoder produces zero
+    variants.
+
+    Node-exact desugar (v24.20.0): statements are exactly
+    - `function C(P1,...){ this.K=SRC; ... }` -- F780-style
+      param'd constructor (one or more plain params, this-assign
+      body; later assignments win);
+    - `class C{ constructor(P1,...){ this.K=SRC; ... } }` --
+      class twin (no extends, exactly one member);
+    - `C.prototype.m=function(){return 'LIT';};` -- F781-style
+      prototype method installs (anonymous, zero params, single
+      literal return; later installs win);
+    - `var|let|const o=new C('L',...)` -- single-declarator
+      binding of a param'd instantiation (string-literal args;
+      the var name must not shadow a constructor name).
+    The return is a `+`-joined additive of string literals,
+    prototype method calls (`new C('L',...).m()` / `o.m()` /
+    `o['m']()`, zero args, resolved on the prototype map), and
+    F780 member-read operands (`o.K`, `new C('L',...).K`).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    F780/F781 bounds apply (non-this statements, non-literal
+    non-param RHS, default/rest/destructured params, `return` in
+    the ctor body, named methods, methods with params or args,
+    non-literal method returns, bare method reads without the
+    call, subclassing, forward references); a method name that
+    collides with a constructor-assigned own member fails closed
+    (the engine throws).
+
+    Tried after F781: every accepted shape carries BOTH a
+    param'd ctor head (F781 requires zero-param empty-body
+    ctors) AND a `C.prototype.m=` install (F780's statement
+    loop rejects installs; F690 requires zero-param ctors), so
+    no previously-decoded input changes behavior. The F781 hook
+    and its trailing `return` are untouched (wave-379 lesson).
+    F452 parts charged per install/call via _js_f672_charge;
+    speculative misses restore parts/ops at the dispatch site
+    (wave-383 lesson). Returns (value, next_index), or None
+    when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        ctors = {}
+        protos = {}
+        env = {}
+        vcnames = {}
+        sj = _js_skip_ws(text, inner_start)
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= inner_end:
+                raise _JSExprFail("F823 body without return")
+            rk = _js_match_kw(text, sj, "return")
+            if rk is not None:
+                break
+            fk = _js_match_kw(text, sj, "function")
+            ck = _js_match_kw(text, sj, "class")
+            dk, _dnext = _js_match_decl_kw(text, sj)
+            if fk is not None:
+                q = _js_skip_ws(text, fk)
+                cname, q = _js_parse_ident(text, q)
+                if (cname == "arguments" or cname in _F611_RESERVED
+                        or cname in ctors or cname in env):
+                    raise _JSExprFail("F823 bad ctor name")
+                params, q = _js_f780_parse_params(text, q)
+                assigns, q = _js_f780_parse_ctor_body(text, _js_skip_ws(text, q),
+                                                     params, state)
+                ctors[cname] = (params, assigns)
+                protos.setdefault(cname, {})
+                _js_f672_charge(state)
+                sj = q
+            elif ck is not None:
+                q = _js_skip_ws(text, ck)
+                cname, q = _js_parse_ident(text, q)
+                if (cname == "arguments" or cname in _F611_RESERVED
+                        or cname in ctors or cname in env):
+                    raise _JSExprFail("F823 bad class name")
+                if _js_match_kw(text, _js_skip_ws(text, q), "extends") is not None:
+                    raise _JSExprFail("F823 class extends")
+                q = _js_expect(text, q, "{")
+                q = _js_skip_ws(text, q)
+                cm = _js_match_kw(text, q, "constructor")
+                if cm is None:
+                    raise _JSExprFail("F823 class needs constructor")
+                params, q = _js_f780_parse_params(text, _js_skip_ws(text, cm))
+                assigns, q = _js_f780_parse_ctor_body(text, _js_skip_ws(text, q),
+                                                     params, state)
+                q = _js_skip_ws(text, q)
+                if q >= n or text[q] != "}":
+                    raise _JSExprFail("F823 class extra members")
+                ctors[cname] = (params, assigns)
+                protos.setdefault(cname, {})
+                _js_f672_charge(state)
+                sj = q + 1
+            elif dk is not None:
+                q = _js_skip_ws(text, _dnext)
+                vname, q = _js_parse_ident(text, q)
+                q = _js_expect(text, q, "=")
+                q = _js_skip_ws(text, q)
+                nkk = _js_match_kw(text, q, "new")
+                if nkk is None:
+                    raise _JSExprFail("F823 var not new")
+                vcname, _vq = _js_parse_ident(text, _js_skip_ws(text, nkk))
+                if vcname not in ctors:
+                    raise _JSExprFail("F823 new of undeclared")
+                inst, q = _js_f780_new_instance(text, q, ctors, state)
+                q = _js_expect(text, q, ";")
+                if (vname in env or vname in ctors or vname == "arguments"
+                        or vname in _F611_RESERVED):
+                    raise _JSExprFail("F823 var redeclared")
+                env[vname] = ("inst", inst)
+                vcnames[vname] = vcname
+                sj = q
+            else:
+                # `CNAME.prototype.m=...` install (F781's
+                # production). Reached only when the statement is
+                # not a declaration, so a `var` head is never
+                # misread as a receiver ident.
+                cname, q = _js_parse_ident(text, sj)
+                if cname not in ctors:
+                    raise _JSExprFail("F823 proto of undeclared")
+                q = _js_skip_ws(text, q)
+                if q < n and text[q] == ".":
+                    pname, q = _js_parse_ident(text, _js_skip_ws(text, q + 1))
+                elif q < n and text[q] == "[":
+                    pname, q = _js_parse_bracket_member(text, q)
+                else:
+                    raise _JSExprFail("F823 bad proto member")
+                if pname != "prototype":
+                    raise _JSExprFail("F823 not prototype")
+                q = _js_skip_ws(text, q)
+                if q < n and text[q] == ".":
+                    mname, q = _js_parse_ident(text, _js_skip_ws(text, q + 1))
+                elif q < n and text[q] == "[":
+                    mname, q = _js_parse_bracket_member(text, q)
+                else:
+                    raise _JSExprFail("F823 bad method member")
+                q = _js_expect(text, q, "=")
+                mval, q = _js_f781_parse_method_body(text, _js_skip_ws(text, q),
+                                                    state)
+                q = _js_expect(text, q, ";")
+                protos[cname][mname] = mval
+                _js_f672_charge(state)
+                sj = q
+        sj = _js_skip_ws(text, rk)
+        total = None
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+                _js_f672_charge(state)
+            else:
+                _mc_saved_parts = state["parts"]
+                _mc_saved_ops = state["ops"]
+                try:
+                    term, sj = _js_f823_parse_method_call(
+                        text, sj, ctors, protos, vcnames, state)
+                except _JSExprFail:
+                    state["parts"] = _mc_saved_parts
+                    state["ops"] = _mc_saved_ops
+                    term, sj = _js_f780_operand(text, sj, env, ctors, state)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            state["ops"] += 1
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F823 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+
 def _js_parse_f690_ctor_iife(text, i, depth, state):
     """Parse `(function(){[STMT;]* return ADD;})()` with constructor
     this-member sources at text[i] (F690).
@@ -74168,6 +74446,21 @@ def _js_parse_postfix(text, i, value, depth, state):
             if ref is None:
                 return value, i
             state["ops"] += 1  # the ?. member access is obfuscation-shaped
+            _ref, _rk = ref
+            _rp = _js_skip_ws(text, _rk)
+            if _rp < len(text) and text[_rp] == "(":
+                # F822: `?.method(args)` direct call on a
+                # provably-non-null receiver -- engine-identical to
+                # the dot form (node v24.20.0 verified: the `?.`
+                # never short-circuits here), so dispatch the same
+                # method grammar with the receiver as base. The
+                # method was validated against the (base-kind,
+                # method) table at ref creation. Anything else
+                # (`?.call/apply/bind`, bare refs, `??` picks)
+                # keeps the reference form as before.
+                value, i = _js_apply_method(text, _rp, _ref.method,
+                                            value, depth, state)
+                continue
             value, i = ref
             continue
         # F478: .METHOD.call/apply/bind(...) -- indirect invocation
@@ -78068,6 +78361,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f781_saved_parts; state['ops'] = _f781_saved_ops
         if _f781 is not None:
             val, i = _f781
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F823: (function(){[STMT;]* return ADD;})() with a
+        #   param'd-constructor + prototype-method hybrid (F780+F781
+        #   residual: param'd ctor head + C.prototype.m= install).
+        #   Tried after F781: every accepted shape carries BOTH a
+        #   param'd ctor (F781 requires zero-param empty ctors) AND
+        #   a prototype install (F780's statement loop rejects
+        #   installs; F690 requires zero-param ctors), so no
+        #   previously-decoded input changes behavior (red-first
+        #   verified: 2 BREAK on the open tree). None falls through
+        #   to F692. The F781 hook and its trailing `return` are
+        #   untouched (wave-379 lesson).
+        _f823_saved_parts = state['parts']; _f823_saved_ops = state['ops']
+        _f823 = _js_parse_f823_hybrid_iife(text, i, depth, state)
+        if _f823 is None:
+            state['parts'] = _f823_saved_parts; state['ops'] = _f823_saved_ops
+        if _f823 is not None:
+            val, i = _f823
             return _js_parse_postfix(text, i, val, depth, state)
         # F692: (function(){class B{...} class D extends B{...}
         #   return ADD;})() with super reads in static methods.

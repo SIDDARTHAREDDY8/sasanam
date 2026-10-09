@@ -27,7 +27,7 @@ SHAPES = [
      "['" + _A + "','" + _B + "']?.join('')",
      True),
     ("s2",
-     "[['" + _A + "'],['xx']]?.find(function(a){return true;})[0][0]+'" + _B + "'",
+     "[['" + _A + "'],['xx']]?.find(function(a){return true;})[0]+'" + _B + "'",
      True),
 ]
 
