@@ -107747,6 +107747,1201 @@ def _js_f960_rewrite(text):
     return "".join(out).lstrip(" \t\n\r")
 
 
+# ---------------------------------------------------------------------------
+# Wave-392 lane 2: F971 / F972 / F973 / F974 narrow whole-text decoders.
+#
+# Each function takes the whole input text and returns the decoded
+# credential string (or None): the decoder statically resolves the
+# member reads / spreads / closure captures / symbol-keyed reads the
+# expression decoders cannot see through, so the assembled value is
+# produced node-exactly. All four are narrow whole-text productions in
+# the F961/F962/F964 style: pure textual analysis, no scan-budget
+# charging (a miss returns None and costs nothing), bounded
+# substitutions, no new compiled-regex objects. Anything outside the
+# narrow grammar fails closed. Never evals.
+# ---------------------------------------------------------------------------
+
+_F97X_MAX_SUBST = 128  # cap on member-read substitutions per decode
+
+
+def _js_f97x_strip_strings(text):
+    """Blank every '...' / "..." span in *text* (F971-F974).
+
+    Lets identifier scans ignore string contents. Backtick templates
+    fail closed (raise _JSExprFail) -- none of the four shapes admit
+    them. Never evals.
+    """
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in "'\"":
+            j = _js_skip_quoted(text, i)
+            out.append(" " * (j - i))
+            i = j
+        elif c == "`":
+            raise _JSExprFail("template in F97x scan")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _js_f97x_quote(value):
+    """Quote *value* as a single-quoted JS string literal (F971-F974).
+
+    Node-exact escaping for the BMP values the four productions admit
+    (callers pre-bound every code point). Never evals.
+    """
+    out = ["'"]
+    for ch in value:
+        o = ord(ch)
+        if ch == "'":
+            out.append("\\'")
+        elif ch == "\\":
+            out.append("\\\\")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch == "\b":
+            out.append("\\b")
+        elif ch == "\f":
+            out.append("\\f")
+        elif 0x20 <= o < 0x7F:
+            out.append(ch)
+        else:
+            out.append("\\u%04x" % o)
+    out.append("'")
+    return "".join(out)
+
+
+def _js_f97x_is_intlike(key):
+    """Whether *key* is a canonical JS integer-index key (F971).
+
+    ownKeys/getOwnPropertyNames sort integer indices numerically
+    first, so any integer-like key breaks insertion-order reads --
+    the F971 production fails closed on them. Never evals.
+    """
+    if not key or not key.isascii() or not key.isdigit():
+        return False
+    if len(key) > 1 and key[0] == "0":
+        return False
+    return int(key) < 4294967295
+
+
+def _js_f97x_assign_count(stripped, name):
+    """Count bare `name =` assignments in string-stripped text (F971-F974).
+
+    `==`, `===`, `=>` are not assignments. Never evals.
+    """
+    count = 0
+    for m in re.finditer(r"(?<![_$A-Za-z0-9])" + re.escape(name)
+                         + r"(?![_$A-Za-z0-9])", stripped):
+        k = m.end()
+        while k < len(stripped) and stripped[k] in " \t\n\r":
+            k += 1
+        if k < len(stripped) and stripped[k] == "=":
+            if k + 1 < len(stripped) and stripped[k + 1] in "=>":
+                continue
+            count += 1
+    return count
+
+
+def _js_f97x_decl_count(stripped, name):
+    """Count `var|let|const|function <name>` declarations (F971-F974)."""
+    return len(re.findall(r"(?:var|let|const|function)[ \t\n\r]+"
+                          + re.escape(name) + r"(?![_$A-Za-z0-9])",
+                          stripped))
+
+
+def _js_f97x_ident_count(stripped, name):
+    """Count identifier occurrences of *name* in stripped text (F971-F974)."""
+    return len(re.findall(r"(?<![_$A-Za-z0-9])" + re.escape(name)
+                          + r"(?![_$A-Za-z0-9])", stripped))
+
+
+def _js_f97x_expect_semi(s, j):
+    """Consume the statement-terminating `;` at s[j] (F971-F974)."""
+    j = _js_skip_ws(s, j)
+    if j >= len(s) or s[j] != ";":
+        raise _JSExprFail("expected semi")
+    j += 1
+    if _js_skip_ws(s, j) != len(s):
+        raise _JSExprFail("trailing junk after semi")
+    return j
+
+
+def _js_f97x_parse_var_decl(text, i):
+    """Parse `var|let|const NAME =` at text[i] (F971-F974).
+
+    Returns (name, value_start). Never evals.
+    """
+    i = _js_skip_ws(text, i)
+    kw, j = _js_match_decl_kw(text, i)
+    if kw is None:
+        raise _JSExprFail("not a var decl")
+    j = _js_skip_ws(text, j)
+    name, j = _js_parse_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if j >= len(text) or text[j] != "=":
+        raise _JSExprFail("var decl without init")
+    return name, j + 1
+
+
+def _js_f97x_parse_getter(text, i):
+    """Parse `get NAME() { return EXPR; }` at text[i] (F974).
+
+    Returns (name, expr_source, next). The body must be exactly one
+    `return EXPR;` -- EXPR source is returned raw for substitution.
+    Anything else fails closed. Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, i, "get")
+    if m is None:
+        raise _JSExprFail("not a getter")
+    i = _js_skip_ws(text, m)
+    name, i = _js_parse_ident(text, i)
+    i = _js_expect(text, i, "(")
+    i = _js_expect(text, i, ")")  # getters take no params
+    i = _js_expect(text, i, "{")
+    i = _js_skip_ws(text, i)
+    m = _js_match_kw(text, i, "return")
+    if m is None:
+        raise _JSExprFail("getter body not a return")
+    i = _js_skip_ws(text, m)
+    start = i
+    depth = 0
+    while True:
+        if i >= n:
+            raise _JSExprFail("unterminated getter body")
+        c = text[i]
+        if c in "'\"":
+            i = _js_skip_quoted(text, i)
+            continue
+        if c == "`":
+            raise _JSExprFail("template in getter body")
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0:
+                raise _JSExprFail("unbalanced getter body")
+        elif c == ";" and depth == 0:
+            break
+        i += 1
+    expr = text[start:i]
+    i = _js_skip_ws(text, i + 1)
+    if i >= n or text[i] != "}":
+        raise _JSExprFail("getter body not a single return")
+    return name, expr, i + 1
+
+
+def _js_f97x_parse_objlit(text, i):
+    """Parse `{...}` at text[i] (F971-F974).
+
+    Returns (props, getters, next): props maps string keys to string
+    values; getters maps names to raw return-expression sources.
+    Computed keys, methods, spread, non-string values, duplicate keys,
+    and integer-like keys (F971: they break ownKeys insertion order)
+    all fail closed. Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, i)
+    if i >= n or text[i] != "{":
+        raise _JSExprFail("not an object literal")
+    i += 1
+    props = {}
+    getters = {}
+    first = True
+    while True:
+        i = _js_skip_ws(text, i)
+        if i >= n:
+            raise _JSExprFail("unterminated object literal")
+        if text[i] == "}":
+            return props, getters, i + 1
+        if not first:
+            if text[i] != ",":
+                raise _JSExprFail("expected comma in object literal")
+            i = _js_skip_ws(text, i + 1)
+            if i < n and text[i] == "}":
+                return props, getters, i + 1  # trailing comma
+        first = False
+        m = _js_match_kw(text, i, "get")
+        if m is not None:
+            mm = _js_skip_ws(text, m)
+            if mm < n and text[mm] != ":":
+                gname, gexpr, i = _js_f97x_parse_getter(text, i)
+                if gname in getters or gname in props:
+                    raise _JSExprFail("duplicate getter")
+                getters[gname] = gexpr
+                continue
+        if text[i] in "'\"":
+            key, i = _js_parse_string(text, i)
+        elif text[i] in _JS_IDENT_START:
+            key, i = _js_parse_ident(text, i)
+        else:
+            raise _JSExprFail("computed key in object literal")
+        if _js_f97x_is_intlike(key):
+            raise _JSExprFail("integer-like key breaks key order")
+        if key in props or key in getters:
+            raise _JSExprFail("duplicate key")
+        i = _js_skip_ws(text, i)
+        if i >= n or text[i] != ":":
+            raise _JSExprFail("expected colon in object literal")
+        i = _js_skip_ws(text, i + 1)
+        if i >= n or text[i] not in "'\"":
+            raise _JSExprFail("non-string property value")
+        val, i = _js_parse_string(text, i)
+        props[key] = val
+
+
+def _js_f97x_parse_additive(expr, term_fn):
+    """Split *expr* on top-level `+`, resolve each operand (F971-F974).
+
+    Operands are string literals (via _js_parse_string) or resolved by
+    *term_fn* (its _JSExprFail fails the whole production closed).
+    Returns the concatenated string, bounded by _MAX_DECODE_BYTES.
+    Never evals.
+    """
+    parts = []
+    i = 0
+    n = len(expr)
+    start = 0
+    depth = 0
+    while i < n:
+        c = expr[i]
+        if c in "'\"":
+            i = _js_skip_quoted(expr, i)
+            continue
+        if c == "`":
+            raise _JSExprFail("template in additive")
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0:
+                raise _JSExprFail("unbalanced additive")
+        elif c == "+" and depth == 0:
+            if i + 1 < n and expr[i + 1] == "+":
+                raise _JSExprFail("++ in additive")
+            parts.append(expr[start:i])
+            i += 1
+            start = i
+            continue
+        i += 1
+    parts.append(expr[start:])
+    out = []
+    for p in parts:
+        p = p.strip(" \t\n\r")
+        if not p:
+            raise _JSExprFail("empty additive operand")
+        if p[0] in "'\"":
+            val, j = _js_parse_string(p, 0)
+            if _js_skip_ws(p, j) != len(p):
+                raise _JSExprFail("trailing junk in string operand")
+            out.append(val)
+        else:
+            out.append(term_fn(p))
+    total = "".join(out)
+    if len(total) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("additive too long")
+    return total
+
+
+def _js_f97x_lit_term(operand):
+    """Additive term resolver: string literals only (F971-F974)."""
+    if not operand or operand[0] not in "'\"":
+        raise _JSExprFail("non-literal term")
+    val, j = _js_parse_string(operand, 0)
+    if _js_skip_ws(operand, j) != len(operand):
+        raise _JSExprFail("trailing junk in literal term")
+    return val
+
+
+def _js_f97x_stmt_mentions(stripped_stmt, names):
+    """Whether the string-stripped statement mentions any of *names* (F971-F974).
+
+    Used to keep junk statements honest: a statement the production
+    does not model must not touch the bound names. Never evals.
+    """
+    for m in re.finditer(r"[A-Za-z_$][A-Za-z0-9_$]*", stripped_stmt):
+        if m.group(0) in names:
+            return True
+    return False
+
+
+def _js_f97x_parse_result_expr(stmt, req_name=None):
+    """Parse `var|let|const NAME = <expr>;` (F971-F974).
+
+    Returns (name, expr_source). When *req_name* is given the
+    declared name must equal it. Never evals.
+    """
+    name, j = _js_f97x_parse_var_decl(stmt, 0)
+    if req_name is not None and name != req_name:
+        raise _JSExprFail("result name mismatch")
+    expr = stmt[j:].rstrip(" \t\n\r")
+    if not expr.endswith(";"):
+        raise _JSExprFail("result not semi-terminated")
+    return name, expr[:-1]
+
+
+def _js_f97x_parse_keyenum_call(text, i, objname):
+    """Parse `Reflect.ownKeys(obj)` / `Object.getOwnPropertyNames(obj)` (F971).
+
+    Returns next index. Never evals.
+    """
+    i = _js_skip_ws(text, i)
+    recv, i = _js_parse_ident(text, i)
+    i = _js_skip_ws(text, i)
+    if i >= len(text) or text[i] != ".":
+        raise _JSExprFail("not a member call")
+    i = _js_skip_ws(text, i + 1)
+    meth, i = _js_parse_ident(text, i)
+    if not ((recv == "Reflect" and meth == "ownKeys")
+            or (recv == "Object" and meth == "getOwnPropertyNames")):
+        raise _JSExprFail("not a key-enumeration call")
+    i = _js_expect(text, i, "(")
+    i = _js_skip_ws(text, i)
+    arg, i = _js_parse_ident(text, i)
+    if arg != objname:
+        raise _JSExprFail("key-enumeration of another object")
+    return _js_expect(text, i, ")")
+
+
+def _js_f971_keyenum_term(operand, oname, ksname, keys, props):
+    """Additive term resolver for F971: `o[ks[N]]` reads."""
+    j = _js_skip_ws(operand, 0)
+    name, j = _js_parse_ident(operand, j)
+    if name != oname:
+        raise _JSExprFail("F971 operand not the object")
+    j = _js_expect(operand, j, "[")
+    j = _js_skip_ws(operand, j)
+    kname, j = _js_parse_ident(operand, j)
+    if kname != ksname:
+        raise _JSExprFail("F971 operand not the key array")
+    j = _js_expect(operand, j, "[")
+    j = _js_skip_ws(operand, j)
+    k = j
+    n = len(operand)
+    while k < n and operand[k] in "0123456789":
+        k += 1
+    if k == j:
+        raise _JSExprFail("F971 non-integer key index")
+    idx = int(operand[j:k])
+    j = _js_expect(operand, k, "]")
+    j = _js_expect(operand, j, "]")
+    if _js_skip_ws(operand, j) != len(operand):
+        raise _JSExprFail("F971 trailing junk in key read")
+    if idx >= len(keys):
+        raise _JSExprFail("F971 key index out of range")
+    return props[keys[idx]]
+
+
+def _js_f971_stmt_decode(text):
+    """Decode F971 collection key-enumeration reads (whole-text hook).
+
+    `var|let|const o={<strkeys>: <'strvals>'};`
+    `var|let|const ks=Reflect.ownKeys(o)|Object.getOwnPropertyNames(o);`
+    ...
+    `var|let|const RESULT=<ADD>;`
+    where <ADD> operands are `o[ks[N]]` (N in range) or string
+    literals. The pair may sit anywhere in the statement list
+    (leading junk statements are tolerated when they do not mention
+    the bound names); exactly one pair and one later RESULT are
+    required. Returns the assembled string, or None.
+
+    Node-exact (v24.20.0): ownKeys/getOwnPropertyNames order string
+    keys by insertion; integer-like keys (engine sorts them first),
+    duplicate keys, computed keys, and non-string values fail closed,
+    as do any reassignment of `o`/`ks` and any delete/defineProperty/
+    assign touching the object. Never evals.
+    """
+    if "Reflect.ownKeys" not in text and "getOwnPropertyNames" not in text:
+        return None
+    try:
+        stmts = _js_f949_split_topstmts(text)
+        if stmts is None or len(stmts) < 3:
+            return None
+        pairs = []
+        for i in range(len(stmts) - 1):
+            try:
+                oname, j = _js_f97x_parse_var_decl(stmts[i], 0)
+                props, getters, j = _js_f97x_parse_objlit(stmts[i], j)
+                if getters or not props:
+                    continue
+                _js_f97x_expect_semi(stmts[i], j)
+                ksname, j = _js_f97x_parse_var_decl(stmts[i + 1], 0)
+                j = _js_f97x_parse_keyenum_call(stmts[i + 1], j, oname)
+                _js_f97x_expect_semi(stmts[i + 1], j)
+                pairs.append((i, oname, ksname, props))
+            except _JSExprFail:
+                continue
+        if len(pairs) != 1:
+            return None
+        pi, oname, ksname, props = pairs[0]
+        keys = list(props.keys())
+        results = []
+        for i in range(pi + 2, len(stmts)):
+            try:
+                _rname, rexpr = _js_f97x_parse_result_expr(
+                    stmts[i], req_name="RESULT")
+                results.append((i, rexpr))
+            except _JSExprFail:
+                continue
+        if len(results) != 1:
+            return None
+        ri, rexpr = results[0]
+        names = {oname, ksname, "RESULT"}
+        for i, s in enumerate(stmts):
+            if i in (pi, pi + 1, ri):
+                continue
+            if _js_f97x_stmt_mentions(_js_f97x_strip_strings(s), names):
+                return None
+        stripped = _js_f97x_strip_strings(text)
+        if (_js_f97x_assign_count(stripped, oname) != 1
+                or _js_f97x_assign_count(stripped, ksname) != 1
+                or _js_f97x_decl_count(stripped, oname) != 1
+                or _js_f97x_decl_count(stripped, ksname) != 1):
+            return None
+        if re.search(r"(?<![_$A-Za-z0-9])delete(?![_$A-Za-z0-9])",
+                     stripped):
+            return None
+        if re.search(r"(?<![_$A-Za-z0-9])(defineProperty|assign|"
+                     r"setPrototypeOf)(?![_$A-Za-z0-9])", stripped):
+            return None
+
+        def term(operand, _o=oname, _ks=ksname, _keys=keys,
+                 _props=props):
+            return _js_f971_keyenum_term(operand, _o, _ks, _keys,
+                                         _props)
+
+        return _js_f97x_parse_additive(rexpr, term)
+    except _JSExprFail:
+        return None
+
+
+def _js_f97x_parse_code_array(text, i):
+    """Parse `JSON.parse('[...]')` / `new Array(...)` at text[i] (F972).
+
+    Returns (codes, next). The JSON must decode to a non-empty list of
+    ints (bools rejected); new Array needs 2+ numeric args (the
+    single-arg length form fails closed). Codes are BMP-bounded.
+    Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, i)
+    m = _js_match_kw(text, i, "JSON")
+    if m is not None:
+        j = _js_skip_ws(text, m)
+        if j < n and text[j] == ".":
+            j = _js_skip_ws(text, j + 1)
+            meth, j = _js_parse_ident(text, j)
+            if meth == "parse":
+                j = _js_expect(text, j, "(")
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("JSON.parse non-literal")
+                jsontxt, j = _js_parse_string(text, j)
+                try:
+                    arr = json.loads(jsontxt)
+                except Exception:
+                    raise _JSExprFail("JSON.parse bad json")
+                if (not isinstance(arr, list) or not arr
+                        or any(type(x) is not int or x < 0 or x > 0xFFFF
+                               for x in arr)):
+                    raise _JSExprFail("JSON.parse not an int array")
+                return arr, _js_expect(text, j, ")")
+        raise _JSExprFail("not JSON.parse")
+    m = _js_match_kw(text, i, "new")
+    if m is None:
+        raise _JSExprFail("not a code array")
+    j = _js_skip_ws(text, m)
+    cls, j = _js_parse_ident(text, j)
+    if cls != "Array":
+        raise _JSExprFail("not new Array")
+    j = _js_expect(text, j, "(")
+    nums = []
+    while True:
+        j = _js_skip_ws(text, j)
+        k = j
+        while k < n and text[k] in "0123456789":
+            k += 1
+        if k == j:
+            raise _JSExprFail("new Array non-numeric arg")
+        v = int(text[j:k])
+        if v > 0xFFFF:
+            raise _JSExprFail("new Array code out of range")
+        nums.append(v)
+        j = _js_skip_ws(text, k)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        break
+    if len(nums) < 2:
+        raise _JSExprFail("new Array length form")
+    return nums, _js_expect(text, j, ")")
+
+
+def _js_f972_fromcharcode_term(operand, aname, codes, spreads):
+    """Additive term resolver for F972: `String.fromCharCode(...a)`."""
+    j = _js_skip_ws(operand, 0)
+    name, j = _js_parse_ident(operand, j)
+    if name != "String":
+        raise _JSExprFail("F972 not a String call")
+    j = _js_skip_ws(operand, j)
+    if j >= len(operand) or operand[j] != ".":
+        raise _JSExprFail("F972 not a member call")
+    j = _js_skip_ws(operand, j + 1)
+    meth, j = _js_parse_ident(operand, j)
+    if meth != "fromCharCode":
+        raise _JSExprFail("F972 not fromCharCode")
+    j = _js_expect(operand, j, "(")
+    j = _js_skip_ws(operand, j)
+    if operand[j:j + 3] != "...":
+        raise _JSExprFail("F972 fromCharCode arg not a spread")
+    j = _js_skip_ws(operand, j + 3)
+    nm, j = _js_parse_ident(operand, j)
+    if nm != aname:
+        raise _JSExprFail("F972 spread of another array")
+    j = _js_expect(operand, j, ")")
+    if _js_skip_ws(operand, j) != len(operand):
+        raise _JSExprFail("F972 trailing junk in fromCharCode")
+    spreads[0] += 1
+    return "".join(chr(c) for c in codes)
+
+
+def _js_f972_stmt_decode(text):
+    """Decode F972 non-literal fromCharCode spreads (whole-text hook).
+
+    `var|let|const a=JSON.parse('[<ints>]');` or
+    `var|let|const a=new Array(<ints>);` then
+    `var|let|const RESULT=<ADD>;` where <ADD> operands are
+    `String.fromCharCode(...a)` or string literals. The array binding
+    may sit anywhere ahead of its single later RESULT (leading junk
+    tolerated when it does not mention the bound names). Returns the
+    assembled string, or None.
+
+    Node-exact (v24.20.0): JSON.parse of a number array yields JS
+    numbers; new Array with 2+ numeric args yields the arg array (the
+    single-arg length form fails closed); codes are BMP-bounded so
+    fromCharCode is exact. The array var must be single-assignment
+    and referenced only by its declaration and the modeled spreads.
+    Never evals.
+    """
+    if "JSON.parse" not in text and "new Array" not in text:
+        return None
+    try:
+        stmts = _js_f949_split_topstmts(text)
+        if stmts is None or len(stmts) < 2:
+            return None
+        adecls = []
+        for i in range(len(stmts) - 1):
+            try:
+                aname, j = _js_f97x_parse_var_decl(stmts[i], 0)
+                codes, j = _js_f97x_parse_code_array(stmts[i], j)
+                _js_f97x_expect_semi(stmts[i], j)
+                adecls.append((i, aname, codes))
+            except _JSExprFail:
+                continue
+        if len(adecls) != 1:
+            return None
+        ai, aname, codes = adecls[0]
+        results = []
+        for i in range(ai + 1, len(stmts)):
+            try:
+                _rname, rexpr = _js_f97x_parse_result_expr(
+                    stmts[i], req_name="RESULT")
+                results.append((i, rexpr))
+            except _JSExprFail:
+                continue
+        if len(results) != 1:
+            return None
+        ri, rexpr = results[0]
+        names = {aname, "RESULT"}
+        for i, s in enumerate(stmts):
+            if i in (ai, ri):
+                continue
+            if _js_f97x_stmt_mentions(_js_f97x_strip_strings(s), names):
+                return None
+        stripped = _js_f97x_strip_strings(text)
+        if (_js_f97x_assign_count(stripped, aname) != 1
+                or _js_f97x_decl_count(stripped, aname) != 1):
+            return None
+        spreads = [0]
+
+        def term(operand, _a=aname, _codes=codes, _sp=spreads):
+            return _js_f972_fromcharcode_term(operand, _a, _codes,
+                                              _sp)
+
+        val = _js_f97x_parse_additive(rexpr, term)
+        if _js_f97x_ident_count(stripped, aname) != 1 + spreads[0]:
+            return None
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f97x_parse_closure_body(stmt, i, bindings, depth):
+    """Parse closure body statements at stmt[i] (after `{`) (F973).
+
+    Body statements are `var X='lit';` any number, then either
+    `return function(){ <body> };` (recurse, depth+1) or the final
+    `return EXPR;`. Returns (next_i, innerexpr, depth): next_i is
+    just past this body's closing `}`; innerexpr is the innermost
+    return expression source (None until the final return).
+    Never evals.
+    """
+    n = len(stmt)
+    while True:
+        i = _js_skip_ws(stmt, i)
+        kw, k = _js_match_decl_kw(stmt, i)
+        if kw is not None:
+            k = _js_skip_ws(stmt, k)
+            xname, k = _js_parse_ident(stmt, k)
+            k = _js_skip_ws(stmt, k)
+            if k >= n or stmt[k] != "=":
+                raise _JSExprFail("F973 var without init")
+            k = _js_skip_ws(stmt, k + 1)
+            if k >= n or stmt[k] not in "'\"":
+                raise _JSExprFail("F973 non-string var in closure")
+            val, k = _js_parse_string(stmt, k)
+            k = _js_skip_ws(stmt, k)
+            if k >= n or stmt[k] != ";":
+                raise _JSExprFail("F973 var not semi-terminated")
+            if xname in bindings:
+                raise _JSExprFail("F973 duplicate binding")
+            bindings[xname] = val
+            i = k + 1
+            continue
+        m = _js_match_kw(stmt, i, "return")
+        if m is None:
+            raise _JSExprFail("F973 body not var/return")
+        i = _js_skip_ws(stmt, m)
+        m2 = _js_match_kw(stmt, i, "function")
+        if m2 is not None:
+            if depth >= 4:
+                raise _JSExprFail("F973 closure too deep")
+            i = _js_expect(stmt, _js_skip_ws(stmt, m2), "(")
+            i = _js_expect(stmt, i, ")")
+            i = _js_expect(stmt, i, "{")
+            i, innerexpr, depth = _js_f97x_parse_closure_body(
+                stmt, i, bindings, depth + 1)
+            i = _js_skip_ws(stmt, i)
+            if i >= n or stmt[i] != ";":
+                raise _JSExprFail("F973 missing semi after nested fn")
+            i = _js_skip_ws(stmt, i + 1)
+            if i >= n or stmt[i] != "}":
+                raise _JSExprFail("F973 body not closed after nested")
+            return i + 1, innerexpr, depth
+        start = i
+        deep = 0
+        while True:
+            if i >= n:
+                raise _JSExprFail("unterminated closure return")
+            c = stmt[i]
+            if c in "'\"":
+                i = _js_skip_quoted(stmt, i)
+                continue
+            if c == "`":
+                raise _JSExprFail("template in closure return")
+            if c in "([{":
+                deep += 1
+            elif c in ")]}":
+                deep -= 1
+                if deep < 0:
+                    raise _JSExprFail("unbalanced closure return")
+            elif c == ";" and deep == 0:
+                break
+            i += 1
+        expr = stmt[start:i]
+        i = _js_skip_ws(stmt, i + 1)
+        if i >= n or stmt[i] != "}":
+            raise _JSExprFail("F973 return not body-final")
+        return i + 1, expr, depth
+
+
+def _js_f97x_parse_closure(stmt):
+    """Parse `function NAME() { <body> }` (F973).
+
+    Returns (name, bindings, depth, innermost_expr): bindings maps
+    every `var X='lit'` in every nesting level to its value; depth is
+    the total function levels (outer counts). Never evals.
+    """
+    m = _js_match_kw(stmt, 0, "function")
+    if m is None:
+        raise _JSExprFail("not a function declaration")
+    i = _js_skip_ws(stmt, m)
+    fname, i = _js_parse_ident(stmt, i)
+    i = _js_expect(stmt, i, "(")
+    i = _js_expect(stmt, i, ")")  # no params
+    i = _js_expect(stmt, i, "{")
+    bindings = {}
+    i, innerexpr, depth = _js_f97x_parse_closure_body(stmt, i,
+                                                      bindings, 1)
+    if len(bindings) > 64:
+        # SOFT-3 (standards review): bound the per-binding re.sub
+        # work in _js_f973_stmt_decode -- beyond this the production
+        # fails closed rather than doing O(n*m) substitution work.
+        raise _JSExprFail("F973 too many bindings")
+    i = _js_skip_ws(stmt, i)
+    if i < len(stmt) and stmt[i] == ";":
+        i += 1
+    if _js_skip_ws(stmt, i) != len(stmt):
+        raise _JSExprFail("F973 trailing junk after function")
+    if innerexpr is None:
+        raise _JSExprFail("F973 no innermost return")
+    return fname, bindings, depth, innerexpr
+
+
+def _js_f97x_parse_result_call(stmt, fname, depth, req_name=None):
+    """Parse `var|let|const R=f()...();` with `depth` call groups (F973).
+
+    When *req_name* is given the declared name must equal it. Never evals.
+    """
+    name, j = _js_f97x_parse_var_decl(stmt, 0)
+    if req_name is not None and name != req_name:
+        raise _JSExprFail("F973 result name mismatch")
+    j = _js_skip_ws(stmt, j)
+    callee, j = _js_parse_ident(stmt, j)
+    if callee != fname:
+        raise _JSExprFail("F973 result calls another function")
+    for _ in range(depth):
+        j = _js_skip_ws(stmt, j)
+        if j + 1 >= len(stmt) or stmt[j] != "(" or stmt[j + 1] != ")":
+            raise _JSExprFail("F973 call arity mismatch")
+        j += 2
+    _js_f97x_expect_semi(stmt, j)
+    return name
+
+
+def _js_f973_stmt_decode(text):
+    """Decode F973 closure-captured fragment reads (whole-text hook).
+
+    `function f(){ var q='lit'; ... return function(){ ... return
+    EXPR; }; }` (1-3 nesting levels) then `var|let|const
+    RESULT=f()...();` with one `()` per function level. The function
+    declaration may sit anywhere ahead of its single later RESULT
+    call (leading junk tolerated when it does not mention the bound
+    names). Every bound name is single-assignment, never shadowed;
+    the innermost expression references only bound names. Returns
+    the assembled string, or None.
+
+    Node-exact (v24.20.0): textual substitution of a
+    never-reassigned string binding into the closure body yields the
+    identical value the engine computes. Never evals.
+    """
+    if not re.search(r"function[ \t\n\r]+[A-Za-z_$][A-Za-z0-9_$]*"
+                     r"[ \t\n\r]*\(", text):
+        return None
+    try:
+        stmts = _js_f949_split_topstmts(text)
+        if stmts is None or len(stmts) < 2:
+            return None
+        fdecls = []
+        for i in range(len(stmts) - 1):
+            try:
+                fdecls.append((i,) + _js_f97x_parse_closure(stmts[i]))
+            except _JSExprFail:
+                continue
+        if len(fdecls) != 1:
+            return None
+        fi, fname, bindings, depth, innerexpr = fdecls[0]
+        rcalls = []
+        for i in range(fi + 1, len(stmts)):
+            try:
+                _js_f97x_parse_result_call(stmts[i], fname, depth,
+                                           req_name="RESULT")
+                rcalls.append(i)
+            except _JSExprFail:
+                continue
+        if len(rcalls) != 1:
+            return None
+        ri = rcalls[0]
+        names = set(bindings) | {fname, "RESULT"}
+        for i, s in enumerate(stmts):
+            if i in (fi, ri):
+                continue
+            if _js_f97x_stmt_mentions(_js_f97x_strip_strings(s), names):
+                return None
+        stripped = _js_f97x_strip_strings(text)
+        if (_js_f97x_decl_count(stripped, fname) != 1
+                or _js_f97x_assign_count(stripped, fname) != 0):
+            return None
+        for bname in bindings:
+            if (_js_f97x_assign_count(stripped, bname) != 1
+                    or _js_f97x_decl_count(stripped, bname) != 1):
+                return None
+        estripped = _js_f97x_strip_strings(innerexpr)
+        if "." in estripped:
+            return None
+        for m in re.finditer(r"[A-Za-z_$][A-Za-z0-9_$]*", estripped):
+            if m.group(0) not in bindings:
+                return None
+        sub = innerexpr
+        for bname, bval in bindings.items():
+            # HARD-1 (standards review): the quoted literal must go
+            # through a replacement lambda -- passed as a re.sub
+            # replacement *string*, its JS backslash escapes would be
+            # re-interpreted by the regex engine (mis-decode, and
+            # non-ASCII bindings raised re.error out of find_credential).
+            quoted = _js_f97x_quote(bval)
+            sub = re.sub(r"(?<![_$A-Za-z0-9])" + re.escape(bname)
+                         + r"(?![_$A-Za-z0-9])",
+                         lambda _m, q=quoted: q, sub)
+        return _js_f97x_parse_additive(sub, _js_f97x_lit_term)
+    except _JSExprFail:
+        return None
+
+
+def _js_f97x_parse_symbol_decl(stmt):
+    """Parse `var|let|const k=Symbol.for('n')|Symbol('n');` (F974).
+
+    Returns (varname, symid, next). symid is ("for", name) for the
+    global registry form and ("uniq", varname) for the fresh-symbol
+    form. Never evals.
+    """
+    vname, j = _js_f97x_parse_var_decl(stmt, 0)
+    j = _js_skip_ws(stmt, j)
+    m = _js_match_kw(stmt, j, "Symbol")
+    if m is None:
+        raise _JSExprFail("not a Symbol binding")
+    j = _js_skip_ws(stmt, m)
+    is_for = False
+    if j < len(stmt) and stmt[j] == ".":
+        j = _js_skip_ws(stmt, j + 1)
+        meth, j = _js_parse_ident(stmt, j)
+        if meth != "for":
+            raise _JSExprFail("not Symbol.for")
+        is_for = True
+        j = _js_skip_ws(stmt, j)
+    j = _js_expect(stmt, j, "(")
+    j = _js_skip_ws(stmt, j)
+    if j >= len(stmt) or stmt[j] not in "'\"":
+        raise _JSExprFail("Symbol non-literal arg")
+    sname, j = _js_parse_string(stmt, j)
+    j = _js_expect(stmt, j, ")")
+    _js_f97x_expect_semi(stmt, j)
+    return vname, (("for", sname) if is_for else ("uniq", vname)), j
+
+
+def _js_f97x_parse_sym_assign(stmt):
+    """Parse `o[k]='frag';` at statement level (F974).
+
+    Returns (objname, keyname, value, next). Never evals.
+    """
+    i = _js_skip_ws(stmt, 0)
+    oname, i = _js_parse_ident(stmt, i)
+    i = _js_skip_ws(stmt, i)
+    if i >= len(stmt) or stmt[i] != "[":
+        raise _JSExprFail("not a computed-key assignment")
+    i = _js_skip_ws(stmt, i + 1)
+    kname, i = _js_parse_ident(stmt, i)
+    i = _js_expect(stmt, i, "]")
+    i = _js_skip_ws(stmt, i)
+    if i >= len(stmt) or stmt[i] != "=":
+        raise _JSExprFail("not an assignment")
+    if i + 1 < len(stmt) and stmt[i + 1] == "=":
+        raise _JSExprFail("comparison, not assignment")
+    i = _js_skip_ws(stmt, i + 1)
+    if i >= len(stmt) or stmt[i] not in "'\"":
+        raise _JSExprFail("symbol-key value not a string")
+    val, i = _js_parse_string(stmt, i)
+    _js_f97x_expect_semi(stmt, i)
+    return oname, kname, val, i
+
+
+def _js_f97x_subst_sym_reads(src, oname, symvars, symprops):
+    """Substitute `o[k]` symbol-keyed reads in *src* (F974).
+
+    *k* must be a bound symbol var with an assigned fragment; any
+    other computed-key shape fails closed. Bounded substitutions.
+    Never evals.
+    """
+    out = []
+    i = 0
+    n = len(src)
+    count = 0
+    while i < n:
+        c = src[i]
+        if c in "'\"":
+            j = _js_skip_quoted(src, i)
+            out.append(src[i:j])
+            i = j
+            continue
+        if c == "`":
+            raise _JSExprFail("template in symbol-read scan")
+        if (c in _JS_IDENT_START and src.startswith(oname, i)
+                and (i + len(oname) >= n
+                     or src[i + len(oname)] not in _JS_IDENT_CONT)
+                and (i == 0 or src[i - 1] not in _JS_IDENT_CONT)):
+            if i > 0 and src[i - 1] == ".":
+                raise _JSExprFail("property-positioned object")
+            j = _js_skip_ws(src, i + len(oname))
+            if j < n and src[j] == "[":
+                k = _js_skip_ws(src, j + 1)
+                kname, k2 = _js_parse_ident(src, k)
+                if kname not in symvars:
+                    raise _JSExprFail("F974 non-symbol computed key")
+                k2 = _js_skip_ws(src, k2)
+                if k2 >= n or src[k2] != "]":
+                    raise _JSExprFail("F974 bad symbol read")
+                key = (oname, symvars[kname])
+                if key not in symprops:
+                    raise _JSExprFail("F974 unbound symbol property")
+                out.append(_js_f97x_quote(symprops[key]))
+                i = k2 + 1
+                count += 1
+                if count > _F97X_MAX_SUBST:
+                    raise _JSExprFail("too many symbol substitutions")
+                continue
+            raise _JSExprFail("F974 bare object ident")
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _js_f97x_subst_this_props(src, rprops):
+    """Substitute `this.prop` reads in *src* from *rprops* (F974).
+
+    Unknown props fail closed. Bounded substitutions (HARD-2,
+    standards review: the cap must apply here as well as in the
+    sibling symbol-read substitution). Never evals.
+    """
+    out = []
+    i = 0
+    n = len(src)
+    count = 0
+    while i < n:
+        c = src[i]
+        if c in "'\"":
+            j = _js_skip_quoted(src, i)
+            out.append(src[i:j])
+            i = j
+            continue
+        if c == "`":
+            raise _JSExprFail("template in this-prop scan")
+        if (src.startswith("this", i) and c == "t"
+                and (i + 4 >= n or src[i + 4] not in _JS_IDENT_CONT)
+                and (i == 0 or src[i - 1] not in _JS_IDENT_CONT)):
+            j = _js_skip_ws(src, i + 4)
+            if j < n and src[j] == ".":
+                j = _js_skip_ws(src, j + 1)
+                pname, j = _js_parse_ident(src, j)
+                if pname not in rprops:
+                    raise _JSExprFail("F974 unknown this-prop")
+                out.append(_js_f97x_quote(rprops[pname]))
+                i = j
+                count += 1
+                if count > _F97X_MAX_SUBST:
+                    raise _JSExprFail("too many this-prop substitutions")
+                continue
+            raise _JSExprFail("F974 bare this")
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _js_f974_lookup_member(objval, sname):
+    """Read member *sname* from a parsed (props, getter-values) object (F974)."""
+    props, gvals = objval
+    if sname in gvals:
+        return gvals[sname]
+    if sname in props:
+        return props[sname]
+    raise _JSExprFail("F974 unknown member")
+
+
+def _js_f974_eval_getter(gexpr, oname, symvars, symprops, rprops):
+    """Evaluate a getter return-expression to its string value (F974).
+
+    Symbol-keyed reads and `this.prop` reads are substituted; the
+    remainder must be a pure string additive. Never evals.
+    """
+    src = _js_f97x_subst_sym_reads(gexpr, oname, symvars, symprops)
+    src = _js_f97x_subst_this_props(src, rprops)
+    sstripped = _js_f97x_strip_strings(src)
+    for m in re.finditer(r"[A-Za-z_$][A-Za-z0-9_$]*", sstripped):
+        raise _JSExprFail("F974 getter references unknown ident")
+    return _js_f97x_parse_additive(src, _js_f97x_lit_term)
+
+
+def _js_f974_term(operand, oname, symvars, symprops, robjs):
+    """Additive term resolver for F974: `o[k]`, `r.s`, `r['s']`."""
+    j = _js_skip_ws(operand, 0)
+    name, j = _js_parse_ident(operand, j)
+    j = _js_skip_ws(operand, j)
+    if j < len(operand) and operand[j] == "[":
+        j = _js_skip_ws(operand, j + 1)
+        if name == oname:
+            kname, j = _js_parse_ident(operand, j)
+            if kname not in symvars:
+                raise _JSExprFail("F974 non-symbol computed key")
+            j = _js_expect(operand, j, "]")
+            if _js_skip_ws(operand, j) != len(operand):
+                raise _JSExprFail("F974 trailing junk in sym read")
+            key = (oname, symvars[kname])
+            if key not in symprops:
+                raise _JSExprFail("F974 unbound symbol property")
+            return symprops[key]
+        if name in robjs:
+            if j >= len(operand) or operand[j] not in "'\"":
+                raise _JSExprFail("F974 non-literal member key")
+            sname, j = _js_parse_string(operand, j)
+            j = _js_expect(operand, j, "]")
+            if _js_skip_ws(operand, j) != len(operand):
+                raise _JSExprFail("F974 trailing junk in member read")
+            return _js_f974_lookup_member(robjs[name], sname)
+        raise _JSExprFail("F974 member read of unknown object")
+    if j < len(operand) and operand[j] == ".":
+        j = _js_skip_ws(operand, j + 1)
+        sname, j = _js_parse_ident(operand, j)
+        if _js_skip_ws(operand, j) != len(operand):
+            raise _JSExprFail("F974 trailing junk in member read")
+        if name not in robjs:
+            raise _JSExprFail("F974 member read of unknown object")
+        return _js_f974_lookup_member(robjs[name], sname)
+    raise _JSExprFail("F974 bad term")
+
+
+def _js_f974_stmt_decode(text):
+    """Decode F974 symbol-keyed member reads (whole-text hook).
+
+    `var|let|const k=Symbol.for('n')|Symbol('n');` ...
+    `var|let|const o={}|{<strprops>};`
+    `o[k]='frag';` ...
+    [`var|let|const r={<strprops>, get s(){ return EXPR; }, ...};`]
+    `var|let|const RESULT=<ADD>;`
+    where <ADD> operands are `o[k]`, `r.s` / `r['s']`, or string
+    literals. Statements are classified by shape and matched in
+    program order (each assignment and the receiver declaration
+    precede the RESULT read); junk statements are tolerated when
+    they do not mention the bound names. Exactly one object
+    declaration and one RESULT are required. Returns the assembled
+    string, or None.
+
+    Node-exact (v24.20.0): Symbol.for('n') identity is ("for", n);
+    Symbol('n') is unique per binding; `o[k]` reads see the assigned
+    fragment; a getter invocation evaluates its body with `this`
+    bound to the receiver. Reassignment, delete, defineProperty,
+    duplicate symbol-key assignment, and any non-modeled read fail
+    closed. Never evals.
+    """
+    if "Symbol" not in text:
+        return None
+    try:
+        stmts = _js_f949_split_topstmts(text)
+        if stmts is None or len(stmts) < 3:
+            return None
+        symdecls = []  # (idx, vname, symid)
+        odecls = []  # (idx, oname)
+        assigns = []  # (idx, ao, ak, aval)
+        rdecls = []  # (idx, rname, rprops, rgetters)
+        results = []  # (idx, rexpr)
+        junk = []
+        for i, s in enumerate(stmts):
+            try:
+                vname, symid, _j = _js_f97x_parse_symbol_decl(s)
+                if any(v == vname for _, v, _ in symdecls):
+                    raise _JSExprFail("duplicate symbol var")
+                symdecls.append((i, vname, symid))
+                continue
+            except _JSExprFail:
+                pass
+            try:
+                oname, j = _js_f97x_parse_var_decl(s, 0)
+                _oprops, ogetters, j = _js_f97x_parse_objlit(s, j)
+                if ogetters:
+                    raise _JSExprFail("getters on o")
+                _js_f97x_expect_semi(s, j)
+                odecls.append((i, oname))
+                continue
+            except _JSExprFail:
+                pass
+            try:
+                ao, ak, aval, _j = _js_f97x_parse_sym_assign(s)
+                assigns.append((i, ao, ak, aval))
+                continue
+            except _JSExprFail:
+                pass
+            try:
+                rname, j = _js_f97x_parse_var_decl(s, 0)
+                rprops, rgetters, j = _js_f97x_parse_objlit(s, j)
+                _js_f97x_expect_semi(s, j)
+                if not rgetters and not rprops:
+                    raise _JSExprFail("empty receiver")
+                rdecls.append((i, rname, rprops, rgetters))
+                continue
+            except _JSExprFail:
+                pass
+            try:
+                _rname, rexpr = _js_f97x_parse_result_expr(
+                    s, req_name="RESULT")
+                results.append((i, rexpr))
+                continue
+            except _JSExprFail:
+                pass
+            junk.append(i)
+        if not symdecls or len(odecls) != 1 or len(results) != 1:
+            return None
+        if len(rdecls) > 1:
+            return None
+        oidx, oname = odecls[0]
+        ridx, rexpr = results[0]
+        symvars = {v: sid for _, v, sid in symdecls}
+        # order: every sym decl and the o decl precede every
+        # assignment; every assignment and the r decl precede RESULT
+        symidx = {v: i for i, v, _ in symdecls}
+        for ai, ao, ak, _av in assigns:
+            if ao != oname or ak not in symvars:
+                return None
+            if not (symidx[ak] < ai and oidx < ai < ridx):
+                return None
+        if len({(ao, symvars[ak]) for _, ao, ak, _ in assigns}) != len(assigns):
+            return None
+        rname = None
+        rprops = {}
+        gvals = {}
+        if rdecls:
+            ri, rname, rprops, rgetters = rdecls[0]
+            if not ri < ridx:
+                return None
+        symprops = {(ao, symvars[ak]): av for _, ao, ak, av in assigns}
+        if rdecls:
+            for gname, gexpr in rdecls[0][3].items():
+                gvals[gname] = _js_f974_eval_getter(
+                    gexpr, oname, symvars, symprops, rprops)
+        robjs = {rname: (rprops, gvals)} if rname else {}
+        # junk must not mention the bound names
+        names = {oname, "RESULT"} | set(symvars) | set(robjs)
+        for i in junk:
+            if _js_f97x_stmt_mentions(_js_f97x_strip_strings(stmts[i]),
+                                      names):
+                return None
+        stripped = _js_f97x_strip_strings(text)
+        for nm in [oname] + list(symvars) + list(robjs):
+            if (_js_f97x_assign_count(stripped, nm) != 1
+                    or _js_f97x_decl_count(stripped, nm) != 1):
+                return None
+        if re.search(r"(?<![_$A-Za-z0-9])delete(?![_$A-Za-z0-9])",
+                     stripped):
+            return None
+        if re.search(r"(?<![_$A-Za-z0-9])(defineProperty|assign|"
+                     r"setPrototypeOf)(?![_$A-Za-z0-9])", stripped):
+            return None
+
+        def term(operand, _o=oname, _sv=symvars, _sp=symprops,
+                 _ro=robjs):
+            return _js_f974_term(operand, _o, _sv, _sp, _ro)
+
+        return _js_f97x_parse_additive(rexpr, term)
+    except _JSExprFail:
+        return None
+
+
 def _js_f586_shift_ok(text, s):
     """Whether the `(` just left of a `new`-anchor match may open a
     grouping paren around a parenthesized new-expression receiver
@@ -108732,13 +109927,16 @@ def _decode_layer(text):
                 _add(decoded)
                 if len(variants) >= _MAX_CANDIDATES:
                     return variants
-    # F961/F962/F964: narrow whole-text statement-sequence decoders.
-    # Each returns the decoded string or None; all filed shapes BREAK
-    # on the open tree, so no earlier production decoded them and the
-    # pre-existing variant order (F441) is preserved. Ordered after
-    # the F501 rewrite for the same reason.
+    # F961/F962/F964/F971/F972/F973/F974: narrow whole-text
+    # statement-sequence decoders. Each returns the decoded string or
+    # None; all filed shapes BREAK on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Ordered after the F501 rewrite for the same
+    # reason.
     for _stmtdec in (_js_f961_stmt_decode, _js_f962_stmt_decode,
-                     _js_f964_stmt_decode):
+                     _js_f964_stmt_decode, _js_f971_stmt_decode,
+                     _js_f972_stmt_decode, _js_f973_stmt_decode,
+                     _js_f974_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
