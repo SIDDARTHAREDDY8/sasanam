@@ -381,6 +381,20 @@ def test_p3_f752_wrong_accum_target():
 
 
 @_t
+def test_p3_f752_map_iterator():
+    """F752: Map [Symbol.iterator]() fails closed -- the engine yields
+    entry pairs, not keys (spec-review catch)."""
+    ok = _misses(
+        "(function(){var it=new Map([['k','v']])[Symbol.iterator]();"
+        "return it.next().value;})()")
+    ok2 = _misses(
+        "(function(){var m=new Map([['k','v']]);"
+        "var it=m[Symbol.iterator]();return it.next().value;})()")
+    ok = ok and ok2
+    return ("HELD" if ok else "BREAK", "f752-mapiter=%s" % ok)
+
+
+@_t
 def test_p3_f753_fewer_args():
     """F753: fewer args than params fails closed (engine undefined)."""
     ok = _misses(

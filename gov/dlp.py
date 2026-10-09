@@ -26119,12 +26119,14 @@ def _js_parse_f752_iter_source(text, j, depth, state, bound):
     string iteration values, node-exact (v24.20.0). Sources:
     `[LITS][Symbol.iterator]()` (array), `'LIT'[Symbol.iterator]()`
     (code-point iteration), `new Set([LITS])` member, `new
-    Map([[k,v],...])` `.values()`/`.keys()` (string keys only --
-    numeric keys fail closed, the engine yields numbers), and the
-    var-bound twins `B.values()` / `B.keys()` / `B[Symbol.iterator]()`
-    / `B[Symbol.iterator]()` where B is bound to a new Set / new
-    Map / array literal. Array `.keys()` fails closed (index keys
-    are numbers in the engine). Never evals.
+    Map([[k,v],...])` `.values()`/`.keys()`: `.values()` decodes
+    node-exactly (values are strings); `.keys()` on numeric keys
+    fails closed (the engine yields numbers); a Map
+    `[Symbol.iterator]()` fails closed (the engine yields entry
+    pairs, not keys). Array `.keys()` fails closed (index keys are
+    numbers in the engine), and the var-bound twins `B.values()` /
+    `B.keys()` / `B[Symbol.iterator]()` where B is bound to a new
+    Set / new Map / array literal (same per-kind member rules). Never evals.
     """
     n = len(text)
     j = _js_skip_ws(text, j)
@@ -26158,6 +26160,11 @@ def _js_parse_f752_iter_source(text, j, depth, state, bound):
             member, j = _js_parse_f752_iter_member(text, j)
             if member == "values":
                 return [v for _, _, v in pairs], j
+            if member == "iterator":
+                # Map.prototype[Symbol.iterator] yields ENTRY PAIRS
+                # (node v24.20.0), not keys -- fail closed rather
+                # than mis-decode.
+                raise _JSExprFail("F752 map iterator yields pairs")
             keys = []
             for (kkind, kkey), _k, _v in pairs:
                 if kkind != "s":
@@ -26173,7 +26180,14 @@ def _js_parse_f752_iter_source(text, j, depth, state, bound):
         member, k = _js_parse_f752_iter_member(text, k)
         if kind == "map":
             keys, vals = bitems
-            return (vals if member == "values" else keys), k
+            if member == "values":
+                return vals, k
+            if member == "keys":
+                return keys, k
+            # Map.prototype[Symbol.iterator] yields ENTRY PAIRS
+            # (node v24.20.0), not keys -- fail closed rather than
+            # mis-decode.
+            raise _JSExprFail("F752 map iterator yields pairs")
         if member == "keys" and kind == "array":
             raise _JSExprFail("F752 array keys are numeric")
         # Set .keys() is an alias of .values() (v24.20.0).
