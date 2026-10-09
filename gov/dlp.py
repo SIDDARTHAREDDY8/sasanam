@@ -4379,6 +4379,416 @@ def _js_parse_f735f736_nested_fn_iife(text, i, depth, state):
         return None
 
 
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f746_new_sub_head(text, i, subname, depth, state):
+    """Parse `new SUBNAME(...)` at text[i] (F746).
+
+    SUBNAME is a class name previously bound by a `class SUBNAME
+    extends Map{}` declaration. The argument is empty (the empty
+    map) or the F563 literal-entries array `[[k,v],...]`
+    (string/numeric literal keys with SameValueZero identity,
+    plain string-literal values, later-wins on duplicates --
+    node v24.20.0). Anything else fails closed. Returns
+    (entries_dict, next_index). Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, i, "new")
+    if j is None:
+        raise _JSExprFail("F746 not a new-expression")
+    j = _js_skip_ws(text, j)
+    name, j = _js_parse_ident(text, j)
+    if name != subname:
+        raise _JSExprFail("F746 not the subclass constructor")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    entries = {}
+    if j < n and text[j] == ")":
+        return entries, j + 1
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F746 Map arg not an array literal")
+    outer, j = _js_parse_array(text, j, depth, state)
+    for p in outer.elements:
+        if not isinstance(p, _JSArr) or len(p.elements) != 2:
+            raise _JSExprFail("F746 Map entry not a [k,v] pair")
+        k, v = p.elements
+        if isinstance(k, str) and not isinstance(k, _JSNumStr):
+            kid = ("s", k)
+        elif isinstance(k, _JSNumStr):
+            kid = ("n", str(k))
+        else:
+            raise _JSExprFail("F746 Map key not a literal")
+        if not isinstance(v, str) or isinstance(v, _JSNumStr):
+            raise _JSExprFail("F746 Map value not a string")
+        entries[kid] = v  # later wins, node-exact
+        state["parts"] += 1  # F452: charge per entry
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    return entries, j
+
+
+def _js_parse_f746_class_decl(stmts, j):
+    """Parse `class NAME extends Map{}` at stmts[j] (F746).
+
+    The subclass declaration: exactly `class`, an identifier, the
+    `extends` keyword, the `Map` identifier, and an EMPTY class
+    body (whitespace only -- methods, constructors, fields, or
+    computed names fail closed; the engine would give them
+    semantics the static model cannot see). Returns (name,
+    next_index). Raises _JSExprFail. Never evals.
+    """
+    n = len(stmts)
+    k = _js_match_kw(stmts, j, "class")
+    if k is None:
+        raise _JSExprFail("F746 not a class declaration")
+    k = _js_skip_ws(stmts, k)
+    name, k = _js_parse_ident(stmts, k)
+    if name == "arguments":
+        raise _JSExprFail("F746 class named arguments")
+    k = _js_skip_ws(stmts, k)
+    e = _js_match_kw(stmts, k, "extends")
+    if e is None:
+        raise _JSExprFail("F746 class without extends")
+    e = _js_skip_ws(stmts, e)
+    base, e = _js_parse_ident(stmts, e)
+    if base != "Map":
+        # Only Map subclasses are modeled (a Set/WeakMap/Array
+        # subclass has different iteration semantics).
+        raise _JSExprFail("F746 superclass not Map")
+    e = _js_skip_ws(stmts, e)
+    if e >= n or stmts[e] != "{":
+        raise _JSExprFail("F746 class without body")
+    e = _js_skip_ws(stmts, e + 1)
+    if e >= n or stmts[e] != "}":
+        raise _JSExprFail("F746 non-empty class body")
+    return name, e + 1
+
+
+def _js_parse_f746_values_spread_join(stmts, j, mname, entries,
+                                     depth, state):
+    """Parse `[...m.values()].join('SEP')` at stmts[j] (F746).
+
+    The values-spread read: `[...m.values()]` desugars to the
+    entry values in insertion order (node v24.20.0); `.join(SEP)`
+    joins with the string-literal separator (node-exact
+    Array.prototype.join). A missing separator (engine joins
+    with ",") fails closed -- outside the modeled grammar.
+    Returns (str, next_index). Raises _JSExprFail. Never evals.
+    """
+    n = len(stmts)
+    j = _js_expect(stmts, j, "[")
+    j = _js_skip_ws(stmts, j)
+    for _ in range(3):
+        j = _js_expect(stmts, j, ".")
+    j = _js_skip_ws(stmts, j)
+    rname, j = _js_parse_ident(stmts, j)
+    if rname != mname:
+        raise _JSExprFail("F746 spread of another ident")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ".")
+    mn, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if mn != "values":
+        raise _JSExprFail("F746 spread not values()")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ")")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "]")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ".")
+    jn, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if jn != "join":
+        raise _JSExprFail("F746 spread not joined")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    j = _js_skip_ws(stmts, j)
+    if j >= n or stmts[j] not in "'\"":
+        raise _JSExprFail("F746 join separator not a literal")
+    sep, j = _js_parse_string(stmts, j)
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ")")
+    state["ops"] += 1  # the iteration read is obfuscation-shaped
+    return sep.join(entries.values()), j
+
+
+def _js_parse_f746_forof_accum(stmts, j, mname):
+    """Parse `for(var|let v of m.values())` head at stmts[j] (F746).
+
+    Returns (loop_var_name, next_index, braced): next_index is
+    just past the `)` (or past `{` when the body is braced --
+    the caller parses the `s+=v;` body and the closing `}`).
+    Raises _JSExprFail. Never evals.
+    """
+    n = len(stmts)
+    j = _js_skip_ws(stmts, j)
+    k = _js_match_kw(stmts, j, "for")
+    if k is None:
+        raise _JSExprFail("F746 not a for-of")
+    j = _js_skip_ws(stmts, k)
+    j = _js_expect(stmts, j, "(")
+    j = _js_skip_ws(stmts, j)
+    dkw, j = _js_match_decl_kw(stmts, j)
+    if dkw is None or dkw == "const":
+        # `const` is engine-legal for-of, but the modeled body
+        # never reassigns the loop var; keep the decl family
+        # tight (var/let) -- a const loop var is a documented
+        # residual.
+        raise _JSExprFail("F746 for-of decl not var/let")
+    j = _js_skip_ws(stmts, j)
+    vname, j = _js_parse_ident(stmts, j)
+    if vname == "arguments":
+        raise _JSExprFail("F746 loop var named arguments")
+    j = _js_skip_ws(stmts, j)
+    o = _js_match_kw(stmts, j, "of")
+    if o is None:
+        raise _JSExprFail("F746 for-of without of")
+    j = _js_skip_ws(stmts, o)
+    rname, j = _js_parse_ident(stmts, j)
+    if rname != mname:
+        raise _JSExprFail("F746 for-of over another ident")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ".")
+    mn, j = _js_parse_ident(stmts, _js_skip_ws(stmts, j))
+    if mn != "values":
+        raise _JSExprFail("F746 for-of not values()")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, "(")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ")")
+    j = _js_skip_ws(stmts, j)
+    j = _js_expect(stmts, j, ")")
+    j = _js_skip_ws(stmts, j)
+    braced = False
+    if j < n and stmts[j] == "{":
+        braced = True
+        j = _js_skip_ws(stmts, j + 1)
+    return vname, j, braced
+
+
+def _js_parse_f746_subclass_map_iife(text, i, depth, state):
+    """Parse `(function(){class M extends Map{}DECL;* return ADD;})()` (F746).
+
+    F746 (LOW): the decoder models `new Map()` / `new Set()`
+    literal construction (F494/F669, CLOSED) but not subclassed
+    builtins -- `class M extends Map{}` with `new M()` /
+    `new M([[k,v],...])` spreads node-exactly while the decoder
+    produces zero variants.
+
+    Node-exact desugar (v24.20.0): the class declaration binds
+    M as a Map subclass (empty body only); `var|let|const m =
+    new M(ARGS?)` constructs the entries map with the F563
+    discipline (string/numeric literal keys, SameValueZero
+    identity, later-wins); `m.set('K','V');` statements mutate it
+    engine-exactly (the F708 discipline); the optional
+    accumulator `var|let s='LIT'; for(var|let v of
+    m.values())s+=v;` concatenates values in insertion order;
+    the return is `[...m.values()].join('SEP')` or the bound
+    accumulator, with an additive string-literal tail.
+
+    Disjointness: tried after F712. Every earlier route requires
+    its own binding family or statement head and fails closed on
+    a leading `class` declaration (red-first verified: 2 BREAK
+    on the open tree), so no previously-decoded input changes
+    behavior.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-empty class body, a non-Map superclass, `new M` with
+    non-literal entries, `.set` with non-string keys/values or on
+    another receiver, `.values()` on another ident, a missing
+    `.join` separator, a non-`values()` iteration source, loop-var
+    shadowing, accumulator rebinding, extra statements, call
+    args on the IIFE. Set subclasses are a documented residual.
+    Returns (value, next_index), or None when the head does not
+    match or a guard fails. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        # `class M extends Map{}`
+        subname, sj = _js_parse_f746_class_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        # `var|let|const m = new M(ARGS?);`
+        dkw, q = _js_match_decl_kw(stmts, sj)
+        if dkw is None:
+            raise _JSExprFail("F746 map decl not var/let/const")
+        q = _js_skip_ws(stmts, q)
+        mname, q = _js_parse_ident(stmts, q)
+        if mname in (subname, "arguments"):
+            raise _JSExprFail("F746 map shadows subclass")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "=")
+        q = _js_skip_ws(stmts, q)
+        entries, q = _js_parse_f746_new_sub_head(
+            stmts, q, subname, depth, state)
+        entries = dict(entries)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        state["parts"] += 1  # the construction is shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = q
+        acc = None
+        # `(m.set('K','V');)*`
+        while True:
+            q = _js_skip_ws(stmts, sj)
+            if _js_match_kw(stmts, q, "return") is not None:
+                break
+            # Peek: `m.set(` head, else the accumulator/for-of or
+            # the return.
+            try:
+                sname, q2 = _js_parse_ident(stmts, q)
+            except _JSExprFail:
+                break
+            q2 = _js_skip_ws(stmts, q2)
+            if not (sname == mname and q2 < n
+                    and stmts[q2] == "."):
+                break
+            _mn, q2 = _js_parse_ident(
+                stmts, _js_skip_ws(stmts, q2 + 1))
+            if _mn != "set":
+                raise _JSExprFail("F746 map member not set")
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, "(")
+            q2 = _js_skip_ws(stmts, q2)
+            if q2 >= n or stmts[q2] not in "'\"":
+                raise _JSExprFail("F746 set key not a string")
+            skey, q2 = _js_parse_string(stmts, q2)
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, ",")
+            q2 = _js_skip_ws(stmts, q2)
+            if q2 >= n or stmts[q2] not in "'\"":
+                raise _JSExprFail("F746 set value not a string")
+            sval, q2 = _js_parse_string(stmts, q2)
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, ")")
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, ";")
+            entries[("s", skey)] = sval  # later wins, node-exact
+            state["parts"] += 1  # the mutation is shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = q2
+        # Optional `var|let s='LIT'; for(var|let v of
+        # m.values())s+=v;` accumulator.
+        q = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, q, "return")
+        if rk is None:
+            # Try the accumulator decl.
+            dkw2, q2 = _js_match_decl_kw(stmts, q)
+            if dkw2 is None or dkw2 == "const":
+                raise _JSExprFail("F746 bad middle statement")
+            q2 = _js_skip_ws(stmts, q2)
+            aname, q2 = _js_parse_ident(stmts, q2)
+            if aname in (mname, subname, "arguments"):
+                raise _JSExprFail("F746 accumulator shadows")
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, "=")
+            q2 = _js_skip_ws(stmts, q2)
+            if q2 >= n or stmts[q2] not in "'\"":
+                raise _JSExprFail("F746 accumulator not a string")
+            aval, q2 = _js_parse_string(stmts, q2)
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, ";")
+            vname, q2, braced = _js_parse_f746_forof_accum(
+                stmts, q2, mname)
+            if vname in (aname, mname, subname):
+                raise _JSExprFail("F746 loop var shadows")
+            # Body: `s+=v;` / `s=s+v;`, optionally braced.
+            q2 = _js_skip_ws(stmts, q2)
+            bname, q2 = _js_parse_ident(stmts, q2)
+            if bname != aname:
+                raise _JSExprFail("F746 accum body not s+=v")
+            q2 = _js_skip_ws(stmts, q2)
+            if q2 + 1 < n and stmts[q2] == "+" \
+                    and stmts[q2 + 1] == "=":
+                q2 = _js_skip_ws(stmts, q2 + 2)
+            elif q2 < n and stmts[q2] == "=":
+                q2 = _js_skip_ws(stmts, q2 + 1)
+                bname2, q2 = _js_parse_ident(stmts, q2)
+                if bname2 != aname:
+                    raise _JSExprFail("F746 accum body not s=s+v")
+                q2 = _js_skip_ws(stmts, q2)
+                if q2 >= n or stmts[q2] != "+":
+                    raise _JSExprFail("F746 accum body not s=s+v")
+                q2 = _js_skip_ws(stmts, q2 + 1)
+            else:
+                raise _JSExprFail("F746 accum body not s+=v")
+            vname2, q2 = _js_parse_ident(stmts, q2)
+            if vname2 != vname:
+                raise _JSExprFail("F746 accum body wrong var")
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, ";")
+            if braced:
+                q2 = _js_skip_ws(stmts, q2)
+                q2 = _js_expect(stmts, q2, "}")
+            for _v in entries.values():
+                if len(aval) + len(_v) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("F746 accum too long")
+                aval = aval + _v
+                state["parts"] += 1  # F452: charge per iteration
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            state["ops"] += 1  # the for-of is obfuscation-shaped
+            acc = (aname, aval)
+            sj = q2
+        # `return TERM (+ 'LIT')*;`
+        q = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, q, "return")
+        if rk is None:
+            raise _JSExprFail("F746 body not return")
+        q = _js_skip_ws(stmts, rk)
+        if q < n and stmts[q] == "[":
+            val, q = _js_parse_f746_values_spread_join(
+                stmts, q, mname, entries, depth, state)
+        else:
+            tname, q = _js_parse_ident(stmts, q)
+            if acc is None or tname != acc[0]:
+                raise _JSExprFail("F746 return not the accum")
+            val = acc[1]
+            q = _js_skip_ws(stmts, q)
+        while True:
+            t = _js_skip_ws(stmts, q)
+            if t >= n or stmts[t] != "+":
+                break
+            t = _js_skip_ws(stmts, t + 1)
+            if t >= n or stmts[t] not in "'\"":
+                raise _JSExprFail("F746 tail not a literal")
+            _tail, t = _js_parse_string(stmts, t)
+            if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F746 concat too long")
+            val = val + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            q = t
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        if _js_skip_ws(stmts, q) != n:
+            raise _JSExprFail("F746 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f712_map_iter_iife(text, i, depth, state):
     """Parse `(function(){[DECL M=new Map([[...]]);]* return ADD;})()`
     with var-bound Map iteration reads at text[i] (F712).
@@ -49170,6 +49580,600 @@ def _js_parse_f732_gopwrite_iife(text, i, depth, state):
         return None
 
 
+_JS_F747_PROTO_MEMBERS = frozenset((
+    # Named members of Object.prototype: a "missing" key read of
+    # any of these is NOT undefined in the engine (it resolves
+    # through the prototype chain), so a missing-key model that
+    # admitted them would mis-decode. Fail closed on all of them.
+    "toString", "valueOf", "hasOwnProperty", "isPrototypeOf",
+    "propertyIsEnumerable", "toLocaleString", "constructor",
+    "__proto__", "__defineGetter__", "__defineSetter__",
+    "__lookupGetter__", "__lookupSetter__",
+))
+
+
+def _js_parse_f747_object_literal(text, j, depth, state):
+    """Parse `{K:'LIT',...}` at text[j] (F747).
+
+    Restricted object literal for missing-key nullish tracking:
+    string-literal or ident keys mapping to string-literal
+    values (later-wins, node-exact). `__proto__` and the named
+    Object.prototype members fail closed as keys (the engine sets
+    the prototype / resolves through it, so the tracked keyset
+    would lie). Getters, methods, spread, computed, numeric, or
+    shorthand keys fail closed. Returns (keydict, next_index).
+    Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    keys = {}
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        return keys, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F747 object literal truncated")
+        if text[j] in "'\"":
+            k, j = _js_parse_string(text, j)
+        elif text[j] in _JS_IDENT_START:
+            k, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F747 object key not a literal")
+        if k in _JS_F747_PROTO_MEMBERS:
+            raise _JSExprFail("F747 proto-ish object key")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F747 object value not a string")
+        v, j = _js_parse_string(text, j)
+        keys[k] = v  # later wins, node-exact
+        state["parts"] += 1  # F452: charge per property
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        j = _js_expect(text, j, "}")
+        return keys, j
+
+
+def _js_f747_member_read(env, name, text, j, missing_ok):
+    """Parse `.k` / `['k']` after a tracked-object ident (F747).
+
+    Returns (value, next_index): the string value for a present
+    key. When *missing_ok* is True a provably-absent key yields
+    None (the engine reads undefined); otherwise a missing key
+    raises (the engine yields undefined -- never decoded).
+    Proto-member keys always raise. Raises _JSExprFail. Never
+    evals.
+    """
+    n = len(text)
+    keydict = env[name][1]
+    if j < n and text[j] == ".":
+        q2 = _js_skip_ws(text, j + 1)
+        try:
+            key, q = _js_parse_ident(text, q2)
+        except _JSExprFail:
+            raise _JSExprFail("F747 member key not an ident")
+        q = _js_skip_ws(text, q)
+    elif j < n and text[j] == "[":
+        try:
+            key, q = _js_parse_bracket_member(text, j)
+        except _JSExprFail:
+            raise _JSExprFail("F747 bracket member not a string")
+        q = _js_skip_ws(text, q)
+    else:
+        raise _JSExprFail("F747 not a member read")
+    if key in _JS_F747_PROTO_MEMBERS:
+        raise _JSExprFail("F747 proto-member key read")
+    if key in keydict:
+        return keydict[key], q
+    if missing_ok:
+        return None, q
+    raise _JSExprFail("F747 read of missing key")
+
+
+def _js_parse_f747_nullish_left(text, j, env, depth, state):
+    """Parse an F747 nullish-LEFT at text[j].
+
+    Returns (left_value, next_index): left_value is None when the
+    LEFT is provably nullish (the `??` picks RIGHT), or the plain
+    str LEFT value when provably non-nullish (the `??` picks
+    LEFT). A LEFT is one of:
+    - the F647 nullish forms (`null`, `void <trivial>`,
+      `undefined`) or a read of a ("nullish",) binding;
+    - a missing-key member read `o.k` / `o['k']` on a tracked
+      ("obj", keydict) binding: provably absent keys (not in the
+      keyset and not a named Object.prototype member) read
+      undefined in the engine -- node-exact;
+    - a present-key member read on a tracked object: the
+      string-literal value (non-nullish, picks LEFT);
+    - a read of a ("str", v) binding or a plain string literal
+      (non-nullish, picks LEFT).
+    Anything else (unbound idents, member reads on untracked or
+    non-object bindings, proto-member keys, bare object reads)
+    fails closed. Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    # The F647 nullish keyword forms first (never mis-decode).
+    try:
+        q = _js_parse_f647_nullish_left(text, j, None)
+        return None, q
+    except _JSExprFail:
+        pass
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        v, q = _js_parse_string(text, j)
+        return v, q
+    try:
+        name, q = _js_parse_ident(text, j)
+    except _JSExprFail:
+        raise _JSExprFail("F747 nullish LEFT not modeled")
+    q = _js_skip_ws(text, q)
+    if name not in env:
+        # Unbound idents throw ReferenceError in the engine.
+        raise _JSExprFail("F747 nullish LEFT unbound")
+    kind = env[name][0]
+    if kind == "nullish":
+        return None, q
+    if kind == "str":
+        # A bound string is never nullish -- `??` picks LEFT.
+        return env[name][1], q
+    if kind != "obj":
+        raise _JSExprFail("F747 nullish LEFT not modeled")
+    # Member read on a tracked object literal: a missing key is
+    # undefined (picks RIGHT); a present key picks LEFT.
+    lval, q = _js_f747_member_read(env, name, text, q, True)
+    return lval, q
+
+
+def _js_f747_expect_nullish_op(text, j):
+    """Expect `??` (not `?.`, not ternary `?`) at text[j] (F747).
+
+    Deliberately LOOSER than the F490 peek discipline copied by
+    F647: F647 rejects `??` followed by an ident-continue char,
+    but `LEFT ?? ident` is valid JS (`(o.q ?? p)`), and F747's
+    FRAG legitimately starts with a bound string ident. The
+    `??`-followed-by-`?` rejection is kept (`???` / `??.` are
+    never the nullish operator -- `?.` and ternary are excluded
+    by the two-char check plus this). After the operator the
+    FRAG parser only accepts bound string idents, member reads,
+    groups, and string literals, so no mis-tokenization is
+    possible: the LEFT parsers never consume a trailing `?`.
+    Returns the index past the operator. Raises _JSExprFail.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if not (j + 1 < n and text[j] == "?" and text[j + 1] == "?"):
+        raise _JSExprFail("F747 no ??")
+    if j + 2 < n and text[j + 2] == "?":
+        raise _JSExprFail("F747 ?? followed by ?")
+    return j + 2
+
+
+def _js_parse_f747_group(text, j, env, depth, state, saw):
+    """Parse one `(LEFT ?? FRAG)` group at text[j] (F747).
+
+    LEFT is the extended nullish-LEFT (F647 forms, nullish /
+    string bindings, missing-key / present-key reads, string
+    literals); FRAG is the plain additive grammar (the additive
+    grammar never parses `&&` / `||` / `??`, which are a
+    SyntaxError unparenthesized in the engine). The value is FRAG
+    when LEFT is nullish, else the LEFT string -- node-exact
+    (v24.20.0). Appends to *saw* on success. Returns (value,
+    next_index). Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "(")
+    lval, j = _js_parse_f747_nullish_left(text, j, env, depth,
+                                          state)
+    j = _js_f747_expect_nullish_op(text, j)
+    j = _js_skip_ws(text, j)
+    frag, j = _js_parse_f747_frag(text, j, env, depth, state,
+                                  saw)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    state["parts"] += 1  # F452: the group is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1  # the ?? pick is obfuscation-shaped
+    saw.append(1)
+    return (frag if lval is None else lval), j
+
+
+def _js_parse_f747_term(text, j, env, depth, state, saw):
+    """Parse one F747 fragment term at text[j].
+
+    A term is an F747 `(LEFT ?? FRAG)` group (tried first), a
+    present-key member read on a tracked object, a read of a
+    ("str", v) binding, or a plain string literal. Returns (str,
+    next_index). Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "(":
+        # Only a group starts with `(` here; on group failure the
+        # whole term fails (the additive grammar cannot parse `??`
+        # anyway, so no fallback is lost).
+        return _js_parse_f747_group(text, j, env, depth, state,
+                                    saw)
+    if j < n and text[j] in "'\"":
+        v, q = _js_parse_string(text, j)
+        return v, q
+    name, q = _js_parse_ident(text, j)
+    if name not in env:
+        # Unbound idents throw ReferenceError in the engine.
+        raise _JSExprFail("F747 term unbound")
+    q = _js_skip_ws(text, q)
+    if env[name][0] == "obj" and q < n and text[q] in ".[":
+        # Present-key member read; a missing key reads undefined
+        # in the engine -- never decoded.
+        v, q = _js_f747_member_read(env, name, text, q, False)
+        return v, q
+    if env[name][0] != "str":
+        # Nullish bindings and bare object reads are not
+        # fragments. Fail closed.
+        raise _JSExprFail("F747 term not a string binding")
+    return env[name][1], q
+
+
+def _js_parse_f747_frag(text, j, env, depth, state, saw):
+    """Parse an F747 FRAG: `TERM (+ TERM)*` at text[j].
+
+    FRAG operands resolve bound string idents and present-key
+    member reads (a bound-ident FRAG like `(o.q ?? p)` is
+    engine-legal and node-exact); `&&` / `||` / unparenthesized
+    `??` never parse as terms, matching the engine's
+    SyntaxError. Returns (str, next_index). Raises _JSExprFail.
+    Never evals.
+    """
+    n = len(text)
+    val, j = _js_parse_f747_term(text, j, env, depth, state, saw)
+    while True:
+        t = _js_skip_ws(text, j)
+        if t >= n or text[t] != "+":
+            break
+        rhs, t = _js_parse_f747_term(
+            text, _js_skip_ws(text, t + 1), env, depth, state,
+            saw)
+        if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F747 FRAG too long")
+        val = val + rhs
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = t
+    return val, j
+
+
+def _js_parse_f747_nullish_right_iife(text, i, depth, state):
+    """Parse `(function(){DECL;* STMT;* return ADD;})()` (F747).
+
+    F647 residual (LOW): F647 (OPEN) models the nullish-LEFT
+    RIGHT-pick only for `null` / `void <trivial>` / `undefined`
+    / a declared-but-uninitialized ident, and only in the single
+    group-return form. Two neighbors node-yield the exact
+    credential (v24.20.0) while the decoder produces zero
+    variants: missing-key reads (`o.x` on a tracked literal
+    whose keyset provably excludes the key -- undefined, so `??`
+    picks RIGHT) and the `??=` logical assignment (`x ??= 'f1'`
+    assigns exactly when the current binding is nullish).
+
+    Node-exact desugar (v24.20.0): DECL binds var/let names --
+    `null` / `undefined` / `void <trivial>` / bare (nullish),
+    `'LIT'` (string), or `{K:'LIT',...}` (tracked object literal,
+    F747 restricted grammar). STMT is `var|let NAME = LEFT ??
+    FRAG;` (binds NAME to the pick), `NAME ??= FRAG;` (assigns
+    when the binding is nullish; a bound string is a no-op), or
+    `o.k ??= FRAG;` / `o['k'] ??= FRAG;` (installs a missing key,
+    no-op on a present string key). The return is `TERM (+
+    TERM)*` with at least one `??` group or `??=` statement
+    required (group-free shapes belong to earlier routes, which
+    keep decoding them unchanged).
+
+    Disjointness: tried after F647. F647 requires exactly one
+    uninitialized declaration and fails closed on initialized
+    bindings (`F647 initialized binding`); this route requires
+    at least one initialized binding, `??=` statement, or
+    missing-key group, so no previously-decoded input changes
+    behavior (red-first verified: 2 BREAK each on the open
+    tree).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - `const` bindings, rebinding, the `arguments` name;
+    - member reads of proto-member keys (`toString`, `__proto__`,
+      ...), member reads on untracked objects, bare object reads;
+    - `__proto__` / proto-member keys in the object literal;
+    - non-string FRAG (BigInt RIGHT), non-string tail operands;
+    - `??=` on an unbound ident (engine ReferenceError);
+    - `&&` / `||` / nested `??` inside FRAG (engine SyntaxError
+      unparenthesized); extra statements; call args on the IIFE.
+    Returns (value, next_index), or None when the head does not
+    match or a guard fails. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        env = {}
+        saw_nullish = False
+        # DECL;* -- tracked bindings. A decl is `var|let NAME;`
+        # (nullish), `var|let NAME = INIT;` with INIT a nullish
+        # form / string literal / restricted object literal. A
+        # `var|let NAME =` whose initializer is not one of those
+        # (e.g. `var y = x ?? 'f1';`) is NOT a decl -- it ends
+        # the decl section and is parsed as a statement below.
+        while True:
+            q = _js_skip_ws(stmts, sj)
+            if _js_match_kw(stmts, q, "return") is not None:
+                break
+            if _js_f747_is_augassign_head(stmts, q, env):
+                break
+            dkw, m = _js_match_decl_kw(stmts, q)
+            if dkw is None:
+                break
+            if dkw == "const":
+                raise _JSExprFail("F747 const binding")
+            m = _js_skip_ws(stmts, m)
+            name, m = _js_parse_ident(stmts, m)
+            if name == "arguments":
+                raise _JSExprFail("F747 binding named arguments")
+            if name in env:
+                raise _JSExprFail("F747 rebinding")
+            m = _js_skip_ws(stmts, m)
+            if m < n and stmts[m] == ";":
+                env[name] = ("nullish",)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sj = m + 1
+                continue
+            if m >= n or stmts[m] != "=":
+                raise _JSExprFail("F747 decl without = or ;")
+            im = _js_skip_ws(stmts, m + 1)
+            # INIT-kind peek: nullish form, string literal, or
+            # `{`. Anything else ends the decl section.
+            init_kind = None
+            try:
+                _q2 = _js_parse_f647_nullish_left(stmts, im,
+                                                 None)
+                init_kind = "nullish"
+            except _JSExprFail:
+                pass
+            if init_kind is None and im < n \
+                    and stmts[im] in "'\"":
+                init_kind = "str"
+            if init_kind is None and im < n and stmts[im] == "{":
+                init_kind = "obj"
+            if init_kind is None:
+                break  # a `var NAME = LEFT ?? FRAG;` statement
+            if init_kind == "nullish":
+                _ibind = ("nullish",)
+                m = _q2
+            elif init_kind == "str":
+                v, m = _js_parse_string(stmts, im)
+                _ibind = ("str", v)
+            else:
+                keys, m = _js_parse_f747_object_literal(
+                    stmts, im, depth, state)
+                _ibind = ("obj", keys)
+            mm = _js_skip_ws(stmts, m)
+            if (mm + 1 < n and stmts[mm] == "?"
+                    and stmts[mm + 1] == "?"
+                    and not (mm + 2 < n and stmts[mm + 2]
+                             == "?")):
+                # `var NAME = INIT ?? ...` -- a `var NAME = LEFT
+                # ?? FRAG;` statement, not a plain decl. Rewind
+                # (do not bind) and let the statement loop take
+                # it. (The `?`-followed check mirrors
+                # _js_f747_expect_nullish_op: `??`+ident is a
+                # valid operator here. `??=` in this position is
+                # a SyntaxError in the engine -- invalid
+                # assignment target -- and fails closed in the
+                # statement loop.)
+                break
+            env[name] = _ibind
+            m = _js_skip_ws(stmts, m)
+            m = _js_expect(stmts, m, ";")
+            state["parts"] += 1  # F452: the binding is shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = m
+        # STMT;* -- `var|let NAME = LEFT ?? FRAG;` and `??=`.
+        while True:
+            q = _js_skip_ws(stmts, sj)
+            if _js_match_kw(stmts, q, "return") is not None:
+                break
+            # `TARGET ??= FRAG;`
+            tgt = _js_f747_parse_augassign_target(stmts, q, env)
+            if tgt is not None:
+                (is_member, tname, tkey), q = tgt
+                q = _js_f747_expect_nullish_op(stmts, q)
+                # `??=`: the operator is `??` followed by `=`.
+                q = _js_skip_ws(stmts, q)
+                if q >= n or stmts[q] != "=":
+                    raise _JSExprFail("F747 ?? not ??=")
+                q = _js_skip_ws(stmts, q + 1)
+                frag, q = _js_parse_f747_frag(stmts, q, env,
+                                              depth, state, [])
+                q = _js_skip_ws(stmts, q)
+                q = _js_expect(stmts, q, ";")
+                if is_member:
+                    keydict = env[tname][1]
+                    if tkey not in keydict:
+                        # Missing: undefined, so `??=` installs.
+                        keydict[tkey] = frag  # node-exact
+                else:
+                    if env[tname][0] == "nullish":
+                        env[tname] = ("str", frag)
+                    # A bound string picks LEFT: no-op.
+                saw_nullish = True
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                state["ops"] += 1  # the ??= pick is shaped
+                sj = q
+                continue
+            # `var|let NAME = LEFT ?? FRAG;`
+            dkw, m = _js_match_decl_kw(stmts, q)
+            if dkw is None:
+                raise _JSExprFail("F747 bad middle statement")
+            if dkw == "const":
+                raise _JSExprFail("F747 const binding")
+            m = _js_skip_ws(stmts, m)
+            name, m = _js_parse_ident(stmts, m)
+            if name == "arguments":
+                raise _JSExprFail("F747 binding named arguments")
+            if name in env:
+                raise _JSExprFail("F747 rebinding")
+            m = _js_skip_ws(stmts, m)
+            m = _js_expect(stmts, m, "=")
+            m = _js_skip_ws(stmts, m)
+            lval, m = _js_parse_f747_nullish_left(
+                stmts, m, env, depth, state)
+            m = _js_f747_expect_nullish_op(stmts, m)
+            m = _js_skip_ws(stmts, m)
+            frag, m = _js_parse_f747_frag(stmts, m, env, depth,
+                                          state, [])
+            m = _js_skip_ws(stmts, m)
+            m = _js_expect(stmts, m, ";")
+            env[name] = ("str", frag if lval is None else lval)
+            saw_nullish = True
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1  # the ?? pick is obfuscation-shaped
+            sj = m
+        # `return ADD;` -- TERM (+ TERM)*.
+        q = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, q, "return")
+        if rk is None:
+            raise _JSExprFail("F747 body not return")
+        q = _js_skip_ws(stmts, rk)
+        saw = []
+        val, q = _js_parse_f747_term(stmts, q, env, depth, state,
+                                    saw)
+        while True:
+            t = _js_skip_ws(stmts, q)
+            if t >= n or stmts[t] != "+":
+                break
+            rhs, t = _js_parse_f747_term(
+                stmts, _js_skip_ws(stmts, t + 1), env, depth,
+                state, saw)
+            if len(val) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F747 concat too long")
+            val = val + rhs
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            q = t
+        if not saw_nullish and not saw:
+            # No `??` anywhere: group-free shapes belong to
+            # earlier routes, which keep decoding them unchanged.
+            raise _JSExprFail("F747 no ?? group")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        if _js_skip_ws(stmts, q) != n:
+            raise _JSExprFail("F747 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_f747_is_augassign_head(stmts, q, env):
+    """True when stmts[q] starts a `TARGET ??=` statement (F747).
+
+    Peek-only: an ident (bound in env) or a member read on a
+    tracked object, followed by `??=`. Never raises. Never evals.
+    """
+    n = len(stmts)
+    try:
+        name, r = _js_parse_ident(stmts, q)
+    except _JSExprFail:
+        return False
+    if name not in env:
+        return False
+    r = _js_skip_ws(stmts, r)
+    if r < n and stmts[r] == ".":
+        pass  # member form -- checked by the target parser
+    elif r + 2 < n and stmts[r] == "?" and stmts[r + 1] == "?" \
+            and stmts[r + 2] == "=":
+        return True
+    elif r < n and stmts[r] == "[":
+        pass  # bracket form -- checked by the target parser
+    else:
+        return False
+    # Member/bracket form: scan for `??=` past the member key.
+    try:
+        tgt = _js_f747_parse_augassign_target(stmts, q, env)
+    except _JSExprFail:
+        return False
+    if tgt is None:
+        return False
+    _, r = tgt
+    r = _js_skip_ws(stmts, r)
+    return (r + 2 < n and stmts[r] == "?" and stmts[r + 1] == "?"
+            and stmts[r + 2] == "=")
+
+
+def _js_f747_parse_augassign_target(stmts, q, env):
+    """Parse a `??=` assignment target at stmts[q] (F747).
+
+    Returns ((is_member, name, key), next_index) or None when
+    stmts[q] is not a target head: a bound ident (is_member
+    False, key None) or a member read `o.k` / `o['k']` on a
+    tracked ("obj", keydict) binding (proto-member keys fail
+    closed). Raises _JSExprFail on malformed member syntax.
+    Never evals.
+    """
+    n = len(stmts)
+    try:
+        name, r = _js_parse_ident(stmts, q)
+    except _JSExprFail:
+        return None
+    if name not in env:
+        return None
+    r = _js_skip_ws(stmts, r)
+    if r < n and stmts[r] == ".":
+        if env[name][0] != "obj":
+            raise _JSExprFail("F747 ??= member on non-object")
+        r2 = _js_skip_ws(stmts, r + 1)
+        try:
+            key, r = _js_parse_ident(stmts, r2)
+        except _JSExprFail:
+            raise _JSExprFail("F747 ??= member key not an ident")
+        r = _js_skip_ws(stmts, r)
+        if key in _JS_F747_PROTO_MEMBERS:
+            raise _JSExprFail("F747 ??= proto-member key")
+        return (True, name, key), r
+    if r < n and stmts[r] == "[":
+        if env[name][0] != "obj":
+            raise _JSExprFail("F747 ??= member on non-object")
+        try:
+            key, r = _js_parse_bracket_member(stmts, r)
+        except _JSExprFail:
+            raise _JSExprFail("F747 ??= bracket not a string")
+        r = _js_skip_ws(stmts, r)
+        if key in _JS_F747_PROTO_MEMBERS:
+            raise _JSExprFail("F747 ??= proto-member key")
+        return (True, name, key), r
+    return (False, name, None), r
+
+
 def _js_parse_f647_nullish_right_iife(text, i, depth, state):
     """Parse `(function(){[var|let IDENT;]?return RET;})()` (F647).
 
@@ -58098,6 +59102,26 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f647 is not None:
             val, i = _f647
             return _js_parse_postfix(text, i, val, depth, state)
+        # F747: (function(){DECL;* STMT;* return ADD;})() --
+        # nullish-coalescing beyond F647: missing-key reads
+        # (`o.x` on a tracked literal whose keyset provably
+        # excludes the key -- undefined, so `??` picks RIGHT)
+        # and the `??=` logical assignment. Tried after F647:
+        # F647 requires exactly one uninitialized declaration
+        # and fails closed on initialized bindings (`F647
+        # initialized binding`); this route requires at least
+        # one initialized binding, `??=` statement, or
+        # missing-key group, so no previously-decoded input
+        # changes behavior (red-first verified: 2 BREAK each on
+        # the open tree).
+        _f747_saved_parts = state['parts']; _f747_saved_ops = state['ops']
+        _f747 = _js_parse_f747_nullish_right_iife(text, i, depth,
+                                                  state)
+        if _f747 is None:
+            state['parts'] = _f747_saved_parts; state['ops'] = _f747_saved_ops
+        if _f747 is not None:
+            val, i = _f747
+            return _js_parse_postfix(text, i, val, depth, state)
         # F652: (function(){(var|let) A(,B)*;return RET;})() --
         # comma/sequence expressions in additive position
         # (`(x='f1',x)`, `(x='f1',y='f2',x+y)`). Tried after F647:
@@ -58376,6 +59400,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f712_saved_parts; state['ops'] = _f712_saved_ops
         if _f712 is not None:
             val, i = _f712
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F746: (function(){class M extends Map{}var|let|const
+        #   m=new M(ARGS?);(m.set('K','V');)*[var|let s='LIT';
+        #   for(var|let v of m.values())s+=v;]return
+        #   ([...m.values()].join('SEP')|s)(+'LIT')*;})() --
+        #   subclassed-Map construction reads. Tried after F712:
+        #   every earlier route requires its own binding family
+        #   or statement head and fails closed on a leading
+        #   `class` declaration (red-first verified: 2 BREAK on
+        #   the open tree), so no previously-decoded input
+        #   changes behavior.
+        _f746_saved_parts = state['parts']; _f746_saved_ops = state['ops']
+        _f746 = _js_parse_f746_subclass_map_iife(text, i, depth,
+                                                 state)
+        if _f746 is None:
+            state['parts'] = _f746_saved_parts; state['ops'] = _f746_saved_ops
+        if _f746 is not None:
+            val, i = _f746
             return _js_parse_postfix(text, i, val, depth, state)
         # F735/F736: (function(){[STMT;]* return TERM;})() with
         #   nested-function fragment sources -- `function
