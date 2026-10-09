@@ -31018,6 +31018,499 @@ def _js_parse_f728_nextvalue_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_gen_bare_nexts(stmts, k, itname, n, state):
+    """Parse `(IT.next();)*` bare statements at stmts[k] (F853/F854).
+
+    Each bare `IT.next();` consumes one delivery slot. A following
+    `.value` means the additive, not a bare statement, so the loop
+    stops there. Returns (count, next_k). At most 16 total; F452 parts
+    charged per call. Never evals.
+    """
+    bare = 0
+    while True:
+        kk = _js_skip_ws(stmts, k)
+        sv = kk
+        is_bare = False
+        if sv < n and stmts[sv] in _JS_IDENT_START:
+            nm, sv = _js_parse_ident(stmts, sv)
+            sv = _js_skip_ws(stmts, sv)
+            if nm == itname and sv < n and stmts[sv] == ".":
+                m1, sv = _js_parse_ident(stmts,
+                                         _js_skip_ws(stmts, sv + 1))
+                if m1 == "next":
+                    sv = _js_skip_ws(stmts, sv)
+                    if sv < n and stmts[sv] == "(":
+                        sv2 = _js_skip_ws(stmts, sv + 1)
+                        if sv2 < n and stmts[sv2] == ")":
+                            sv = _js_skip_ws(stmts, sv2 + 1)
+                            if sv < n and stmts[sv] == ";":
+                                sv += 1
+                            sv = _js_skip_ws(stmts, sv)
+                            if not (sv < n and stmts[sv] == "."):
+                                is_bare = True
+                                k = sv
+        if not is_bare:
+            break
+        bare += 1
+        if bare > 16:
+            raise _JSExprFail("F853/F854 too many next calls")
+        state["parts"] += 1  # F452: charge per next call
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    return bare, k
+
+
+def _js_parse_f853_paramgen_iife(text, i, depth, state):
+    """Parse parameterized-generator IIFEs (F853).
+
+    `(function(){function* G(P1,...,Pn){yield T;...;return R?;}
+    var|let|const IT=G(A1,...,Ak);(IT.next();)*return ADD;})()`
+    where each yield operand T is `'LIT'` (paren twin `yield('LIT')`
+    admitted) or a bound parameter name, R is `'LIT'` or a bound
+    parameter name (must be last), and ADD is a string-only additive
+    of `'LIT'` and `IT.next().value` terms.
+
+    Node-exact desugar (v24.20.0): call args bind positionally to the
+    params (extra literal args are ignored); a missing arg is
+    `undefined` -- fails closed, never decoded. The n-th `IT.next()`
+    call delivers the resolved yields[n-1] as `{value, done:false}`;
+    the call after the last yield delivers the trailing return value
+    as `{value, done:true}`; any later call delivers `undefined` --
+    fails closed. `.next()` takes no arguments; only `.value` is read.
+    At most 16 `.next()` calls; F452 parts charged per yield/arg/call;
+    _MAX_DECODE_BYTES on the result. Never evals.
+
+    Disjoint from F728 (F728's decl requires the empty `()`; this
+    requires >=1 param) and F797 (this rejects `yield*`). Returns
+    (value, next_index), or None when the head does not match or a
+    guard fails. Bounds (all fail closed -- rejected, never
+    mis-decoded): a non-literal call arg, a missing arg, a
+    non-literal/non-param yield operand, a non-literal/non-param
+    trailing return, a non-empty `.next()` argument list, a member
+    other than `.value`, a second iterator binding, an iterator name
+    shadowing the generator/params/`arguments`, a `.next()` call past
+    exhaustion, extra statements, call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        fk = _js_match_kw(stmts, k, "function")
+        if fk is None:
+            raise _JSExprFail("F853 not a generator decl")
+        k = _js_skip_ws(stmts, fk)
+        if k >= n or stmts[k] != "*":
+            raise _JSExprFail("F853 not a generator")
+        k = _js_skip_ws(stmts, k + 1)
+        if k >= n or stmts[k] not in _JS_IDENT_START:
+            raise _JSExprFail("F853 generator not named")
+        gname, k = _js_parse_ident(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "(")
+        params = []
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k >= n or stmts[k] not in _JS_IDENT_START:
+                raise _JSExprFail("F853 bad param")
+            pname, k = _js_parse_ident(stmts, k)
+            if pname == "arguments" or pname in params:
+                raise _JSExprFail("F853 bad param name")
+            params.append(pname)
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == ",":
+                k += 1
+                continue
+            break
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ")")
+        k = _js_expect(stmts, k, "{")
+        # Body: `yield` operands (literal or bound param) and an
+        # optional trailing `return` (literal or bound param).
+        yops = []
+        ret = None
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "}":
+                k += 1
+                break
+            rk = _js_match_kw(stmts, k, "return")
+            if rk is not None:
+                k = _js_skip_ws(stmts, rk)
+                if k < n and stmts[k] in "'\"":
+                    rv, k = _js_parse_string(stmts, k)
+                    ret = ("lit", rv)
+                elif k < n and stmts[k] in _JS_IDENT_START:
+                    rn, k = _js_parse_ident(stmts, k)
+                    if rn not in params:
+                        raise _JSExprFail("F853 return not param")
+                    ret = ("param", params.index(rn))
+                else:
+                    raise _JSExprFail("F853 return not literal/param")
+                k = _js_skip_ws(stmts, k)
+                if k < n and stmts[k] == ";":
+                    k += 1
+                k = _js_skip_ws(stmts, k)
+                if k >= n or stmts[k] != "}":
+                    raise _JSExprFail("F853 return not last")
+                k += 1
+                break
+            yk = _js_match_kw(stmts, k, "yield")
+            if yk is None:
+                raise _JSExprFail("F853 body not yields")
+            k = _js_skip_ws(stmts, yk)
+            if k < n and stmts[k] == "(":
+                k = _js_skip_ws(stmts, k + 1)
+                paren = True
+            else:
+                paren = False
+            if k < n and stmts[k] in "'\"":
+                yv, k = _js_parse_string(stmts, k)
+                yops.append(("lit", yv))
+            elif k < n and stmts[k] in _JS_IDENT_START:
+                yn, k = _js_parse_ident(stmts, k)
+                if yn not in params:
+                    raise _JSExprFail("F853 yield not param")
+                yops.append(("param", params.index(yn)))
+            else:
+                raise _JSExprFail("F853 yield not literal/param")
+            if paren:
+                k = _js_expect(stmts, k, ")")
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == ";":
+                k += 1
+            state["parts"] += 1  # F452: charge per yield
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        if not yops and ret is None:
+            raise _JSExprFail("F853 empty body")
+        # `var|let|const IT=G(A1,...,Ak);`
+        k = _js_skip_ws(stmts, k)
+        dk = (_js_match_kw(stmts, k, "var")
+              or _js_match_kw(stmts, k, "let")
+              or _js_match_kw(stmts, k, "const"))
+        if dk is None:
+            raise _JSExprFail("F853 iter decl not var/let/const")
+        k = _js_skip_ws(stmts, dk)
+        if k >= n or stmts[k] not in _JS_IDENT_START:
+            raise _JSExprFail("F853 iter not ident")
+        itname, k = _js_parse_ident(stmts, k)
+        if itname in (gname, "arguments") or itname in params:
+            raise _JSExprFail("F853 iter shadows")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "=")
+        g2, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if g2 != gname:
+            raise _JSExprFail("F853 iter not the generator")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "(")
+        args = []
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] != ")":
+            while True:
+                k = _js_skip_ws(stmts, k)
+                if k >= n or stmts[k] not in "'\"":
+                    raise _JSExprFail("F853 arg not literal")
+                av, k = _js_parse_string(stmts, k)
+                args.append(av)
+                state["parts"] += 1  # F452: charge per arg
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                k = _js_skip_ws(stmts, k)
+                if k < n and stmts[k] == ",":
+                    k += 1
+                    continue
+                break
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ")")
+        if len(args) < len(params):
+            # A missing arg is `undefined` in the engine -- never
+            # decoded.
+            raise _JSExprFail("F853 missing arg")
+        # Extra literal args are ignored (node-exact).
+        bound = dict(zip(params, args))
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        # Resolve the delivery sequence now that params are bound.
+        seq = [v if kind == "lit" else bound[params[v]]
+               for kind, v in yops]
+        if ret is not None:
+            rkind, rv = ret
+            seq.append(rv if rkind == "lit" else bound[params[rv]])
+        # `(IT.next();)*` -- bare statements consume delivery slots.
+        bare, k = _js_parse_gen_bare_nexts(stmts, _js_skip_ws(stmts, k),
+                                           itname, n, state)
+        # `return ADD;` -- ADD is a string-only additive of
+        # `'LIT'` and `IT.next().value` terms.
+        k = _js_skip_ws(stmts, k)
+        rk = _js_match_kw(stmts, k, "return")
+        if rk is None:
+            raise _JSExprFail("F853 no return")
+        k = _js_skip_ws(stmts, rk)
+        parts = []
+        calls = bare
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] in "'\"":
+                v, k = _js_parse_string(stmts, k)
+                parts.append(v)
+            elif k < n and stmts[k] in _JS_IDENT_START:
+                rn, k = _js_parse_ident(stmts, k)
+                if rn != itname:
+                    raise _JSExprFail("F853 additive unknown ident")
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                nm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if nm != "next":
+                    raise _JSExprFail("F853 not .next()")
+                k = _js_call_empty_parens(stmts, k)
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                vm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if vm != "value":
+                    raise _JSExprFail("F853 not .value")
+                if calls >= 16:
+                    raise _JSExprFail("F853 too many next calls")
+                state["parts"] += 1  # F452: charge per next call
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                if calls < len(seq):
+                    parts.append(seq[calls])
+                else:
+                    # Engine `undefined` -- never decoded.
+                    raise _JSExprFail("F853 next past exhaustion")
+                calls += 1
+            else:
+                raise _JSExprFail("F853 additive bad term")
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "+":
+                k = _js_skip_ws(stmts, k + 1)
+                continue
+            break
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F853 trailing junk")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F853 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f854_genreturn_iife(text, i, depth, state):
+    """Parse generator-return IIFEs (F854).
+
+    `(function(){function* G(){yield 'LIT';...;return 'LIT';}
+    var|let|const IT=G();(IT.next();)*return ADD;})()`
+    and the no-yield twin
+    `(function(){function* G(){return 'LIT';}var|let|const IT=G();
+    return ADD;})()`
+    where ADD is a string-only additive of `'LIT'` and
+    `IT.next().value` terms.
+
+    Node-exact desugar (v24.20.0): bare `IT.next();` statements consume
+    delivery slots in order (yields, then the trailing return value as
+    `{value, done:true}`); any `.next()` past exhaustion delivers
+    `undefined` -- fails closed, never decoded. A body with neither
+    yields nor a return can only deliver `undefined` -- fails closed.
+    `.next()` takes no arguments; only `.value` is read. At most 16
+    total `.next()` calls; F452 parts charged per yield and per call;
+    _MAX_DECODE_BYTES on the result. Never evals.
+
+    Disjoint from F728 in coverage: F728 requires `return`
+    immediately after the iterator declaration (an intermediate
+    `IT.next();` statement fails it), and F728's body grammar
+    requires >=1 yield. (This grammar is a superset of F728's shape
+    and would decode it identically, so it is hooked AFTER F728 --
+    F728 claims the shared shapes first.) Returns (value,
+    next_index), or None when the head does not match or a guard fails.
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-literal yield, a non-literal trailing return, a non-empty
+    `.next()` argument list, a member other than `.value`, a second
+    iterator binding, an iterator name shadowing the generator or
+    `arguments`, a `.next()` call past exhaustion, extra statements,
+    call args on the IIFE.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        fk = _js_match_kw(stmts, k, "function")
+        if fk is None:
+            raise _JSExprFail("F854 not a generator decl")
+        k = _js_skip_ws(stmts, fk)
+        if k >= n or stmts[k] != "*":
+            raise _JSExprFail("F854 not a generator")
+        k = _js_skip_ws(stmts, k + 1)
+        if k >= n or stmts[k] not in _JS_IDENT_START:
+            raise _JSExprFail("F854 generator not named")
+        gname, k = _js_parse_ident(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "(")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ")")
+        k = _js_expect(stmts, k, "{")
+        # Body: literal yields (paren twin admitted) and an optional
+        # trailing literal `return`; unlike F677, zero yields are
+        # allowed when a return is present.
+        yields = []
+        ret = None
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "}":
+                k += 1
+                break
+            rk = _js_match_kw(stmts, k, "return")
+            if rk is not None:
+                k = _js_skip_ws(stmts, rk)
+                if k >= n or stmts[k] not in "'\"":
+                    raise _JSExprFail("F854 return not literal")
+                ret, k = _js_parse_string(stmts, k)
+                k = _js_skip_ws(stmts, k)
+                if k < n and stmts[k] == ";":
+                    k += 1
+                k = _js_skip_ws(stmts, k)
+                if k >= n or stmts[k] != "}":
+                    raise _JSExprFail("F854 return not last")
+                k += 1
+                break
+            yk = _js_match_kw(stmts, k, "yield")
+            if yk is None:
+                raise _JSExprFail("F854 body not yields")
+            k = _js_skip_ws(stmts, yk)
+            if k < n and stmts[k] == "(":
+                k = _js_skip_ws(stmts, k + 1)
+                paren = True
+            else:
+                paren = False
+            if k >= n or stmts[k] not in "'\"":
+                raise _JSExprFail("F854 yield not literal")
+            yv, k = _js_parse_string(stmts, k)
+            if paren:
+                k = _js_expect(stmts, k, ")")
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == ";":
+                k += 1
+            yields.append(yv)
+            state["parts"] += 1  # F452: charge per yield
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        if not yields and ret is None:
+            # Only `undefined` can be delivered -- never decoded.
+            raise _JSExprFail("F854 empty body")
+        seq = list(yields)
+        if ret is not None:
+            seq.append(ret)
+        # `var|let|const IT=G();`
+        k = _js_skip_ws(stmts, k)
+        dk = (_js_match_kw(stmts, k, "var")
+              or _js_match_kw(stmts, k, "let")
+              or _js_match_kw(stmts, k, "const"))
+        if dk is None:
+            raise _JSExprFail("F854 iter decl not var/let/const")
+        k = _js_skip_ws(stmts, dk)
+        if k >= n or stmts[k] not in _JS_IDENT_START:
+            raise _JSExprFail("F854 iter not ident")
+        itname, k = _js_parse_ident(stmts, k)
+        if itname in (gname, "arguments"):
+            raise _JSExprFail("F854 iter shadows")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "=")
+        g2, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if g2 != gname:
+            raise _JSExprFail("F854 iter not the generator")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "(")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ")")
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        # `(IT.next();)*` -- bare statements consume delivery slots.
+        # A following `.value` means the additive, not a bare statement.
+        bare, k = _js_parse_gen_bare_nexts(stmts, _js_skip_ws(stmts, k),
+                                           itname, n, state)
+        # `return ADD;` -- ADD is a string-only additive of
+        # `'LIT'` and `IT.next().value` terms.
+        k = _js_skip_ws(stmts, k)
+        rk = _js_match_kw(stmts, k, "return")
+        if rk is None:
+            raise _JSExprFail("F854 no return")
+        k = _js_skip_ws(stmts, rk)
+        parts = []
+        calls = bare
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] in "'\"":
+                v, k = _js_parse_string(stmts, k)
+                parts.append(v)
+            elif k < n and stmts[k] in _JS_IDENT_START:
+                rn, k = _js_parse_ident(stmts, k)
+                if rn != itname:
+                    raise _JSExprFail("F854 additive unknown ident")
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                nm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if nm != "next":
+                    raise _JSExprFail("F854 not .next()")
+                k = _js_call_empty_parens(stmts, k)
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, ".")
+                vm, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+                if vm != "value":
+                    raise _JSExprFail("F854 not .value")
+                if calls >= 16:
+                    raise _JSExprFail("F854 too many next calls")
+                state["parts"] += 1  # F452: charge per next call
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                if calls < len(seq):
+                    parts.append(seq[calls])
+                else:
+                    # Engine `undefined` -- never decoded.
+                    raise _JSExprFail("F854 next past exhaustion")
+                calls += 1
+            else:
+                raise _JSExprFail("F854 additive bad term")
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "+":
+                k = _js_skip_ws(stmts, k + 1)
+                continue
+            break
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F854 trailing junk")
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F854 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
 def _js_f797_parse_gen_body(text, j, state):
     """Parse a generator body with `yield*` delegation (F797).
 
@@ -32648,22 +33141,83 @@ def _js_f825_coerce_number(props, depth, state):
     raise _JSExprFail("F825 no numeric coercion method")
 
 
+def _js_parse_f793f855_count_arg(stmts, k, state, tag):
+    """Parse a ToIntegerOrInfinity count argument `(NUM)` for Iterator helpers.
+
+    Shared by F793 `.drop(n)` and F855 `.take(n)`. At stmts[k] expects the
+    opening `(`; returns (num, next_k) with next_k just past the matching
+    `)`. The engine applies ToNumber then ToIntegerOrInfinity (node
+    v24.20.0): a non-negative decimal literal in integer or fraction form
+    (floats truncated toward zero; exponents are not modeled -- use a string
+    literal) or a string literal (full ToNumber string grammar via
+    _js_tonumber_str). The engine throws RangeError when !(num >= 0)
+    (negatives and NaN) -- fails closed, agreeing with the engine (no
+    credential can leak from a throw). Only -0 passes the `-(num >= 0)`
+    gate (node: -0 >= 0); anything else fails closed. Callers apply
+    `len(items) if isinf(num) else trunc(num)`. Never evals.
+    """
+    n = len(stmts)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "(")
+    k = _js_skip_ws(stmts, k)
+    if k < n and (stmts[k] == "'" or stmts[k] == '"'):
+        sval, k = _js_parse_string(stmts, k)
+        num = _js_tonumber_str(sval)
+    else:
+        # A leading `-` is consumed for the -0 twin
+        # (node: -0 >= 0, so no throw; other negatives
+        # throw RangeError). `-` alone still fails closed
+        # below.
+        neg = k < n and stmts[k] == "-"
+        if neg:
+            k += 1
+        d0 = k
+        while k < n and stmts[k] in "0123456789":
+            k += 1
+        int_len = k - d0
+        frac_len = 0
+        if (k < n and stmts[k] == "."
+                and (int_len > 0
+                     or (k + 1 < n
+                         and stmts[k + 1] in "0123456789"))):
+            # Float twin (`1.5`, `1.`, `.5`). A `.` that is
+            # not float-shaped (e.g. `1.toString`) still
+            # fails closed at the `)` expect below.
+            k += 1
+            f0 = k
+            while k < n and stmts[k] in "0123456789":
+                k += 1
+            frac_len = k - f0
+        if int_len == 0 and frac_len == 0:
+            raise _JSExprFail("F793 %s not a number" % tag)
+        tok = stmts[d0:k]
+        if len(tok) > _JS_EXPR_MAX_INT_DIGITS:
+            raise _JSExprFail("F793 %s too big" % tag)
+        num = -float(tok) if neg else float(tok)
+    if math.isnan(num) or not (num >= 0):
+        raise _JSExprFail("F793/F855 %s RangeError" % tag)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ")")
+    return num, k
+
+
 def _js_parse_f793_iter_helper_iife(text, i, depth, state):
-    """Parse `(function(){return [...SRC.map(f)|.drop(n)].join('SEP');})()` (F793).
+    """Parse `(function(){return [...SRC.map(f)|.drop(n)|.take(n)].join('SEP');})()` (F793, F855).
 
     F752 (CLOSED wave-384 lane 8) models builtin-iterator
     `.next().value` reads, but the ES2025 Iterator helpers have no
-    production: `.values().map(f)` and `.values().drop(n)` resolve
-    node-exactly (v24.20.0) while the decoder produces zero
-    variants. Node-exact desugar: SRC is an F752 inline iterator
+    production: `.values().map(f)`, `.values().drop(n)` and
+    `.values().take(n)` (F855) resolve node-exactly (v24.20.0) while
+    the decoder produces zero variants. Node-exact desugar: SRC is an F752 inline iterator
     source (array `[LITS]`, string code points, `new Set([LITS])`,
     `new Map(PAIRS)` -- the F752 member rules apply unchanged);
     `.map(f)` applies the callback to each item in order (the
     callback is `function(P){return ADD;}` or the arrow twins,
     ADD a string-only additive of literals and P); `.drop(n)`
     drops the first n items where n is ToIntegerOrInfinity(
-    ToNumber(arg)) (F824): a non-negative decimal literal in integer
-    or fraction form (floats truncated toward zero; exponents are
+    ToNumber(arg)) (F824); `.take(n)` (F855) keeps the first n items
+    with the same argument discipline: a non-negative decimal literal
+    in integer or fraction form (floats truncated toward zero; exponents are
     not modeled -- use a string literal) or a string literal
     (full ToNumber string grammar); the engine throws RangeError
     when !(n >= 0) (negatives and NaN), which fails closed; the
@@ -32725,66 +33279,23 @@ def _js_parse_f793_iter_helper_iife(text, i, depth, state):
                     raise _JSExprFail("too many parts")
             items = out
         elif hname == "drop":
-            k = _js_skip_ws(stmts, k)
-            k = _js_expect(stmts, k, "(")
-            k = _js_skip_ws(stmts, k)
-            # F824: the engine applies ToNumber then
-            # ToIntegerOrInfinity to the argument (node v24.20.0).
-            # Modeled: a non-negative decimal literal in integer or
-            # fraction form (floats truncated toward zero;
-            # exponents are not modeled -- use a string literal) or
-            # a string literal (full ToNumber string grammar via
-            # _js_tonumber_str). The engine throws RangeError when
-            # !(n >= 0) -- negatives AND NaN -- so those fail
-            # closed, agreeing with the engine (no credential can
-            # leak from a throw). Only -0 passes the `-(n >= 0)`
-            # gate (node: -0 >= 0); anything else fails closed.
-            if k < n and (stmts[k] == "'" or stmts[k] == '"'):
-                sval, k = _js_parse_string(stmts, k)
-                num = _js_tonumber_str(sval)
-            else:
-                # A leading `-` is consumed for the -0 twin
-                # (node: -0 >= 0, so no throw; other negatives
-                # throw RangeError). `-` alone still fails closed
-                # below.
-                neg = k < n and stmts[k] == "-"
-                if neg:
-                    k += 1
-                d0 = k
-                while k < n and stmts[k] in "0123456789":
-                    k += 1
-                int_len = k - d0
-                frac_len = 0
-                if (k < n and stmts[k] == "."
-                        and (int_len > 0
-                             or (k + 1 < n
-                                 and stmts[k + 1] in "0123456789"))):
-                    # Float twin (`1.5`, `1.`, `.5`). A `.` that is
-                    # not float-shaped (e.g. `1.toString`) still
-                    # fails closed at the `)` expect below.
-                    k += 1
-                    f0 = k
-                    while k < n and stmts[k] in "0123456789":
-                        k += 1
-                    frac_len = k - f0
-                if int_len == 0 and frac_len == 0:
-                    raise _JSExprFail("F793 drop not a number")
-                tok = stmts[d0:k]
-                if len(tok) > _JS_EXPR_MAX_INT_DIGITS:
-                    raise _JSExprFail("F793 drop too big")
-                num = -float(tok) if neg else float(tok)
-            if math.isnan(num) or not (num >= 0):
-                raise _JSExprFail("F824 drop RangeError")
+            num, k = _js_parse_f793f855_count_arg(stmts, k, state, "drop")
             cnt = len(items) if math.isinf(num) else math.trunc(num)
-            k = _js_skip_ws(stmts, k)
-            k = _js_expect(stmts, k, ")")
             items = items[cnt:]
             state["parts"] += 1  # F452: the drop is
             # obfuscation-shaped
             if state["parts"] > _JS_EXPR_MAX_PARTS:
                 raise _JSExprFail("too many parts")
+        elif hname == "take":
+            num, k = _js_parse_f793f855_count_arg(stmts, k, state, "take")
+            cnt = len(items) if math.isinf(num) else math.trunc(num)
+            items = items[:cnt]
+            state["parts"] += 1  # F452: the take is
+            # obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
         else:
-            raise _JSExprFail("F793 not map/drop")
+            raise _JSExprFail("F793 not map/drop/take")
         k = _js_skip_ws(stmts, k)
         k = _js_expect(stmts, k, "]")
         k = _js_skip_ws(stmts, k)
@@ -32809,6 +33320,380 @@ def _js_parse_f793_iter_helper_iife(text, i, depth, state):
         return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
     except _JSExprFail:
         state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_parse_f855_take_varbound_iife(text, i, depth, state):
+    """Parse var-bound `.take(n).toArray()` IIFEs (F855).
+
+    `(function(){var|let|const IT=SRC.values().take(n).toArray();
+    return ADD;})()`
+    where SRC is an F752 inline iterator source and ADD is a
+    string-only additive of `'LIT'` and `IT[k]` bracket-index terms.
+
+    Node-exact desugar (v24.20.0): `.take(n)` keeps the first n items
+    (the ToIntegerOrInfinity argument discipline shared with
+    F793/F824 -- negatives and NaN throw RangeError, fail closed);
+    `.toArray()` collects the taken items; `IT[k]` reads are positional
+    (k a non-negative integer literal). An out-of-range, negative, or
+    non-integer index fails closed (the engine yields `undefined` --
+    never decoded). F452: the take is obfuscation-shaped (+1 part).
+    _MAX_DECODE_BYTES on the result. Never evals.
+
+    Disjoint from F793 (F793 requires the bare-return spread-join shape
+    with no declarations; this requires the declaration). Returns
+    (value, next_index), or None when the head does not match or a guard
+    fails.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        dk = (_js_match_kw(stmts, k, "var")
+              or _js_match_kw(stmts, k, "let")
+              or _js_match_kw(stmts, k, "const"))
+        if dk is None:
+            raise _JSExprFail("F855 decl not var/let/const")
+        k = _js_skip_ws(stmts, dk)
+        if k >= n or stmts[k] not in _JS_IDENT_START:
+            raise _JSExprFail("F855 not an ident")
+        itname, k = _js_parse_ident(stmts, k)
+        if itname == "arguments":
+            raise _JSExprFail("F855 is arguments")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, "=")
+        items, k = _js_parse_f752_iter_source(stmts, _js_skip_ws(stmts, k),
+                                             depth, state, {})
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ".")
+        tn, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if tn != "take":
+            raise _JSExprFail("F855 not take")
+        num, k = _js_parse_f793f855_count_arg(stmts, k, state, "take")
+        cnt = len(items) if math.isinf(num) else math.trunc(num)
+        items = items[:cnt]
+        state["parts"] += 1  # F452: the take is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        k = _js_skip_ws(stmts, k)
+        k = _js_expect(stmts, k, ".")
+        an, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+        if an != "toArray":
+            raise _JSExprFail("F855 not toArray")
+        k = _js_call_empty_parens(stmts, k)
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        # `return ADD;` -- ADD is a string-only additive of
+        # `'LIT'` and `IT[k]` bracket-index terms.
+        k = _js_skip_ws(stmts, k)
+        rk = _js_match_kw(stmts, k, "return")
+        if rk is None:
+            raise _JSExprFail("F855 no return")
+        k = _js_skip_ws(stmts, rk)
+        parts = []
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] in "'\"":
+                v, k = _js_parse_string(stmts, k)
+                parts.append(v)
+            elif k < n and stmts[k] in _JS_IDENT_START:
+                rn, k = _js_parse_ident(stmts, k)
+                if rn != itname:
+                    raise _JSExprFail("F855 additive unknown ident")
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, "[")
+                k = _js_skip_ws(stmts, k)
+                d0 = k
+                while k < n and stmts[k] in "0123456789":
+                    k += 1
+                if k == d0:
+                    raise _JSExprFail("F855 bad index")
+                if k - d0 > _JS_EXPR_MAX_INT_DIGITS:
+                    # Any index this large is out of range -- fail
+                    # closed (also avoids the >4300-digit ValueError
+                    # from int() on Python 3.11+).
+                    raise _JSExprFail("F855 index too big")
+                idx = int(stmts[d0:k])
+                k = _js_skip_ws(stmts, k)
+                k = _js_expect(stmts, k, "]")
+                if idx >= len(items):
+                    # Engine `undefined` -- never decoded.
+                    raise _JSExprFail("F855 index out of range")
+                parts.append(items[idx])
+            else:
+                raise _JSExprFail("F855 additive bad term")
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "+":
+                k = _js_skip_ws(stmts, k + 1)
+                continue
+            break
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F855 trailing junk")
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F855 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+def _js_f856_sanitize(s):
+    """Map lone surrogates to U+FFFD (TextEncoder behavior, node v24.20.0).
+
+    `new TextEncoder().encode(s)` emits UTF-8 with every lone surrogate
+    replaced by U+FFFD, so `decode(encode(s))` is the identity except on
+    lone surrogates. Never evals.
+    """
+    return "".join("\ufffd" if 0xD800 <= ord(c) <= 0xDFFF else c
+                   for c in s)
+
+
+def _js_parse_f856_new_codec(stmts, k):
+    """Parse `new TextEncoder()` / `new TextDecoder()` at stmts[k] (F856).
+
+    Both ctors take no arguments here -- any argument fails closed (a
+    non-UTF-8 decoder would break the round-trip identity). Returns
+    ("enc"|"dec", next_index). Never evals.
+    """
+    n = len(stmts)
+    mk = _js_match_kw(stmts, k, "new")
+    if mk is None:
+        raise _JSExprFail("F856 not new")
+    k = _js_skip_ws(stmts, mk)
+    if k >= n or stmts[k] not in _JS_IDENT_START:
+        raise _JSExprFail("F856 not a codec name")
+    nm, k = _js_parse_ident(stmts, k)
+    if nm == "TextEncoder":
+        kind = "enc"
+    elif nm == "TextDecoder":
+        kind = "dec"
+    else:
+        raise _JSExprFail("F856 not a codec")
+    k = _js_call_empty_parens(stmts, k)
+    return kind, k
+
+
+def _js_parse_f856_encode_expr(stmts, k, enc, state):
+    """Parse `<enc-expr>.encode('LIT')` at stmts[k] (F856).
+
+    enc-expr is `new TextEncoder()` or a bound encoder name. Returns the
+    sanitized string value (the decode(encode()) identity), and
+    next_index. The literal is the only admitted operand -- anything
+    else fails closed. Never evals.
+    """
+    del state
+    n = len(stmts)
+    k = _js_skip_ws(stmts, k)
+    if _js_match_kw(stmts, k, "new") is not None:
+        kind, k = _js_parse_f856_new_codec(stmts, k)
+        if kind != "enc":
+            raise _JSExprFail("F856 not an encoder")
+    elif k < n and stmts[k] in _JS_IDENT_START:
+        en, k = _js_parse_ident(stmts, k)
+        if en not in enc:
+            raise _JSExprFail("F856 unknown encoder")
+    else:
+        raise _JSExprFail("F856 bad encoder")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ".")
+    mn, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if mn != "encode":
+        raise _JSExprFail("F856 not encode")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "(")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] not in "'\"":
+        raise _JSExprFail("F856 encode not literal")
+    lit, k = _js_parse_string(stmts, k)
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ")")
+    return _js_f856_sanitize(lit), k
+
+
+def _js_parse_f856_decode_term(stmts, k, enc, dec, byt, state):
+    """Parse a decode term at stmts[k] (F856).
+
+    `<dec-expr>.decode(ARG)` where dec-expr is `new TextDecoder()` or a
+    bound decoder name, and ARG is a bound bytes name or an inline
+    `<enc-expr>.encode('LIT')`. Returns (value, next_index). `decode`
+    with options, or of an unknown binding, fails closed. F452 parts
+    charged per decode. Never evals.
+    """
+    n = len(stmts)
+    k = _js_skip_ws(stmts, k)
+    if _js_match_kw(stmts, k, "new") is not None:
+        kind, k = _js_parse_f856_new_codec(stmts, k)
+        if kind != "dec":
+            raise _JSExprFail("F856 not a decoder")
+    elif k < n and stmts[k] in _JS_IDENT_START:
+        dn, k = _js_parse_ident(stmts, k)
+        if dn not in dec:
+            raise _JSExprFail("F856 unknown decoder")
+    else:
+        raise _JSExprFail("F856 bad decoder")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ".")
+    mn, k = _js_parse_ident(stmts, _js_skip_ws(stmts, k))
+    if mn != "decode":
+        raise _JSExprFail("F856 not decode")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, "(")
+    k = _js_skip_ws(stmts, k)
+    # Argument: a bytes binding, or an inline `<enc-expr>.encode('LIT')`
+    # (either `new TextEncoder().encode(...)` or `E.encode(...)` with a
+    # bound encoder E).
+    is_new = _js_match_kw(stmts, k, "new") is not None
+    is_encname = False
+    if not is_new and k < n and stmts[k] in _JS_IDENT_START:
+        an, _ak = _js_parse_ident(stmts, k)
+        is_encname = an in enc
+    if is_new or is_encname:
+        val, k = _js_parse_f856_encode_expr(stmts, k, enc, state)
+    elif k < n and stmts[k] in _JS_IDENT_START:
+        bn, k = _js_parse_ident(stmts, k)
+        if bn not in byt:
+            raise _JSExprFail("F856 decode arg unknown")
+        val = byt[bn]
+    else:
+        raise _JSExprFail("F856 bad decode arg")
+    k = _js_skip_ws(stmts, k)
+    k = _js_expect(stmts, k, ")")
+    state["parts"] += 1  # F452: charge per decode
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return val, k
+
+
+def _js_parse_f856_textcodec_iife(text, i, depth, state):
+    """Parse TextEncoder/TextDecoder round-trip IIFEs (F856).
+
+    `(function(){var|let|const B=new TextEncoder().encode('LIT');
+    return ADD;})()`
+    `(function(){var|let|const E=new TextEncoder();
+    var|let|const D=new TextDecoder();return ADD;})()`
+    `(function(){return new TextDecoder().decode(
+    new TextEncoder().encode('LIT'));})()`
+    where ADD is a string-only additive of `'LIT'` and decode terms:
+    `new TextDecoder().decode(B)`, `D.decode(B)`,
+    `D.decode(E.encode('LIT'))`, `D.decode(new TextEncoder().encode('LIT'))`.
+    The declaration-less inline form is admitted; what is required is
+    at least one decode term (a bare literal return is left to other
+    hooks).
+
+    Node-exact desugar (v24.20.0): TextEncoder is always UTF-8 and
+    TextDecoder() defaults to UTF-8, so decode(encode(s)) is the
+    identity except lone surrogates become U+FFFD (modeled by
+    _js_f856_sanitize). Ctors take no arguments here -- any argument
+    fails closed (a non-UTF-8 decoder would break the round-trip).
+    `decode` with options, `encode` of a non-literal, decode of an
+    unknown binding, and a second binding of any codec name fail
+    closed. _MAX_DECODE_BYTES on the result. Never evals. No twin
+    (novel builtin class). Returns (value, next_index), or None when
+    the head does not match or a guard fails.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        k = _js_skip_ws(stmts, 0)
+        enc = {}
+        dec = {}
+        byt = {}
+        # Declarations: `DECL NAME = <encode-expr>;` (bytes binding),
+        # `DECL NAME = new TextEncoder();`, or
+        # `DECL NAME = new TextDecoder();`.
+        while True:
+            kk = _js_skip_ws(stmts, k)
+            dk = (_js_match_kw(stmts, kk, "var")
+                  or _js_match_kw(stmts, kk, "let")
+                  or _js_match_kw(stmts, kk, "const"))
+            if dk is None:
+                break
+            k = _js_skip_ws(stmts, dk)
+            if k >= n or stmts[k] not in _JS_IDENT_START:
+                raise _JSExprFail("F856 decl not ident")
+            dname, k = _js_parse_ident(stmts, k)
+            if (dname in enc or dname in dec or dname in byt
+                    or dname == "arguments"):
+                raise _JSExprFail("F856 decl shadows")
+            k = _js_skip_ws(stmts, k)
+            k = _js_expect(stmts, k, "=")
+            k = _js_skip_ws(stmts, k)
+            kk2 = k
+            try:
+                val, k = _js_parse_f856_encode_expr(stmts, k, enc,
+                                                    state)
+                byt[dname] = val
+            except _JSExprFail:
+                k = kk2
+                kind, k = _js_parse_f856_new_codec(stmts, k)
+                if kind == "enc":
+                    enc[dname] = True
+                else:
+                    dec[dname] = True
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == ";":
+                k += 1
+        # `return ADD;` -- ADD is a string-only additive of
+        # `'LIT'` and decode terms.
+        k = _js_skip_ws(stmts, k)
+        rk = _js_match_kw(stmts, k, "return")
+        if rk is None:
+            raise _JSExprFail("F856 no return")
+        k = _js_skip_ws(stmts, rk)
+        parts = []
+        saw_decode = False
+        while True:
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] in "'\"":
+                v, k = _js_parse_string(stmts, k)
+                parts.append(v)
+            elif k < n and (stmts[k] in _JS_IDENT_START
+                            or stmts.startswith("new", k)):
+                dv, k = _js_parse_f856_decode_term(stmts, k, enc, dec,
+                                                   byt, state)
+                parts.append(dv)
+                saw_decode = True
+            else:
+                raise _JSExprFail("F856 additive bad term")
+            k = _js_skip_ws(stmts, k)
+            if k < n and stmts[k] == "+":
+                k = _js_skip_ws(stmts, k + 1)
+                continue
+            break
+        if not saw_decode:
+            # A codec construct must actually appear -- a bare
+            # literal return is some other hook's business.
+            raise _JSExprFail("F856 no decode term")
+        k = _js_skip_ws(stmts, k)
+        if k < n and stmts[k] == ";":
+            k += 1
+        k = _js_skip_ws(stmts, k)
+        if k != n:
+            raise _JSExprFail("F856 trailing junk")
+        rval = "".join(parts)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F856 concat too long")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
         return None
 
 
@@ -84128,6 +85013,38 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f728 is not None:
             val, i = _f728
             return _js_parse_postfix(text, i, val, depth, state)
+        # F853: (function(){function* G(P1,...,Pn){yield T;...;
+        #   return R?;}var|let|const IT=G(A1,...,Ak);return ADD;})()
+        #   -- parameterized generators (F728's residual; F728's decl
+        #   requires the empty `()`). Tried after F728: disjoint by
+        #   the >=1 param requirement, so no previously-decoded input
+        #   changes behavior. None falls through like F728.
+        _f853_saved_parts = state['parts']; _f853_saved_ops = state['ops']
+        _f853 = _js_parse_f853_paramgen_iife(text, i, depth, state)
+        if _f853 is None:
+            state['parts'] = _f853_saved_parts; state['ops'] = _f853_saved_ops
+        if _f853 is not None:
+            val, i = _f853
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F854: (function(){function* G(){yield 'LIT';...;
+        #   return 'LIT';}var|let|const IT=G();(IT.next();)*
+        #   return ADD;})() and the no-yield twin
+        #   (function(){function* G(){return 'LIT';}
+        #   var|let|const IT=G();return ADD;})() -- generator return
+        #   values with bare `IT.next();` statements (F728's
+        #   residual; F728 requires `return` immediately after the
+        #   iterator decl and >=1 yield). Tried after F853: the
+        #   grammar overlaps F728's shape (superset, identical
+        #   values) so F728 -- hooked earlier -- claims the shared
+        #   shapes first; the new coverage is the bare-statement and
+        #   no-yield shapes. None falls through like F728.
+        _f854_saved_parts = state['parts']; _f854_saved_ops = state['ops']
+        _f854 = _js_parse_f854_genreturn_iife(text, i, depth, state)
+        if _f854 is None:
+            state['parts'] = _f854_saved_parts; state['ops'] = _f854_saved_ops
+        if _f854 is not None:
+            val, i = _f854
+            return _js_parse_postfix(text, i, val, depth, state)
         # F797: (function(){function* A(){...}[function* B(){...}]*
         #   var|let|const IT=GEN();return ADD;})() with at least one
         #   `yield*` delegation across the declared generators --
@@ -84191,6 +85108,36 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f793_saved_parts; state['ops'] = _f793_saved_ops
         if _f793 is not None:
             val, i = _f793
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F855: (function(){var|let|const IT=SRC.values().take(n)
+        #   .toArray();return ADD;})() -- var-bound `.take(n)` reads
+        #   (F793's residual; F793 requires the bare-return
+        #   spread-join shape with no declarations). Tried after
+        #   F793: disjoint by the declaration requirement, so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to F663 like F793.
+        _f855v_saved_parts = state['parts']; _f855v_saved_ops = state['ops']
+        _f855v = _js_parse_f855_take_varbound_iife(text, i, depth, state)
+        if _f855v is None:
+            state['parts'] = _f855v_saved_parts; state['ops'] = _f855v_saved_ops
+        if _f855v is not None:
+            val, i = _f855v
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F856: (function(){var|let|const B=new TextEncoder()
+        #   .encode('LIT');return ADD;})() and
+        #   (function(){var|let|const E=new TextEncoder();
+        #   var|let|const D=new TextDecoder();return ADD;})() --
+        #   TextEncoder/TextDecoder round-trips (no twin; novel
+        #   builtin class). Tried after F855: the `new
+        #   TextEncoder` head is disjoint from every earlier hook,
+        #   so no previously-decoded input changes behavior. None
+        #   falls through to F663 like F793.
+        _f856_saved_parts = state['parts']; _f856_saved_ops = state['ops']
+        _f856 = _js_parse_f856_textcodec_iife(text, i, depth, state)
+        if _f856 is None:
+            state['parts'] = _f856_saved_parts; state['ops'] = _f856_saved_ops
+        if _f856 is not None:
+            val, i = _f856
             return _js_parse_postfix(text, i, val, depth, state)
         # F753: (function(){function NAME(P1..Pn){return ADD;}
         #   return NAME(lit|...SRC, ...)[+'LIT'...];})() and the
