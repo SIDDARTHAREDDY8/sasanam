@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""Red-first for F893: bare sort() statement form.
+"""Red-first for F893: eval / Function-constructor calls unmodeled.
 
-The F872 closure models sort with a constant-zero comparator, but
-`var a=['f1','f2'];a.sort();return a[0]+a[1];` resolves node-exactly
-while the decoder produces zero variants. Close-when: the decoder
-models the bare-sort statement form node-exactly (or refuses the
-laundering coded) such that find_credential flags them, red-first
-verified, honest text unaffected.
-Filed 2026-10-09 wave-387 lane 11.
+the decoder has no eval production at all: indirect/aliased eval and Function-constructor calls resolve node-exactly while the decoder produces zero variants. Same-class: direct eval, eval.call/apply, globalThis.eval, template-literal eval args, Function alias, g.constructor(...), multi-param Function.
+Filed 2026-10-09 06:58 UTC wave-387 (attack round 55).
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
-(node v24.20.0 verified.)
+(node v24.20.0 verified; short + 39-char split credentials.)
 """
 import os
 import sys
@@ -25,10 +20,10 @@ _B = "456789" + "abcdef"
 
 SHAPES = [
     ("s1",
-     "(function(){var a=['%s','%s'];a.sort();return a[0]+a[1];})()" % (_A, _B),
+     "(function(){var g=eval;return g("'%s'")+'%s';})()" % (_A, _B),
      True),
     ("s2",
-     "(function(){var a=['%s','%s'];a.sort();return a[1]+a[0];})()" % (_B, _A),
+     "(function(){return (0,eval)("'%s'")+'%s';})()" % (_A, _B),
      True),
 ]
 

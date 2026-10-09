@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""Red-first for F894: single .bind on a named function declaration.
+"""Red-first for F894: with-statement binding residuals.
 
-The F870 closure models 2-dispatch bind chains on named declarations,
-but a single `f.bind(null)()` resolves node-exactly while the decoder
-produces zero variants. Close-when: the decoder models single-bind on
-named declarations node-exactly (or refuses the laundering coded)
-such that find_credential flags them, red-first verified, honest text
-unaffected.
-Filed 2026-10-09 wave-387 lane 11.
+the decoder models only the bare single-read shape with(o){r=k;} (blocked twin); var declarations inside the with body, compound expressions, multi-reads, nested with, and method calls all miss.
+Filed 2026-10-09 06:58 UTC wave-387 (attack round 55).
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
-(node v24.20.0 verified.)
+(node v24.20.0 verified; short + 39-char split credentials.)
 """
 import os
 import sys
@@ -25,14 +20,16 @@ _B = "456789" + "abcdef"
 
 SHAPES = [
     ("s1",
-     "(function(){function f(){return '%s';}return f.bind(null)()+'%s';})()" % (_A, _B),
+     "(function(){var o={k:'%s'};with(o){var q=k;}return q+'%s';})()" % (_A, _B),
      True),
     ("s2",
-     "(function(){function f(a){return a;}return f.bind(null,'%s')()+'%s';})()" % (_A, _B),
+     "(function(){var o={k:'%s',j:'%s'};var r='';with(o){r=k+j;}return r;})()" % (_A, _B),
      True),
 ]
 
 CONTROLS = [
+    ("twin-bare-read",
+     "(function(){var o={k:'%s'};var r='';with(o){r=k;}return r+'%s';})()" % (_A, _B), True),
     ("junk-quiet",
      "'(function(){var s=\\'ab\\';return s;})()'", False),
 ]
