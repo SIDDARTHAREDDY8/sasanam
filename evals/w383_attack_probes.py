@@ -28,11 +28,11 @@ New findings (21, all LOW, all OPEN), filed F740-F760:
 
 Known-open pins (each probe returns HELD when the miss reproduces; a
 literal BREAK verdict means the pin failed or a NEW break appeared):
-F713 (lane-7 kept) + F714-F737 (round 50), F742-F760 (this round;
-F740/F741 closed wave-384).
+F713 (lane-7 kept) + F714-F737 (round 50), F756-F760 (this round;
+F740-F755 closed wave-384).
 
 Closed pins (must BLOCK, else BREAK): F700-F712 (wave-382 closures),
-F713-F737 (wave-383 closures), F740/F741 (wave-384 closures), F746, F747 (wave-384 lane 5).
+F713-F737 (wave-383 closures), F740-F755 (wave-384 closures).
 
 Rides-with-documented-scope (validated, NOT filed):
 - F723 variant (Object.create proto-chain getter, filed shape verbatim) -- still misses; same open finding, not re-filed.
@@ -763,28 +763,28 @@ def test_r51_f751_s2_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r51_f754_s1_open():
-    """F754 OPEN (delete operator statements): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s',y:'junk'};delete o.y;return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f752_s1_open():
+    """F754 CLOSED (wave-384 lane 9): blocks coded."""
+    miss = ok = _blocked("(function(){var o={x:'%s',y:'junk'};delete o.y;return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f754_s2_open():
-    """F754 OPEN (delete operator statements): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s',y:'junk'};delete o['y'];return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f752_s2_open():
+    """F754 CLOSED (wave-384 lane 9): blocks coded."""
+    miss = ok = _blocked("(function(){var o={x:'%s',y:'junk'};delete o['y'];return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f755_s1_open():
-    """F755 OPEN (F535 residual: computed string-name getters): miss reproduces."""
-    miss = _misses("(function(){var o={get ['x'](){return '%s';}};return o.x+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f753_s1_open():
+    """F755 CLOSED (wave-384 lane 9): blocks coded."""
+    miss = ok = _blocked("(function(){var o={get ['x'](){return '%s';}};return o.x+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r51_f755_s2_open():
-    """F755 OPEN (F535 residual: computed string-name getters): miss reproduces."""
-    miss = _misses("(function(){var o={get ['x'](){return '%s';}};return o['x']+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f753_s2_open():
+    """F755 CLOSED (wave-384 lane 9): blocks coded."""
+    miss = ok = _blocked("(function(){var o={get ['x'](){return '%s';}};return o['x']+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r51_f756_s1_open():
