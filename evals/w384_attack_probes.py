@@ -332,28 +332,28 @@ def test_r52_f765_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r52_f766_s1_open():
-    """F766 OPEN: miss reproduces."""
-    miss = _misses("(function(){return [['%s'],['xx']].find(function(a){return true;})[0]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f766_s1_closed():
+    """F766 CLOSED (wave-385 lane 3): blocks coded."""
+    hit = _blocked("(function(){return [['%s'],['xx']].find(function(a){return true;})[0]+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f766_s2_open():
-    """F766 OPEN: miss reproduces."""
-    miss = _misses("(function(){return [['xx'],['%s']].findLast(function(a){return true;})[0]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f766_s2_closed():
+    """F766 CLOSED (wave-385 lane 3): blocks coded."""
+    hit = _blocked("(function(){return [['xx'],['%s']].findLast(function(a){return true;})[0]+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f767_s1_open():
-    """F767 OPEN: miss reproduces."""
-    miss = _misses("(function(){return ['xx','%s','%s'].splice(1).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f767_s1_closed():
+    """F767 CLOSED (wave-385 lane 3): blocks coded."""
+    hit = _blocked("(function(){return ['xx','%s','%s'].splice(1).join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f767_s2_open():
-    """F767 OPEN: miss reproduces."""
-    miss = _misses("(function(){return ['xx','%s','%s','yy'].splice(1,2).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f767_s2_closed():
+    """F767 CLOSED (wave-385 lane 3): blocks coded."""
+    hit = _blocked("(function(){return ['xx','%s','%s','yy'].splice(1,2).join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r52_f768_s1_open():
