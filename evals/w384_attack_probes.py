@@ -658,16 +658,16 @@ def test_r52_f792_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r52_f793_s1_open():
-    """F793 OPEN: miss reproduces."""
-    miss = _misses("(function(){return [...['%s','%s'].values().map(function(x){return x;})].join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f793_s1_closed():
+    """F793 CLOSED (wave-385 lane 16): blocks."""
+    hit = _blocked("(function(){return [...['%s','%s'].values().map(function(x){return x;})].join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r52_f793_s2_open():
-    """F793 OPEN: miss reproduces."""
-    miss = _misses("(function(){return [...['xx','%s','%s'].values().drop(1)].join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f793_s2_closed():
+    """F793 CLOSED (wave-385 lane 16): blocks."""
+    hit = _blocked("(function(){return [...['xx','%s','%s'].values().drop(1)].join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 
 def _green_check():

@@ -23,8 +23,12 @@ _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
-    ("s1", "(function(){var o={};o[Symbol.toPrimitive]=function(){return 120;};return String.fromCharCode(o)+'xb-0123'+'§B';})()".replace("§B", _B), True),
-    ("s2", "(function(){var o={[Symbol.toPrimitive]:function(){return 111;}};return String.fromCharCode(o)+'xb-0123'+'§B';})()".replace("§B", _B), True),
+    # CORRECTED 2026-10-09 (wave-385 lane 16): the filed shapes used
+    # 'xb-0123', which decodes to "xxb-..."/"oxb-..." -- never the
+    # credential, so the red-first could never go green. The literal
+    # is 'oxb-0123' so fromCharCode(120)='x' completes "xoxb-0123".
+    ("s1", "(function(){var o={};o[Symbol.toPrimitive]=function(){return 120;};return String.fromCharCode(o)+'oxb-0123'+'§B';})()".replace("§B", _B), True),
+    ("s2", "(function(){var o={[Symbol.toPrimitive]:function(){return 120;}};return String.fromCharCode(o)+'oxb-0123'+'§B';})()".replace("§B", _B), True),
 ]
 
 CONTROLS = [
