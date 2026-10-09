@@ -24273,7 +24273,9 @@ def _js_f748_subst_expr(expr_text, env):
     """Rewrite an additive expression with a statement-built env (F748/F749).
 
     env maps bound names to a plain string, a dict of member strings
-    (object-literal bindings), or None (declared but unbound).
+    (object-literal bindings), None (declared but unbound), or the
+    _JS_F748_NULL sentinel (null-initialized, F923 -- left in place
+    so the additive grammar fails closed on it).
     Every value-position name token (the F611/F501 token discipline
     via _js_ident_tokens -- never inside string literals, never
     property names) is replaced by its quoted value; `NAME.MEMBER`
@@ -24316,8 +24318,8 @@ def _js_f748_subst_expr(expr_text, env):
             out.append(_js_f611_quote(val[mname]))
             pos = k
             continue
-        if val is None:
-            continue  # unbound: the additive fails closed
+        if val is None or val is _JS_F748_NULL:
+            continue  # unbound/null: the additive fails closed
         if dot_member:
             # `NAME.MEMBER` on a plain string reads undefined in
             # the engine -- refuse coded rather than mis-decode.
@@ -24373,12 +24375,13 @@ def _js_f748_scan_expr(text, j):
 def _js_f748_truthy(value):
     """Node-exact ToBoolean over the F748 value domain (v24.20.0).
 
-    Values are plain strings, object-literal dicts, or None
-    (declared-but-unbound, i.e. undefined): '' and undefined are
-    falsy; objects are always truthy; every other string is truthy.
-    Never evals.
+    Values are plain strings, object-literal dicts, None
+    (declared-but-unbound, i.e. undefined), or the _JS_F748_NULL
+    sentinel (null-initialized, F923): '' and undefined and null
+    are falsy; objects are always truthy; every other string is
+    truthy. Never evals.
     """
-    if value is None:
+    if value is None or value is _JS_F748_NULL:
         return False
     if isinstance(value, dict):
         return True
@@ -24405,6 +24408,18 @@ def _js_f748_eval_additive(expr_text, env, depth, state):
     return val
 
 
+_JS_F748_NULL = object()
+"""Sentinel for a null-initialized F748 binding (F923).
+
+`var s=null` is engine-distinct from a declared-but-unbound
+(`undefined`) binding: `??=` assigns to both, `||=` assigns to
+both, `&&=` assigns to neither, but `+=` renders "null" vs
+"undefined" (node v24.20.0). The sentinel flows through the
+statement loop only; the return substitution leaves it in place
+so the additive grammar fails closed (a null final value is
+never decoded). Never evals."""
+
+
 def _js_parse_f748_logassign_iife(text, i, depth, state):
     """Parse `(function(){DECL; STMT+; return EXPR;})()` (F748).
 
@@ -24419,7 +24434,8 @@ def _js_parse_f748_logassign_iife(text, i, depth, state):
 
     Node-exact desugar (v24.20.0): the declaration binds one name
     to a string literal, an object literal of string values
-    (`_js_parse_object_literal_keys_values`), or nothing
+    (`_js_parse_object_literal_keys_values`), `null` (F923 -- the
+    null sentinel, engine-distinct from undefined), or nothing
     (`var`/`let`-only -- `const` without an initializer is a
     SyntaxError in the engine). Each statement `TARGET OP RHS;`
     evaluates RHS additively under the current environment, then
@@ -24490,6 +24506,12 @@ def _js_parse_f748_logassign_iife(text, i, depth, state):
             if k < n and text[k] in "'\"":
                 init_val, k = _js_parse_string(text, k)
                 env[name] = init_val
+            elif _js_match_kw(text, k, "null") is not None:
+                # F923: a null initializer -- engine-distinct from
+                # undefined (node v24.20.0): ??= and ||= assign,
+                # &&= does not, += renders "null".
+                k = _js_match_kw(text, k, "null")
+                env[name] = _JS_F748_NULL
             elif k < n and text[k] == "{":
                 okeys, ovals, k = \
                     _js_parse_object_literal_keys_values(
@@ -24556,14 +24578,19 @@ def _js_parse_f748_logassign_iife(text, i, depth, state):
                 else:
                     new_val = None
             elif op == "??=":
-                if cur is None:
+                if cur is None or cur is _JS_F748_NULL:
                     new_val = rhs_val
                 else:
                     new_val = None
             else:  # +=
                 if isinstance(cur, dict):
                     raise _JSExprFail("f748 plus on object")
-                base = "undefined" if cur is None else cur
+                if cur is None:
+                    base = "undefined"
+                elif cur is _JS_F748_NULL:
+                    base = "null"
+                else:
+                    base = cur
                 new_val = base + rhs_val
             if new_val is not None:
                 if member is None:
@@ -29169,6 +29196,10 @@ def _js_f655_sim_accum(text, j, env, state):
     val, mutable = env[name]
     if not mutable:
         raise _JSExprFail("F655 accum const")
+    if not isinstance(val, str):
+        # F922: integer bindings are discriminant-only -- an
+        # accumulation into one is outside the modeled subset.
+        raise _JSExprFail("F655 accum non-string target")
     q = _js_skip_ws(text, q)
     if q < n and text.startswith("+=", q):
         q += 2
@@ -29187,6 +29218,10 @@ def _js_f655_sim_accum(text, j, env, state):
         if rname not in env:
             raise _JSExprFail("F655 accum rhs unbound")
         rhs = env[rname][0]
+        if not isinstance(rhs, str):
+            # F922: integer bindings never flow into string
+            # accumulation -- fail closed, never mis-decoded.
+            raise _JSExprFail("F655 accum rhs non-string")
     else:
         raise _JSExprFail("F655 bad accum rhs")
     q = _js_skip_ws(text, q)
@@ -29236,7 +29271,7 @@ def _js_f655_sim_inner(text, j, inner_end, env, state, depth):
             # closed on).
             j = _js_f655_sim_if_const(text, j, env, state, depth + 1)
             continue
-        for wkw, wfn in (("switch", _js_f655_sim_switch),
+        for wkw, wfn in (("switch", _js_f922_sim_switch),
                          ("try", _js_f655_sim_try),
                          ("do", _js_f655_sim_dowhile),
                          ("with", _js_f655_sim_with)):
@@ -29317,7 +29352,7 @@ def _js_f655_switch_disc(text, j):
     return "i", val, q
 
 
-def _js_f655_sim_switch(text, j, env, state, depth):
+def _js_f655_sim_switch(text, j, env, state, depth, _disc_fn=None):
     """Simulate `switch(DISC){case LBL: STMTS; ...}` at text[j] (F655).
 
     Node-exact (v24.20.0) for the modeled subset: the discriminant
@@ -29329,7 +29364,9 @@ def _js_f655_sim_switch(text, j, env, state, depth):
     or the end; `default:` runs only when no case matches (a
     duplicate `default:` is a node SyntaxError -- fail closed); a
     labeled `break LBL;` propagates to an enclosing labeled block.
-    Bodies hold accumulation/break statements only. Returns the
+    Bodies hold accumulation/break statements only. `_disc_fn`
+    (F922) optionally overrides the discriminant parser; the
+    default is the literal-only `_js_f655_switch_disc`. Returns the
     index just past `}`. Never evals."""
     n = len(text)
     if depth >= _JS_EXPR_MAX_DEPTH:
@@ -29337,7 +29374,8 @@ def _js_f655_sim_switch(text, j, env, state, depth):
     j = _js_skip_ws(text, _js_match_kw(text, j, "switch"))
     j = _js_expect(text, j, "(")
     j = _js_skip_ws(text, j)
-    dtag, disc, j = _js_f655_switch_disc(text, j)
+    disc_fn = _disc_fn if _disc_fn is not None else _js_f655_switch_disc
+    dtag, disc, j = disc_fn(text, j)
     j = _js_skip_ws(text, j)
     if dtag == "i" and j < n and text[j] == ".":
         raise _JSExprFail("F655 fractional switch")
@@ -29393,6 +29431,72 @@ def _js_f655_sim_switch(text, j, env, state, depth):
                     raise
                 break
     return j
+
+
+def _js_f922_switch_disc(text, j, env):
+    """Parse one F922 switch discriminant at text[j].
+
+    Tries the F655 literal discriminant first (integer or string
+    literal -- identical behavior), then a bound identifier: the
+    name must be bound in env to an int (F922 integer
+    initializers) or a string, resolved with the same ("i"/"s",
+    value) tag discipline the engine's `===` matching needs.
+    Anything else (unbound names, non-int/non-string values)
+    fails closed -- rejected, never mis-decoded. Returns (tag,
+    value, next_index). Never evals.
+    """
+    try:
+        return _js_f655_switch_disc(text, j)
+    except _JSExprFail:
+        pass
+    n = len(text)
+    if j < n and text[j] in _JS_IDENT_START:
+        name, q = _js_parse_ident(text, j)
+        if name in env:
+            val = env[name][0]
+            if isinstance(val, bool):
+                raise _JSExprFail("F922 bool discriminant")
+            if isinstance(val, int):
+                return "i", val, q
+            if isinstance(val, str):
+                return "s", val, q
+    raise _JSExprFail("F922 discriminant not modeled")
+
+
+def _js_f922_sim_switch(text, j, env, state, depth):
+    """Simulate `switch(IDENT){case LBL: STMTS; ...}` at text[j] (F922).
+
+    F922 (LOW, filed 2026-10-09 by wave-388 attack round 56): the
+    F655 switch sim parses literal-only discriminants, so
+      `(function(){var s='';var x=1;
+        switch(x){case 1:s+='f1';case 2:s+='f2';break;default:}
+        return s;})()`
+    and the default-into-case-fallthrough twin node-evaluate
+    (v24.20.0) to the exact credential while the decoder produced
+    zero variants.
+
+    Node-exact desugar (v24.20.0): the discriminant identifier
+    resolves against the F655 env (F922 integer initializers, or
+    string bindings); the rest of the simulation is the F655
+    switch exactly (strict-equality tagged match, fallthrough to
+    `break;`/end, `default:` only on no match, labeled `break`
+    propagates). The F655 literal path is attempted first with
+    F452 snapshot/restore on the miss (wave-383 rule), so no
+    previously-decoded input changes behavior. Case labels stay
+    literal-only (an identifier label is a node-evaluated
+    expression -- fail closed). Returns the index just past `}`.
+    Never evals.
+    """
+    _svp, _svo = state["parts"], state["ops"]
+    try:
+        return _js_f655_sim_switch(text, j, env, state, depth)
+    except _JSExprFail:
+        # Speculative: the F655 attempt charges nothing before the
+        # discriminant parse, but restore anyway (wave-383 rule).
+        state["parts"], state["ops"] = _svp, _svo
+    return _js_f655_sim_switch(
+        text, j, env, state, depth,
+        _disc_fn=lambda t, jj: _js_f922_switch_disc(t, jj, env))
 
 
 def _js_f655_sim_try(text, j, env, state, depth):
@@ -29651,7 +29755,9 @@ def _js_f655_sim_if_const(text, j, env, state, depth):
 def _js_f655_top_stmt(text, j, inner_end, env, state, depth):
     """Simulate ONE top-level F655 statement at text[j].
 
-    Accepts `var|const|let NAME='LIT';` (the name must be fresh and
+    Accepts `var|const|let NAME='LIT';` and `var|let|const
+    NAME=INT;` (F922 -- integer literals are stored as int values
+    for the switch-discriminant class; the name must be fresh and
     not reserved -- a duplicate or reserved binding is a node
     SyntaxError -- fail closed), accumulation statements, and the
     five wrapper statements (switch / try-finally / do-while /
@@ -29680,9 +29786,18 @@ def _js_f655_top_stmt(text, j, inner_end, env, state, depth):
             if q >= n or text[q] != "=" or text.startswith(("==", "=>"), q):
                 raise _JSExprFail("F655 decl not initialized")
             q = _js_skip_ws(text, q + 1)
-            if q >= n or text[q] not in "'\"":
+            if q < n and text[q] in "'\"":
+                val, q = _js_parse_string(text, q)
+            elif q < n and (text[q] in _ASCII_DIGITS
+                           or (text[q] == "-" and q + 1 < n
+                               and text[q + 1] in _ASCII_DIGITS)):
+                # F922: integer-literal initializers -- stored as int
+                # values for the switch-discriminant class. Every
+                # other env consumer stays string-only and fails
+                # closed on non-string values (never mis-decoded).
+                val, q = _js_f709_int(text, q)
+            else:
                 raise _JSExprFail("F655 decl not a literal")
-            val, q = _js_parse_string(text, q)
             q = _js_skip_ws(text, q)
             if q < n and text[q] == ",":
                 raise _JSExprFail("F655 multi-declarator")
@@ -29702,7 +29817,7 @@ def _js_f655_top_stmt(text, j, inner_end, env, state, depth):
             if state["parts"] > _JS_EXPR_MAX_PARTS:
                 raise _JSExprFail("too many parts")
             return q
-    for wkw, wfn in (("switch", _js_f655_sim_switch),
+    for wkw, wfn in (("switch", _js_f922_sim_switch),
                      ("try", _js_f655_sim_try),
                      ("do", _js_f655_sim_dowhile),
                      ("with", _js_f655_sim_with)):
@@ -52917,6 +53032,236 @@ def _js_parse_f784_labeled_for_iife(text, i, depth, state):
         return None
 
 
+def _js_f924_for_head(stmts, sj, n, acc):
+    """Parse `for(var|let I=INIT;I<BOUND;I++)` at stmts[sj] (F924).
+
+    The F784 integer-counter discipline exactly (v24.20.0):
+    `var`/`let` counter not shadowing the accumulator, canonical
+    safe-int init, `<`/`<=` against the same counter, plain `++`
+    update. Returns (iname, init, bound, le, next_index). Raises
+    _JSExprFail. Never evals.
+    """
+    m = _js_match_kw(stmts, sj, "var")
+    if m is None:
+        m = _js_match_kw(stmts, sj, "let")
+    if m is None:
+        raise _JSExprFail("F924 for init not var/let")
+    sj = _js_skip_ws(stmts, m)
+    iname, sj = _js_parse_ident(stmts, sj)
+    if iname in (acc, "arguments"):
+        raise _JSExprFail("F924 counter shadows accum")
+    sj = _js_skip_ws(stmts, sj)
+    if sj >= n or stmts[sj] != "=" or stmts.startswith(("==", "=>"),
+                                                       sj):
+        raise _JSExprFail("F924 for init not an assignment")
+    sj = _js_skip_ws(stmts, sj + 1)
+    init, sj = _js_f709_int(stmts, sj)
+    sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, ";")
+    cname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+    if cname != iname:
+        raise _JSExprFail("F924 cond not the counter")
+    sj = _js_skip_ws(stmts, sj)
+    if stmts.startswith("<=", sj):
+        le, sj = True, sj + 2
+    elif sj < n and stmts[sj] == "<":
+        le, sj = False, sj + 1
+    else:
+        raise _JSExprFail("F924 cond not </<=")
+    bound, sj = _js_f709_int(stmts, sj)
+    sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, ";")
+    uname, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+    if uname != iname:
+        raise _JSExprFail("F924 update not the counter")
+    sj = _js_skip_ws(stmts, sj)
+    if not stmts.startswith("++", sj):
+        raise _JSExprFail("F924 update not ++")
+    sj += 2
+    if sj < n and stmts[sj] == "+":
+        raise _JSExprFail("F924 update not plain ++")
+    sj = _js_skip_ws(stmts, sj)
+    sj = _js_expect(stmts, sj, ")")
+    return iname, init, bound, le, sj
+
+
+def _js_parse_f924_nested_for_iife(text, i, depth, state):
+    """Parse nested labeled-for continue accumulation (F924).
+
+    `(function(){var|let R='';LBL:for(var|let I=INIT;I<BOUND;I++)`
+    `{for(var|let J=JINIT;J<JBOUND;J++){if(C===K)continue LBL;`
+    `R+='LIT';}}return ADD;})()`
+
+    F924 (LOW, filed 2026-10-09 by wave-388 attack round 56): the
+    F784 labeled-for models a SINGLE loop, so a `continue LBL`
+    from a NESTED loop targeting the outer label resolves
+    node-exactly while the decoder produced zero variants:
+      `(function(){var s='';outer:for(var i=0;i<1;i++){`
+      `for(var j=0;j<3;j++){if(j===1)continue outer;s+='f1';}}`
+      `return s+'f2';})()`
+
+    Node-exact desugar (v24.20.0): both counters run the F784
+    integer sequence (`<`/`<=`, plain `++`); the inner body is a
+    sequence of `R+='LIT';` / `R=R+'LIT';` accumulations and
+    `if(C===K)continue LBL;` / `if(C!==K)continue LBL;` guards
+    where C is either counter and K a canonical int literal --
+    the guard is decidable per iteration; a taken guard skips to
+    the next OUTER iteration (the inner loop restarts). `continue`
+    for another label, an unlabeled `continue`, `break`, or any
+    other inner statement fails closed (a jump for another label
+    is a node SyntaxError). Total inner-body executions are
+    capped at _JS_F679_MAX_ITERS; F452 charges 1 part per inner
+    statement and per outer iteration; the result is bounded by
+    _MAX_DECODE_BYTES. Returns (value, next_index), or None when
+    the head does not match or a guard fails. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        n = len(stmts)
+        sj = _js_skip_ws(stmts, 0)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        lbl, sj = _js_parse_ident(stmts, sj)
+        if lbl in _F611_RESERVED:
+            raise _JSExprFail("F924 reserved label")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ":")
+        sj = _js_skip_ws(stmts, sj)
+        fk = _js_match_kw(stmts, sj, "for")
+        if fk is None:
+            raise _JSExprFail("F924 not a labeled for")
+        sj = _js_skip_ws(stmts, fk)
+        sj = _js_expect(stmts, sj, "(")
+        iname, init, bound, le, sj = _js_f924_for_head(
+            stmts, _js_skip_ws(stmts, sj), n, acc)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "{")
+        sj = _js_skip_ws(stmts, sj)
+        fk = _js_match_kw(stmts, sj, "for")
+        if fk is None:
+            raise _JSExprFail("F924 inner not a for")
+        sj = _js_skip_ws(stmts, fk)
+        sj = _js_expect(stmts, sj, "(")
+        jname, jinit, jbound, jle, sj = _js_f924_for_head(
+            stmts, _js_skip_ws(stmts, sj), n, acc)
+        if jname == iname:
+            raise _JSExprFail("F924 counter shadow")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "{")
+        # Inner BODY -> op list: ("accum", lit) |
+        # ("guarded_continue", cname, kval, is_neq).
+        ops = []
+        while True:
+            q = _js_skip_ws(stmts, sj)
+            if q >= n:
+                raise _JSExprFail("F924 inner body overrun")
+            if stmts[q] == "}":
+                sj = q + 1
+                break
+            try:
+                lit, q2 = _js_f784f785_accum_stmt(stmts, q, acc,
+                                                  depth, state)
+            except _JSExprFail:
+                q2 = None
+            if q2 is not None:
+                ops.append(("accum", lit))
+                state["parts"] += 1  # F452: charge per body stmt
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sj = q2
+                continue
+            ik = _js_match_kw(stmts, q, "if")
+            if ik is None:
+                raise _JSExprFail("F924 inner stmt not modeled")
+            q2 = _js_expect(stmts, _js_skip_ws(stmts, ik), "(")
+            cname, q2 = _js_parse_ident(stmts, _js_skip_ws(stmts,
+                                                          q2))
+            if cname != iname and cname != jname:
+                raise _JSExprFail("F924 guard not a counter")
+            q2 = _js_skip_ws(stmts, q2)
+            if stmts.startswith("===", q2):
+                is_neq, q2 = False, q2 + 3
+            elif stmts.startswith("!==", q2):
+                is_neq, q2 = True, q2 + 3
+            else:
+                raise _JSExprFail("F924 guard not ===/!==")
+            q2 = _js_skip_ws(stmts, q2)
+            kval, q2 = _js_f709_int(stmts, q2)
+            q2 = _js_skip_ws(stmts, q2)
+            q2 = _js_expect(stmts, q2, ")")
+            ck = _js_match_kw(stmts, _js_skip_ws(stmts, q2),
+                              "continue")
+            if ck is None:
+                raise _JSExprFail("F924 guard not continue")
+            lq = _js_skip_ws(stmts, ck)
+            if lq >= n or stmts[lq] not in _JS_IDENT_START:
+                raise _JSExprFail("F924 continue unlabeled")
+            _js_f784_no_line_terminator(stmts, ck, lq)
+            tlbl, lq = _js_parse_ident(stmts, lq)
+            if tlbl != lbl:
+                raise _JSExprFail("F924 continue wrong label")
+            lq = _js_expect(stmts, _js_skip_ws(stmts, lq), ";")
+            ops.append(("guarded_continue", cname, kval, is_neq))
+            state["parts"] += 1  # F452: charge per body stmt
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = lq
+        if not ops:
+            raise _JSExprFail("F924 empty inner body")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "}")  # close outer loop
+        # Node-exact simulation (v24.20.0). The ranges stay lazy
+        # (never materialized -- a huge bound is a fail-closed
+        # iteration cap, not an allocation).
+        outer_count = (bound - init + 1) if le else (bound - init)
+        inner_count = (jbound - jinit + 1) if jle else \
+            (jbound - jinit)
+        outer_count = max(outer_count, 0)
+        inner_count = max(inner_count, 0)
+        if outer_count * inner_count > _JS_F679_MAX_ITERS:
+            raise _JSExprFail("F924 too many iterations")
+        outer_vals = range(init, bound + 1) if le \
+            else range(init, bound)
+        inner_vals = range(jinit, jbound + 1) if jle \
+            else range(jinit, jbound)
+        frags = []
+        for iv in outer_vals:
+            for jv in inner_vals:
+                # The op loop breaks on a taken guard; the for/else
+                # below distinguishes "guard taken -> restart the
+                # outer loop" (break out of the inner loop) from
+                # "body complete -> next inner iteration".
+                for op in ops:
+                    if op[0] == "accum":
+                        frags.append(op[1])
+                    else:
+                        _, cname, kval, is_neq = op
+                        cv = iv if cname == iname else jv
+                        taken = (cv != kval) if is_neq else \
+                            (cv == kval)
+                        if taken:
+                            break  # continue outer
+                else:
+                    continue
+                break  # a taken guard restarts the outer loop
+            state["parts"] += 1  # F452: charge per outer iter
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        rval = "".join(frags)
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F924 concat too long")
+        rval = _js_f784f785_return_additive(stmts, sj, acc, rval,
+                                            depth, state)
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f785_flagwhile_iife(text, i, depth, state):
     """Parse boolean-flag while-loop accumulation (F785).
 
@@ -69363,6 +69708,12 @@ def _js_parse_f645_bound_operand(text, i, bindings):
         name, k = _js_parse_ident(text, j)
         if name not in bindings:
             raise _JSExprFail("F645 unbound ident")
+        if not isinstance(bindings[name], str):
+            # F922: integer bindings never flow into the string
+            # additive -- fail closed, never mis-decoded. All
+            # pre-existing callers pass string-only bindings, so
+            # this never fires on previously-accepted inputs.
+            raise _JSExprFail("F645 bound non-string")
         return bindings[name], k
     raise _JSExprFail("F645 bad operand")
 
@@ -90468,6 +90819,51 @@ def _js_parse_f870_chain_value(text, j, params, body, depth, state,
     return _js_f556_apply(params, body, total), q
 
 
+def _js_parse_f921_partial_call(text, j, params, body, depth, state,
+                                prebound):
+    """Parse a bare `GNAME(LIT, ...)` call completing a var-alias bind
+    at text[j] (past the alias name) (F921).
+
+    F921 (LOW, filed 2026-10-09 by wave-388 attack round 56): F870
+    twin 2 models `var GNAME=NAME.bind(BT,ARGS);` followed by a
+    further `.bind`/`.call`/`.apply` dispatch on GNAME, but the
+    engine also resolves a BARE call `GNAME(...)` -- partial
+    application where the bound args prepend the call args:
+      `(function(){function f(a,b){return a+b;}
+        var g=f.bind(null,'f1');return g('f2');})()`
+    node-evaluates (v24.20.0) to the exact credential while the
+    decoder produced zero variants.
+
+    Node-exact desugar (v24.20.0): `f.bind(BT,ARGS)` returns a
+    bound function; calling it with CALLARGS invokes `f` with
+    `ARGS + CALLARGS` positionally (the bound thisArg is parsed
+    and discarded -- the modeled bodies never reference `this`,
+    the F636 precedent). Arity follows the F556 precedent: fewer
+    total args than params fail closed (the engine would coerce
+    the missing slot to `undefined`); extras are dropped
+    engine-exactly. Every call arg is a string literal (the F809
+    literal check). Returns (value, next_index). Raises
+    _JSExprFail. Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    q = _js_expect(text, q, "(")
+    callargs, q = _js_parse_string_literal_list(
+        text, _js_skip_ws(text, q), state, ")")
+    _js_check_plain_strs(callargs, "F921 call arg")
+    total = list(prebound) + list(callargs)
+    if len(total) < len(params):
+        # F614/F636 arity precedent: a referenced slot coerces to
+        # `undefined` in node -- fail closed, never mis-decoded.
+        raise _JSExprFail("F921 arity mismatch")
+    total = total[:len(params)]
+    state["parts"] += len(callargs)  # F452: charge per call arg
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1  # the partial call is obfuscation-shaped
+    return _js_f556_apply(params, body, total), q
+
+
 def _js_parse_f870_bindchain_iife(text, i, depth, state):
     """Parse `(function(){function NAME(P1..Pn){return ADD;}return
     ADD2;})()` / `(function(){function NAME(P1..Pn){return ADD;}var
@@ -90511,6 +90907,9 @@ def _js_parse_f870_bindchain_iife(text, i, depth, state):
     - twin 2: `var GNAME=NAME.bind(BT,ARGS);` then `return ADD2;`
       where the chain terms are `GNAME.bind(BT,...)[...](...)`
       with exactly one dispatch (the `var` bind is the first hop).
+      F921: a bare `GNAME(LITS...)` call term (no further
+      dispatch) completes the partial application node-exactly --
+      the bound args prepend the call args (v24.20.0).
     - the first dispatch MUST be `.bind` (`.call`/`.apply` invoke
       immediately -- the F636 precedent); every bound/call arg is
       a string literal (the F809 literal check); exactly `()`
@@ -90624,9 +91023,21 @@ def _js_parse_f870_bindchain_iife(text, i, depth, state):
                             text, nq, params, body, depth, state,
                             prebound, 1)
                 else:
-                    val, q = _js_parse_f870_chain_value(
-                        text, nq, params, body, depth, state,
-                        prebound, 1)
+                    # Twin 2: F921 -- a bare `GNAME(...)` call
+                    # completes the partial application (no further
+                    # dispatch); a dispatch member goes through the
+                    # F870 1-hop chain. The `(` form is structurally
+                    # disjoint from every dispatch head, so no
+                    # previously-decoded input changes behavior.
+                    _qq = _js_skip_ws(text, nq)
+                    if _qq < n and text[_qq] == "(":
+                        val, q = _js_parse_f921_partial_call(
+                            text, nq, params, body, depth, state,
+                            prebound)
+                    else:
+                        val, q = _js_parse_f870_chain_value(
+                            text, nq, params, body, depth, state,
+                            prebound, 1)
                 parts.append(val)
                 saw_chain = True
             else:
@@ -95537,6 +95948,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f784_saved_parts; state['ops'] = _f784_saved_ops
         if _f784 is not None:
             val, i = _f784
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F924: nested labeled-for continue --
+        #   (function(){var|let R='';LBL:for(var|let I=INIT;I<BOUND;I++)
+        #   {for(var|let J=JINIT;J<JBOUND;J++){if(C===K)continue LBL;
+        #   R+='LIT';}}return ADD;})().
+        #   Tried after F784: F784's labeled-for fails closed on a
+        #   nested `for` in the loop body ("F784 for body stmt not
+        #   modeled" -- red-first verified: 2 BREAK on the open
+        #   tree), and this requires the nested-for head which F784
+        #   rejects, so no previously-decoded input changes
+        #   behavior. The F784 hook and its trailing `return` are
+        #   untouched (wave-379 lesson).
+        _f924_saved_parts = state['parts']; _f924_saved_ops = state['ops']
+        _f924 = _js_parse_f924_nested_for_iife(text, i, depth, state)
+        if _f924 is None:
+            state['parts'] = _f924_saved_parts; state['ops'] = _f924_saved_ops
+        if _f924 is not None:
+            val, i = _f924
             return _js_parse_postfix(text, i, val, depth, state)
         # F785: (function(){var|let R='';var|let FLAG=true|!0|!1|false;
         #   while(FLAG){BODY}return ADD;})() -- boolean-flag
