@@ -49958,6 +49958,414 @@ def _js_parse_f782_thisarg_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f801_named_fn(text, j, depth, state):
+    """Parse `function NAME(params){return BODY[;]}` at text[j] (F801).
+
+    The named-declaration twin of _js_parse_f614_fn_target's function
+    branch: the name is REQUIRED here (it is the Reflect.apply
+    target) and is returned. Params use the F519 grammar via
+    _js_parse_fn_params (ASCII idents, no duplicates, no rest);
+    the body is the F614 additive body (param/literal operands, one
+    optional grouping-paren wrap). Generators (`function*`), async
+    (never routed here -- the head has no `async`), and `this` /
+    call / member bodies fail closed via the F614/F556 grammars
+    (rejected, never mis-decoded). Returns (name, params, body,
+    next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, j, "function")
+    if k is None:
+        raise _JSExprFail("F801 not a function declaration")
+    if k < n and text[k] == "*":
+        raise _JSExprFail("F801 generator target")
+    q = _js_skip_ws(text, k)
+    name, q = _js_parse_ident(text, q)
+    if name == "arguments" or name in _F611_RESERVED:
+        raise _JSExprFail("F801 bad function name")
+    q = _js_skip_ws(text, q)
+    params, q = _js_parse_fn_params(text, q)
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != "{":
+        raise _JSExprFail("F801 function without brace")
+    q = _js_skip_ws(text, q + 1)
+    rk = _js_match_kw(text, q, "return")
+    if rk is None:
+        raise _JSExprFail("F801 function without return")
+    body, q = _js_parse_f614_additive_body(text, rk, params, state)
+    q = _js_skip_ws(text, q)
+    if q < n and text[q] == ";":
+        q = _js_skip_ws(text, q + 1)
+    if q >= n or text[q] != "}":
+        raise _JSExprFail("F801 function without close brace")
+    return name, params, body, q + 1
+
+
+def _js_parse_f801_apply_term(text, j, fname, params, body, depth,
+                              state):
+    """Parse `Reflect.apply(NAME, thisArg, [args])` at text[j] (F801).
+
+    Node-exact desugar (v24.20.0): Reflect.apply(f, thisArg,
+    argsArray) is f.apply(thisArg, argsArray) -- the target is
+    invoked with the args spread in order. The thisArg is parsed
+    and discarded: the modeled bodies never reference `this`
+    (the F614/F782 precedent -- a `this`-reading body fails closed
+    in _js_parse_f801_named_fn). The member accepts the dot form,
+    the `?.` form (Reflect is never nullish, so `?.` === `.`,
+    node-verified), and the F504 bracket-string form via
+    _js_parse_reflect_member_key. The argsArray is the F556
+    string-literal-only list; a missing/non-array argsArray throws
+    in the engine, so it fails closed. Arity follows the F614/F556
+    precedent: fewer args than params fails closed (node coerces
+    the missing slot to undefined), extras are dropped
+    engine-exactly. Returns (value, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_match_kw(text, j, "Reflect")
+    if k is None:
+        raise _JSExprFail("F801 term not Reflect.apply")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "[":
+        mname, k = _js_parse_reflect_member_key(text, k, depth,
+                                                state)
+        if mname != "apply":
+            raise _JSExprFail("F801 Reflect member not apply")
+    else:
+        if k + 1 < n and text[k] == "?" and text[k + 1] == ".":
+            k = _js_skip_ws(text, k + 2)
+        elif k < n and text[k] == ".":
+            k = _js_skip_ws(text, k + 1)
+        else:
+            raise _JSExprFail("F801 Reflect without dot")
+        mk = _js_match_kw(text, k, "apply")
+        if mk is None:
+            raise _JSExprFail("F801 Reflect without apply")
+        k = _js_skip_ws(text, mk)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F801 apply without paren")
+    k = _js_skip_ws(text, k + 1)
+    tname, k = _js_parse_ident(text, k)
+    if tname != fname:
+        raise _JSExprFail("F801 apply target mismatch")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ",")
+    _, k = _js_parse_ignored_value(text, _js_skip_ws(text, k),
+                                   depth, state)
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ",")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "[")
+    args, k = _js_parse_string_literal_list(text, k, state, "]")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, ")")
+    if len(args) < len(params):
+        raise _JSExprFail("F801 arity mismatch")
+    args = args[:len(params)]
+    state["ops"] += 1  # the Reflect.apply dispatch is
+                       # obfuscation-shaped
+    return _js_f556_apply(params, body, args), k
+
+
+def _js_parse_f801_reflect_apply_iife(text, i, depth, state):
+    """Parse `(function(){function NAME(params){return BODY;}
+    return ADD;})()` with `Reflect.apply(NAME, thisArg, [args])`
+    read terms (F801).
+
+    F614 (CLOSED) models .call/.apply/.bind on function-expression
+    receivers, and _js_parse_reflect_apply_concat (F469) models
+    Reflect.apply only for the Array.prototype.concat target; a
+    named function declaration invoked via Reflect.apply has no
+    production:
+      `(function(){function f(){return 'f1';}
+       return Reflect.apply(f,null,[])+'f2';})()`
+      `(function(){function f(a,b){return a+b;}
+       return Reflect.apply(f,null,['f1','f2']);})()`
+    Node-exact (v24.20.0): Reflect.apply(f, thisArg, argsArray) is
+    f.apply(thisArg, argsArray); the thisArg is discarded (modeled
+    bodies never reference `this`, the F614 precedent).
+    Disjoint: every accepted shape carries a named function
+    declaration whose body is the F614 additive grammar plus a
+    `Reflect.apply(NAME,...)` read term in the return additive.
+    F782 requires a `return this.MEM` body (fails closed here);
+    F614 requires a parenthesized function-expression receiver
+    (fails closed on the declaration head); the concat-Reflect
+    route requires the Array.prototype.concat target (fails closed
+    on a bare ident target). Red-first verified: 2 BREAK on the
+    open tree, so no previously-decoded input changes behavior.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async; exactly `()` invocation; no trailing
+      statements; a single optional `;` after the declaration.
+    - declaration: `function NAME(params){return BODY[;]}` with
+      ASCII params (F519 grammar), BODY the F614 additive body;
+      generators, `this`/call/member bodies, and a NAME of
+      `arguments` or a reserved word fail closed.
+    - return: `TERM (+ TERM)*;` where TERM is a plain string
+      literal or a Reflect.apply term; at least one Reflect.apply
+      term (a literal-only return belongs to an earlier route).
+    - the apply target ident must equal NAME; thisArg is any
+      ignored value (object literals fail closed -- the shared
+      _js_parse_ignored_value grammar, F614 precedent); argsArray
+      is a string-literal-only `[` list (empty allowed); a third
+      apply arg, non-literal args, and arity shortfall fail closed.
+    F452 parts charged per return term and per argsArray element;
+    the IIFE wrapper and each dispatch charge one op. Returns
+    (value, next_index), or None when text[i] is not this shape.
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        fname, params, body, sj = _js_parse_f801_named_fn(
+            text, sj, depth, state)
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ";":
+            sj = _js_skip_ws(text, sj + 1)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F801 no return")
+        sj = _js_skip_ws(text, rk)
+        parts = []
+        saw_apply = False
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                lit, sj = _js_parse_string(text, sj)
+                if not isinstance(lit, str) or isinstance(
+                        lit, _JSNumStr):
+                    raise _JSExprFail("F801 return term not a string")
+                parts.append(lit)
+            else:
+                dv, sj = _js_parse_f801_apply_term(
+                    text, sj, fname, params, body, depth, state)
+                parts.append(dv)
+                saw_apply = True
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj += 1
+                continue
+            break
+        if not saw_apply:
+            # A literal-only return belongs to an earlier route.
+            return None
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F801 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f802_validate_elements(elements):
+    """Recursively validate F802 var-bound array elements.
+
+    Elements must be plain string literals or nested _JSArrs of
+    the same (holes/_JSNil, booleans/_JSBool, numerics/_JSNumStr,
+    and any other marker fail closed -- the flat/flatMap desugar
+    is only node-exact for dense string-literal nesting; the
+    F574 native chain enforces the same boundary at apply time).
+    Never evals.
+    """
+    for e in elements:
+        if isinstance(e, _JSArr):
+            _js_f802_validate_elements(e.elements)
+        elif not isinstance(e, str) or isinstance(
+                e, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("F802 non-string array element")
+
+
+def _js_f802_copy_array(arr):
+    """Deep-copy an F802-validated _JSArr (defense-in-depth).
+
+    The accepted chains start with flat/flatMap, which never
+    mutate the receiver in the engine, so the binding is pristine
+    across return terms; the per-term copy removes the entire
+    shared-reference class regardless. Never evals.
+    """
+    def _copy_elems(elements):
+        out = []
+        for e in elements:
+            if isinstance(e, _JSArr):
+                out.append(_JSArr(_copy_elems(e.elements)))
+            else:
+                out.append(e)
+        return out
+    return _JSArr(_copy_elems(arr.elements))
+
+
+def _js_parse_f802_flat_varbound_iife(text, i, depth, state):
+    """Parse `(function(){DECL a=ARRLIT;return ADD;})()` with
+    `a.flat(...)/a.flatMap(...)` read terms (F802).
+
+    The F574 flat/flatMap productions fire for inline array
+    literals, but on a var-bound array they miss:
+      `(function(){var a=[['f1'],['f2']];
+       return a.flat().join('');})()`
+      `(function(){var a=['f1','f2'];
+       return a.flatMap(function(x){return [x];}).join('');})()`
+    Node-exact desugar (v24.20.0): the var binds a dense
+    string-literal (possibly nested) array; each return term
+    resolves the binding and runs the native postfix chain
+    (_js_parse_postfix), whose flat/flatMap/join branches are
+    already node-exact with documented fail-closed bounds
+    (F466/F574: depth literals, Infinity, identity callbacks;
+    negative/fractional depths, holes, and non-identity callbacks
+    fail closed).
+    Disjoint: every accepted shape carries a var-bound array
+    whose return terms start with a flat/flatMap method step,
+    which no earlier route accepts (F769 requires `.at()`; the
+    inline-literal routes require the literal at the read site;
+    red-first verified: 2 BREAK on the open tree), so no
+    previously-decoded input changes behavior.
+    Engine-exactness note: the accepted chains always start with
+    flat/flatMap, which never mutate the receiver in the engine,
+    so resolving the pristine binding per return term is
+    engine-identical (a per-term deep copy is still taken as
+    defense-in-depth).
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async; exactly `()` invocation; no trailing
+      statements; exactly one declaration.
+    - binding: `var|let|const NAME=[...]` with dense plain-string
+      (or nested-array-of-plain-string) elements; a NAME of
+      `arguments`, non-array bindings, holes, numerics, and
+      booleans fail closed.
+    - return: `TERM (+ TERM)*;` where TERM is a plain string
+      literal or `NAME(.|[''])flat|flatMap(...)...` -- the first
+      chain step must be flat/flatMap (dot or bracket-string
+      form); the rest of the chain runs the native postfix
+      grammar; the chain must yield a plain string (a bare
+      `a.flat()` yields an array -- not a string variant -- and
+      fails closed). At least one flat/flatMap term (a
+      literal-only return belongs to an earlier route).
+    F452 parts charged per return term and per binding element
+    (via _js_parse_array); each flat/flatMap read charges one op
+    and the IIFE wrapper charges one op. Returns (value,
+    next_index), or None when text[i] is not this shape. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl
+        sj = _js_skip_ws(text, m)
+        aname, sj = _js_parse_ident(text, sj)
+        if aname == "arguments":
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "[":
+            return None  # not an array binding
+        arr, sj = _js_parse_array(text, sj, depth, state)
+        _js_f802_validate_elements(arr.elements)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F802 no return")
+        sj = _js_skip_ws(text, rk)
+        parts = []
+        saw_flat = False
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+                if not isinstance(term, str) or isinstance(
+                        term, _JSNumStr):
+                    raise _JSExprFail("F802 return term not a string")
+            else:
+                _rname, _q = _js_parse_ident(text, sj)
+                if _rname != aname:
+                    raise _JSExprFail("F802 term not bound ident")
+                sj = _js_skip_ws(text, _q)
+                if sj < n and text[sj] == ".":
+                    _mk = _js_skip_ws(text, sj + 1)
+                    _mm = _js_match_kw(text, _mk, "flat")
+                    _mname = "flat" if _mm is not None else None
+                    if _mname is None:
+                        _mm = _js_match_kw(text, _mk, "flatMap")
+                        _mname = ("flatMap"
+                                  if _mm is not None else None)
+                elif sj < n and text[sj] == "[":
+                    _mname, _ = _js_parse_bracket_member(text, sj)
+                else:
+                    raise _JSExprFail("F802 term not a method chain")
+                if _mname not in ("flat", "flatMap"):
+                    raise _JSExprFail("F802 term not flat/flatMap")
+                tval, sj = _js_parse_postfix(
+                    text, sj, _js_f802_copy_array(arr), depth, state)
+                if not isinstance(tval, str) or isinstance(
+                        tval, _JSNumStr):
+                    raise _JSExprFail("F802 term not a string")
+                term = tval
+                saw_flat = True
+                state["ops"] += 1  # the flat/flatMap read is
+                                   # obfuscation-shaped
+            parts.append(term)
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj += 1
+                continue
+            break
+        if not saw_flat:
+            # A literal-only return belongs to an earlier route.
+            return None
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F802 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f783_str_additive(text, j):
     """Parse `'lit'(+'lit')*;` at text[j] (F783).
 
@@ -72006,6 +72414,49 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f792_saved_parts; state['ops'] = _f792_saved_ops
         if _f792 is not None:
             val, i = _f792
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F801: (function(){function NAME(params){return BODY;}
+        #   return ADD;})() with Reflect.apply(NAME, thisArg, [args])
+        #   read terms -- Reflect.apply on a named function
+        #   declaration. Tried after F792: every accepted shape
+        #   carries a named function declaration plus a
+        #   Reflect.apply(NAME,...) read term in the return additive,
+        #   which no earlier route accepts (F782 requires a
+        #   `return this.MEM` body; F614 requires a parenthesized
+        #   function-expression receiver; the F469 concat-Reflect
+        #   route requires the Array.prototype.concat target;
+        #   red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the parenthesized-additive path. The F792
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f801_saved_parts = state['parts']; _f801_saved_ops = state['ops']
+        _f801 = _js_parse_f801_reflect_apply_iife(text, i, depth, state)
+        if _f801 is None:
+            state['parts'] = _f801_saved_parts; state['ops'] = _f801_saved_ops
+        if _f801 is not None:
+            val, i = _f801
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F802: (function(){DECL a=ARRLIT;return ADD;})() with
+        #   `a.flat(...)/a.flatMap(...)` read terms -- flat/flatMap
+        #   on a var-bound array. Tried after F801: every accepted
+        #   shape carries a var-bound array whose return terms start
+        #   with a flat/flatMap method step, which no earlier route
+        #   accepts (F769 requires `.at()`; the F574 inline-literal
+        #   routes require the literal at the read site; red-first
+        #   verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the parenthesized-additive path. The F801
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f802_saved_parts = state['parts']; _f802_saved_ops = state['ops']
+        _f802 = _js_parse_f802_flat_varbound_iife(text, i, depth, state)
+        if _f802 is None:
+            state['parts'] = _f802_saved_parts; state['ops'] = _f802_saved_ops
+        if _f802 is not None:
+            val, i = _f802
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
