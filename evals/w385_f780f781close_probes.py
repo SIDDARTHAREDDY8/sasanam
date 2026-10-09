@@ -95,10 +95,11 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (F780/F781 closed, F795 filed, next F796)."""
+    """Control: lane-local footer (F780/F781/F796 closed, F795 filed,
+    next F797)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F796**" in text
+    ok = ("Next free finding: **F797**" in text
           and "Open findings: F762, F763, F764, F765, F766, F767, F768, "
               "F769, F770, F771, F772, F773, F774, F775, F776, F777, F778, "
               "F779, F782, F783, F784, F785, F786, F787, F788, F789, F790, "
@@ -238,6 +239,42 @@ def test_p2_f781_bracket_install():
          + _A + "';};return new C()['m']();})()")
     ok = _decodes_exact(s, _A)
     return ("HELD" if ok else "BREAK", "exact=%s" % ok)
+
+
+@_t
+def test_p2_f796_class_empty():
+    """F796: empty-class prototype method read blocks + decodes exact."""
+    s = ("(function(){class C{}C.prototype.m=function(){return '"
+         + _A + "';};return new C().m()+'" + _B + "';})()")
+    ok = _blocked(s) and _decodes_exact(s, _A + _B)
+    return ("HELD" if ok else "BREAK", "hit+exact=%s" % ok)
+
+
+@_t
+def test_p2_f796_class_bracket():
+    """F796: bracket-form class prototype install blocks + exact."""
+    s = ("(function(){class C{}C.prototype['m']=function(){return '"
+         + _A + "';};var o=new C();return o['m']()+'" + _B + "';})()")
+    ok = _blocked(s) and _decodes_exact(s, _A + _B)
+    return ("HELD" if ok else "BREAK", "hit+exact=%s" % ok)
+
+
+@_t
+def test_p3_f796_class_extends():
+    """F796 bound: class extends fails closed."""
+    s = ("(function(){class C extends Object{}C.prototype.m=function(){"
+         "return 'a';};return new C().m();})()")
+    ok = _fails_closed(s)
+    return ("HELD" if ok else "BREAK", "closed=%s" % ok)
+
+
+@_t
+def test_p3_f796_class_nonempty():
+    """F796 bound: non-empty class body fails closed."""
+    s = ("(function(){class C{go(){return 1;}}C.prototype.m=function(){"
+         "return 'a';};return new C().m();})()")
+    ok = _fails_closed(s)
+    return ("HELD" if ok else "BREAK", "closed=%s" % ok)
 
 
 # ------------------------------------------------ p3: bounds (must fail closed)
@@ -524,10 +561,12 @@ def _green_check():
     # (battery, expected BREAKs): the w384 attack battery's only
     # expected BREAK is test_b0_footer_state (base footer pin; the
     # lane-local repoint is merge-owned, wave-305 lesson). The
-    # w385_f795 red-first is 2 BREAK by design (open finding).
+    # w385_f795 red-first is 2 BREAK by design (open finding); the
+    # w385_f796 red-first is 0 BREAK (closed this lane).
     for batt, expect_break in (("evals/w384_f780_redfirst.py", 0),
                                ("evals/w384_f781_redfirst.py", 0),
                                ("evals/w385_f795_redfirst.py", 2),
+                               ("evals/w385_f796_redfirst.py", 0),
                                ("evals/w384_attack_probes.py", 1)):
         tmp = tempfile.mkdtemp(prefix="g385-green-", dir="/var/tmp")
         env = dict(os.environ)

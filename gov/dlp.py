@@ -31545,6 +31545,27 @@ def _js_parse_f781_proto_method_iife(text, i, depth, state):
                 _js_f672_charge(state)
                 sj = q + 1
                 continue
+            ck = _js_match_kw(text, sj, "class")
+            if ck is not None:
+                q = _js_skip_ws(text, ck)
+                cname, q = _js_parse_ident(text, q)
+                if (cname == "arguments" or cname in _F611_RESERVED
+                        or cname in ctors):
+                    raise _JSExprFail("F781 bad ctor name")
+                q = _js_skip_ws(text, q)
+                ek = _js_match_kw(text, q, "extends")
+                if ek is not None:
+                    raise _JSExprFail("F781 class extends")
+                if q >= n or text[q] != "{":
+                    raise _JSExprFail("F781 no class body")
+                q = _js_skip_ws(text, q + 1)
+                if q >= n or text[q] != "}":
+                    raise _JSExprFail("F781 class body not empty")
+                ctors.add(cname)
+                protos.setdefault(cname, {})
+                _js_f672_charge(state)
+                sj = q + 1
+                continue
             dk, _dnext = _js_match_decl_kw(text, sj)
             if dk is not None:
                 q = _js_skip_ws(text, _dnext)
