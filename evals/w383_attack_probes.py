@@ -833,16 +833,17 @@ def test_r51_f757_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r51_f758_s1_open():
-    """F760 OPEN (template-nested member reads): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s'};return `${o.x}%s`;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f758_s1_closed():
+    """F760 CLOSED (template-nested member reads): blocks coded."""
+    hit = _blocked("(function(){var o={x:'%s'};return `${o.x}%s`;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
+
 
 @_t
-def test_r51_f758_s2_open():
-    """F760 OPEN (template-nested member reads): miss reproduces."""
-    miss = _misses("(function(){var o={x:'%s',y:'%s'};return `${o.x}${o.y}`;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r51_f758_s2_closed():
+    """F760 CLOSED (template-nested member reads): blocks coded."""
+    hit = _blocked("(function(){var o={x:'%s',y:'%s'};return `${o.x}${o.y}`;})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "blocked=%s" % hit)
 
 
 def _green_check():
