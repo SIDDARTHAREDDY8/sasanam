@@ -39530,6 +39530,111 @@ def _js_parse_f602_set_foreach_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f881_setfirst_foreach_iife(text, i, depth, state):
+    """Parse `(function(){var|let|const ST=new Set([LITS]);var|let S='';ST.forEach(CB);return S;})()` (F881).
+
+    F881 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models for-of over Sets and the accumulator-first
+    Set.forEach twin (F602), but not the set-decl-first statement
+    order -- `var s=new Set([...]);var r='';s.forEach(...)` resolves
+    node-exactly (v24.20.0) while the decoder produces zero
+    variants.
+
+    Node-exact desugar (v24.20.0): Set.prototype.forEach calls CB
+    once per element in insertion order with (value, value, set);
+    the modeled callbacks accumulate `S+=E` per call, so the result
+    is the per-iteration E join (the F602 discipline -- this is the
+    statement-order twin of `_js_parse_f602_set_foreach_iife`,
+    sharing its callback/accumulator grammar verbatim via
+    `_js_parse_foreach_accum_callback`). The Set is bound to a
+    var/let/const one statement before the accumulator -- the
+    binding is single-assignment (the exact-shape grammar has no
+    room for reassignment). Returns (value, next_index), or None
+    on mismatch/guard failure. Bounded by the part/depth budgets
+    (F452 per-iteration charge); the iife-tail wrapper charges the
+    one op (obfuscation-shaped). Never evals.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    leading accumulator decl (F602's shape), a non-empty
+    accumulator, `const` accumulator, a non-`new Set` binding,
+    non-string-literal Set elements, forEach on a different ident,
+    a callback that is not the exact `S+=E` shape, params shadowing
+    the accumulator or the Set binding, non-string E values, call
+    args on the IIFE. Disjoint from F602: F602 requires the
+    accumulator decl first and fails closed on a leading Set decl;
+    this route requires the leading Set decl and fails closed on
+    F602's accumulator-first shape, so no previously-decoded input
+    changes behavior.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        m = _js_match_kw(stmts, sj, "var")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "let")
+        if m is None:
+            m = _js_match_kw(stmts, sj, "const")
+        if m is None:
+            raise _JSExprFail("F881 set decl not var/let/const")
+        sj = _js_skip_ws(stmts, m)
+        setname, sj = _js_parse_ident(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "=")
+        sj = _js_skip_ws(stmts, sj)
+        elements, sj = _js_parse_f602_set_elements(stmts, sj, depth,
+                                                   state)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        sj = _js_skip_ws(stmts, sj)
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        if acc == setname:
+            raise _JSExprFail("F881 accum shadows set")
+        sj = _js_skip_ws(stmts, sj)
+        recv, sj = _js_parse_ident(stmts, sj)
+        if recv != setname:
+            raise _JSExprFail("F881 forEach on another ident")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ".")
+        _mn, sj = _js_parse_ident(stmts, _js_skip_ws(stmts, sj))
+        if _mn != "forEach":
+            raise _JSExprFail("F881 not forEach")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, "(")
+        params, E, sj = _js_parse_foreach_accum_callback(
+            stmts, sj, acc, depth, state)
+        if acc in params or setname in params:
+            raise _JSExprFail("F881 param shadows")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        _js_parse_f6xx_return_acc(stmts, _js_skip_ws(stmts, sj), acc)
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        parts = []
+        for e in elements:
+            # The engine passes (value, value, set): P1 and P2 both
+            # bind the value (node v24.20.0 verified, F602 twin).
+            etext = _js_quote_literal(e)
+            bindings = [(params[0], etext)]
+            if len(params) > 1:
+                bindings.append((params[1], etext))
+            parts.append(_js_foreach_E_value(
+                E, bindings, depth, state))
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state,
+                                        "".join(parts))
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f719_set_forof_iife(text, i, depth, state):
     """Parse two for-of-over-Set accumulation shapes (F719).
 
@@ -50004,16 +50109,23 @@ def _js_f792_parse_group_read(text, j, is_map, groups):
 # F807: structuredClone reads / F808: CustomEvent detail reads
 # ------------------------------------------------------------------
 
-def _js_f807_parse_nested_obj(text, j, depth, state):
+def _js_f807_parse_nested_obj(text, j, depth, state, getters=False):
     """Parse `{K:'LIT'|{...},...}` at text[j] == '{' (F807/F808).
 
     A plain data-object literal with nesting: keys are identifiers
     or string literals (never `__proto__`, never numeric, never
     computed -- computed keys and `__proto__` fail closed);
     values are plain string literals (never _JSNumStr) or nested
-    objects (recursive). Getters, setters, methods, spreads, and
-    non-literal values fail closed. Each property charges the F452
-    parts budget. Returns (_JSObj, next_index). Never evals.
+    objects (recursive). Setters, methods, spreads, and non-literal
+    values fail closed. When *getters* is true (F883), accessor
+    properties of the exact form `get NAME(){return 'LIT';}` are
+    modeled: node invokes the getter at structuredClone time and
+    clones its value (v24.20.0 verified -- `{get k(){return
+    'f1'}}` clones to `{k:'f1'}`), so the literal is stored as the
+    property value; any other accessor shape (params, non-literal
+    return, setters, methods) fails closed. Each property charges
+    the F452 parts budget. Returns (_JSObj, next_index). Never
+    evals.
     """
     n = len(text)
     if depth >= _JS_EXPR_MAX_DEPTH:
@@ -50029,8 +50141,10 @@ def _js_f807_parse_nested_obj(text, j, depth, state):
         c = text[j]
         if c in "'\"":
             key, j = _js_parse_string(text, j)
+            key_is_getter_head = False
         elif c in _JS_IDENT_START:
             key, j = _js_parse_ident(text, j)
+            key_is_getter_head = (key == "get")
         else:
             raise _JSExprFail("F807 object key not a literal")
         if isinstance(key, _JSNumStr):
@@ -50040,17 +50154,50 @@ def _js_f807_parse_nested_obj(text, j, depth, state):
             # setter; F776 owns that domain -- fail closed here.
             raise _JSExprFail("F807 __proto__ not modeled")
         j = _js_skip_ws(text, j)
-        j = _js_expect(text, j, ":")
-        j = _js_skip_ws(text, j)
-        if j < n and text[j] == "{":
-            val, j = _js_f807_parse_nested_obj(text, j, depth + 1,
-                                              state)
-        elif j < n and text[j] in "'\"":
+        if (getters and key_is_getter_head and j < n
+                and text[j] != ":"):
+            # F883: accessor property `get NAME(){return 'LIT';}`.
+            # Node-exact (v24.20.0): structuredClone invokes the
+            # getter once and clones the returned value; only
+            # function values throw DOMException (fail closed --
+            # a non-literal return is never guessed).
+            pname, j = _js_parse_ident(text, j)
+            if isinstance(pname, _JSNumStr) or pname == "__proto__":
+                raise _JSExprFail("F883 bad getter name")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "(")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ")")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "{")
+            j = _js_skip_ws(text, j)
+            gr = _js_match_kw(text, j, "return")
+            if gr is None:
+                raise _JSExprFail("F883 getter not a return")
+            j = _js_skip_ws(text, gr)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F883 getter not a literal")
             val, j = _js_parse_string(text, j)
             if isinstance(val, _JSNumStr):
-                raise _JSExprFail("F807 value not a plain string")
+                raise _JSExprFail("F883 getter not a plain string")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ";")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "}")
+            key = pname
         else:
-            raise _JSExprFail("F807 value not a literal")
+            j = _js_expect(text, j, ":")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "{":
+                val, j = _js_f807_parse_nested_obj(text, j, depth + 1,
+                                                  state,
+                                                  getters=getters)
+            elif j < n and text[j] in "'\"":
+                val, j = _js_parse_string(text, j)
+                if isinstance(val, _JSNumStr):
+                    raise _JSExprFail("F807 value not a plain string")
+            else:
+                raise _JSExprFail("F807 value not a literal")
         if key in props:
             raise _JSExprFail("F807 duplicate key")
         props[key] = val
@@ -50113,6 +50260,50 @@ def _js_f807_parse_dot_steps(text, j):
     return steps, j
 
 
+def _js_f807_parse_bracket_step(text, j):
+    """Parse `['LIT']` / `["LIT"]` at text[j] (F884).
+
+    A single bracket member step with a plain string-literal key
+    (never _JSNumStr, never numeric -- the engine yields undefined
+    for numeric steps on these objects and the decoder never
+    guesses). Returns (step, next_index), or (None, j) when the
+    head does not match. Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j)
+    if k >= n or text[k] != "[":
+        return None, j
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in "'\"":
+        return None, j
+    key, k = _js_parse_string(text, k)
+    if isinstance(key, _JSNumStr):
+        return None, j
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "]":
+        return None, j
+    return key, k + 1
+
+
+def _js_f807_parse_member_steps(text, j, brackets):
+    """Parse `(.MEM | ['LIT'])*` member steps at text[j] (F807/F884).
+
+    Dot-form steps always; bracket string-literal steps only when
+    *brackets* is true (F884 -- structuredClone results). Returns
+    (steps, next_index). Never evals.
+    """
+    steps, j = _js_f807_parse_dot_steps(text, j)
+    if brackets:
+        while True:
+            bstep, j2 = _js_f807_parse_bracket_step(text, j)
+            if bstep is None:
+                break
+            steps.append(bstep)
+            dsteps, j = _js_f807_parse_dot_steps(text, j2)
+            steps.extend(dsteps)
+    return steps, j
+
+
 def _js_f807_resolve_member(obj, steps):
     """Resolve NAME(.MEM)* steps on a _JSObj (F807/F808).
 
@@ -50137,15 +50328,20 @@ def _js_f807_resolve_member(obj, steps):
     return cur
 
 
-def _js_f807f808_parse_additive(text, j, env, depth, state, tag):
+def _js_f807f808_parse_additive(text, j, env, depth, state, tag,
+                               brackets=False):
     """Parse `return TERM (+ TERM)*;` at text[j] (F807/F808).
 
     env maps bound names to plain strings or _JSObjs. TERM is a
     plain string literal or a bound name: a bare _JSObj name fails
     closed (the engine yields "[object Object]"), while a
     NAME(.MEM)+ chain resolves through _js_f807_resolve_member.
-    Returns (total, index_past_';'). Bounded by _MAX_DECODE_BYTES;
-    F452 parts charged per term, one op per term. Never evals.
+    When *brackets* is true (F884), bracket string-literal steps
+    (`c['k']` / `c["k"]`) are also modeled node-exactly -- missing
+    keys and numeric steps fail closed (the engine yields
+    undefined). Returns (total, index_past_';'). Bounded by
+    _MAX_DECODE_BYTES; F452 parts charged per term, one op per
+    term. Never evals.
     """
     n = len(text)
     j = _js_match_kw(text, j, "return")
@@ -50166,7 +50362,8 @@ def _js_f807f808_parse_additive(text, j, env, depth, state, tag):
             if isinstance(bound, str):
                 term = bound
             else:
-                steps, j = _js_f807_parse_dot_steps(text, j)
+                steps, j = _js_f807_parse_member_steps(text, j,
+                                                      brackets)
                 if not steps:
                     raise _JSExprFail(tag + " bare object read")
                 term = _js_f807_resolve_member(bound, steps)
@@ -50241,7 +50438,7 @@ def _js_parse_f807_structuredclone_iife(text, i, depth, state):
         if m >= n or text[m] != "{":
             raise _JSExprFail("F807 decl1 not an object")
         obj, m = _js_f807_parse_nested_obj(text, m, depth + 1,
-                                          state)
+                                          state, getters=True)
         m = _js_skip_ws(text, m)
         m = _js_expect(text, m, ";")
         state["parts"] += 1
@@ -50282,7 +50479,8 @@ def _js_parse_f807_structuredclone_iife(text, i, depth, state):
         sj = _js_skip_ws(text, m)
         total, sj = _js_f807f808_parse_additive(text, sj, env,
                                                depth, state,
-                                               "F807")
+                                               "F807",
+                                               brackets=True)
         sj = _js_skip_ws(text, sj)
         if sj != inner_end:
             raise _JSExprFail("F807 trailing statements")
@@ -76350,6 +76548,368 @@ def _js_parse_f804_named_fn_arguments_iife(text, i, depth, state):
     state["ops"] += 1  # the named-function wrapper is obfuscation-shaped
     return val, k
 # ---------------------------------------------------------------------------
+# F882: named-function array-parameter indexed reads
+# ---------------------------------------------------------------------------
+
+def _js_subst_f882_array_params(fbody, params, callargs, state):
+    """Substitute array-parameter reads in *fbody* (F882).
+
+    *params* is the inner function's parameter-name list; *callargs*
+    the parallel list of (kind, raw) bindings where kind is "str"
+    (a call-site string literal, *raw* its quoted source text) or
+    "arr" (a call-site array literal of string literals, *raw* the
+    list of quoted element source texts); *state* the scan-budget
+    state. In code spans only (string contents never trigger):
+
+    - `P[N]` with P array-bound, N a canonical decimal int
+      (no leading zeros, no sign) in range of the elements, is
+      replaced by the quoted N-th element source text;
+    - a bare `P` read with P string-bound is replaced by the quoted
+      literal source text.
+
+    Every other parameter use fails closed via _JSExprFail (the
+    decoder never guesses): `P[N]` on a string-bound param
+    (engine: the N-th char), a bare read of an array-bound param
+    (engine: the comma-joined string), an out-of-range or
+    non-canonical index (engine: undefined), member reads (`.x`),
+    calls, assignments, and any `arguments` use (F804 owns the
+    arguments domain). Each substitution charges one part (F452):
+    the rewritten text amplifies, so unbounded substitution is a
+    DoS vector -- exceeding _JS_EXPR_MAX_PARTS fails closed before
+    the rewritten text is built. Substitution never touches
+    string-literal contents. Returns (rewritten_body, n_subst).
+    Never evals.
+    """
+    kinds = {p: k for p, (k, _) in zip(params, callargs)}
+    raws = {p: r for p, (_, r) in zip(params, callargs)}
+    n_subst = 0
+    out = []
+    for is_code, s in _js_split_code_strings(fbody):
+        if not is_code:
+            out.append(s)
+            continue
+        # Collect every param occurrence, position-ordered.
+        occs = []
+        for pname in params:
+            for st in _js_code_find_idents(s, pname):
+                occs.append((st, pname))
+        occs.sort()
+        buf = []
+        pos = 0
+        for st, pname in occs:
+            if st < pos:
+                # Overlapping with an already-substituted span --
+                # cannot happen for distinct idents; fail closed.
+                raise _JSExprFail("f882 overlapping param reads")
+            # Property position (.pname) is not the parameter.
+            if st > 0 and s[st - 1] in ".$":
+                continue
+            e = st + len(pname)
+            q = e
+            while q < len(s) and s[q] in " \t\n\r":
+                q += 1
+            kind = kinds[pname]
+            if q < len(s) and s[q] == "[":
+                # Indexed read: `P[N]`.
+                q += 1
+                while q < len(s) and s[q] in " \t\n\r":
+                    q += 1
+                d0 = q
+                while q < len(s) and s[q] in "0123456789":
+                    q += 1
+                digits = s[d0:q]
+                if not digits:
+                    raise _JSExprFail("f882 bad param index")
+                if len(digits) > 1 and digits[0] == "0":
+                    raise _JSExprFail("f882 non-canonical index")
+                while q < len(s) and s[q] in " \t\n\r":
+                    q += 1
+                if q >= len(s) or s[q] != "]":
+                    raise _JSExprFail("f882 bad param index")
+                q += 1
+                if kind != "arr":
+                    # Engine yields the N-th char of the string;
+                    # the decoder never guesses -- fail closed.
+                    raise _JSExprFail("f882 index on string param")
+                idx = int(digits)
+                elems = raws[pname]
+                if idx >= len(elems):
+                    # Engine yields undefined; never guess.
+                    raise _JSExprFail("f882 param index out of range")
+                state["parts"] += 1  # F452: bound the amplification
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("f882 too many param reads")
+                buf.append(s[pos:st])
+                buf.append(elems[idx])
+                pos = q
+                n_subst += 1
+            elif q < len(s) and s[q] == ".":
+                raise _JSExprFail("f882 member read on param")
+            elif q < len(s) and s[q] == "(":
+                raise _JSExprFail("f882 call on param")
+            elif (q < len(s) and s[q] == "="
+                    and (q + 1 >= len(s) or s[q + 1] not in "=>")):
+                raise _JSExprFail("f882 assignment to param")
+            else:
+                # Bare read.
+                if kind != "str":
+                    # Engine comma-joins the array; never guess.
+                    raise _JSExprFail("f882 bare array-param read")
+                state["parts"] += 1  # F452: bound the amplification
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("f882 too many param reads")
+                buf.append(s[pos:st])
+                buf.append(raws[pname])
+                pos = e
+                n_subst += 1
+        buf.append(s[pos:])
+        out.append("".join(buf))
+    rewritten = "".join(out)
+    # Defensive: no param ident may survive in code spans, and no
+    # `arguments` use may appear (F804 owns that domain).
+    rcode = "".join(s for is_code, s in _js_split_code_strings(rewritten)
+                    if is_code)
+    for pname in params:
+        if _js_code_find_idents(rcode, pname):
+            raise _JSExprFail("f882 param left unsubstituted")
+    if _js_code_find_idents(rcode, "arguments"):
+        raise _JSExprFail("f882 arguments use")
+    return rewritten, n_subst
+
+
+def _js_parse_f882_named_fn_arrayparams_iife(text, i, depth, state):
+    """Parse `(function(){function F(P,...){BODY}return F(A,...);})()` (F882).
+
+    F882 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models `arguments[N]` (F804) but not array parameters
+    -- `function f(a){return a[0]+a[1];};f(['f1','f2'])` resolves
+    node-exactly (v24.20.0) while the decoder produces zero
+    variants.
+
+    Desugars the named-function array-parameter laundering: the
+    inner function declares >=1 plain params; each call-site arg
+    is a string literal or an array literal of string literals.
+    `P[N]` indexed reads on array-bound params are textually
+    replaced by the quoted N-th element (via
+    _js_subst_f882_array_params); bare reads of string-bound
+    params by the quoted literal; the rewritten body is re-parsed
+    as an anonymous IIFE `(function(){REWRITTEN})()` at depth+1
+    through _js_parse_primary, so every downstream decoder, bound,
+    and fail-closed rule applies unchanged (F804's architecture).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the inner function declares zero params (F804's shape), or
+      the call name differs, or param/arg counts differ;
+    - params shadow each other or are named `arguments`/`this`/a
+      reserved word;
+    - call args are not string literals or string-only array
+      literals (nested arrays, holes, non-strings fail closed);
+    - `P[N]` on a string-bound param, a bare read of an
+      array-bound param, an out-of-range or non-canonical index,
+      member reads/calls/assignments on params, any `arguments`
+      use;
+    - nested function/class/arrow/new/delete, `this`/`super`, or
+      a template literal in the body (_js_span_braced rejects
+      backticks and `/` in code);
+    - the body reads no param at all (not a parameter-laundering
+      shape).
+    Disjoint from F804: F804 requires zero inner params; this
+    route requires >=1. Tried after F804: no earlier route has a
+    named-function-with-params production (red-first verified: 2
+    BREAK on the open tree), so no previously-decoded input
+    changes behavior. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # Outer function name (engine-exact; ignored).
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # outer params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        # Inner named function declaration with >=1 plain params.
+        k = _js_skip_ws(text, k + 1)
+        k2 = _js_match_kw(text, k, "function")
+        if k2 is None:
+            return None
+        k = _js_skip_ws(text, k2)
+        fname, k = _js_parse_ident(text, k)
+        if fname in _F611_RESERVED or fname == "arguments":
+            return None  # not a valid function name (node: SyntaxError)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        params = []
+        while True:
+            if k >= n or text[k] not in _JS_IDENT_START:
+                return None
+            pname, k = _js_parse_ident(text, k)
+            if (pname in params or pname == "arguments"
+                    or pname == "this" or pname in _F611_RESERVED):
+                return None
+            params.append(pname)
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k = _js_skip_ws(text, k + 1)
+                continue
+            break
+        if not params:
+            return None  # zero params: F804's shape
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        fbody_start, fbody_end, k = _js_span_braced(text, k)
+        fbody = text[fbody_start:fbody_end]
+        # `return F(ARG, ...);`
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        k = _js_skip_ws(text, rk)
+        cname, k = _js_parse_ident(text, k)
+        if cname != fname:
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        callargs = []  # (kind, raw): "str" -> quoted text, "arr" -> [texts]
+        if k < n and text[k] == ")":
+            k += 1
+        else:
+            while True:
+                k = _js_skip_ws(text, k)
+                if k >= n:
+                    return None
+                if text[k] in "'\"":
+                    a0 = k
+                    _, k = _js_parse_string(text, k)
+                    callargs.append(("str", text[a0:k]))
+                elif text[k] == "[":
+                    elems = []
+                    k = _js_skip_ws(text, k + 1)
+                    if k < n and text[k] == "]":
+                        k += 1
+                    else:
+                        while True:
+                            k = _js_skip_ws(text, k)
+                            if k >= n or text[k] not in "'\"":
+                                return None
+                            e0 = k
+                            e, k = _js_parse_string(text, k)
+                            if isinstance(e, _JSNumStr):
+                                return None
+                            elems.append(text[e0:k])
+                            state["parts"] += 1
+                            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                                return None
+                            k = _js_skip_ws(text, k)
+                            if k >= n:
+                                return None
+                            if text[k] == ",":
+                                k = _js_skip_ws(text, k + 1)
+                                continue
+                            if text[k] == "]":
+                                k += 1
+                                break
+                            return None
+                    callargs.append(("arr", elems))
+                else:
+                    return None
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    return None
+                k = _js_skip_ws(text, k)
+                if k >= n:
+                    return None
+                if text[k] == ",":
+                    k = _js_skip_ws(text, k + 1)
+                    continue
+                if text[k] == ")":
+                    k += 1
+                    break
+                return None
+        if len(callargs) != len(params):
+            return None  # arity mismatch: engine would bind undefined
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k += 1
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # outer invocation args: none
+        k += 1
+        # Body guards on code spans (string contents never trigger).
+        _f882segs = _js_split_code_strings(fbody)
+        _f882code = "".join(s for is_code, s in _f882segs if is_code)
+        for _kw, _msg in (("function", "nested function in f882 body"),
+                          ("class", "class in f882 body"),
+                          ("new", "new in f882 body"),
+                          ("delete", "delete in f882 body"),
+                          ("this", "this in f882 body"),
+                          ("super", "super in f882 body"),
+                          ("arguments", "arguments in f882 body")):
+            if _js_code_find_idents(_f882code, _kw):
+                return None
+        if "=>" in _f882code:
+            return None  # arrow function in body
+        _f882sp = state["parts"]
+        _f882so = state["ops"]
+        try:
+            _rewritten, _nsubst = _js_subst_f882_array_params(
+                fbody, params, callargs, state)
+        except _JSExprFail:
+            state["parts"] = _f882sp
+            state["ops"] = _f882so
+            return None
+        if _nsubst == 0:
+            state["parts"] = _f882sp
+            state["ops"] = _f882so
+            return None
+        _iife_text = "(function(){" + _rewritten + "})()"
+        try:
+            val, _re = _js_parse_primary(_iife_text, 0, depth + 1,
+                                          state)
+        except _JSExprFail:
+            state["parts"] = _f882sp
+            state["ops"] = _f882so
+            return None
+        _re = _js_skip_ws(_iife_text, _re)
+        if _re != len(_iife_text):
+            state["parts"] = _f882sp
+            state["ops"] = _f882so
+            return None
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the named-function wrapper is obfuscation-shaped
+    return val, k
+# ---------------------------------------------------------------------------
 # F809: non-IIFE closure value flows (Promise-executor assignments and
 # curried nested closures)
 # ---------------------------------------------------------------------------
@@ -77375,6 +77935,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f804 is not None:
             val, i = _f804
             return _js_parse_postfix(text, i, val, depth, state)
+        # F882: (function(){function F(P,...){BODY}return F(A,...);})()
+        #   -- named-function array-parameter indexed-read laundering
+        #   (`P[N]` on array-bound params, bare reads of string-bound
+        #   params). Tried after F804: F804 requires zero inner params
+        #   and fails closed on any param list; this route requires
+        #   >=1 inner param and fails closed on F804's zero-param
+        #   shape, so no previously-decoded input changes behavior.
+        #   None falls through like F804. Budget snapshot/restore on
+        #   miss (wave-383 lesson); the hook and its trailing
+        #   `return` are untouched (wave-379 lesson).
+        _f882_saved_parts = state['parts']; _f882_saved_ops = state['ops']
+        _f882 = _js_parse_f882_named_fn_arrayparams_iife(text, i, depth,
+                                                         state)
+        if _f882 is None:
+            state['parts'] = _f882_saved_parts; state['ops'] = _f882_saved_ops
+        if _f882 is not None:
+            val, i = _f882
+            return _js_parse_postfix(text, i, val, depth, state)
         # F533: (function(){DECL a=arguments;
         #   var|let s='';for(var|let|const x of a){s+=x;}return s;})(lit, ...)
         #   -- for-of VALUE iteration over the arguments alias
@@ -77472,6 +78050,17 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f600 is None:
             _f600 = _js_parse_f602_set_foreach_iife(text, i, depth,
                                                    state)
+        # F881: (function(){var|let|const ST=new Set([LITS]);var|let S='';
+        #   ST.forEach(CB);return S;})() -- the set-decl-first twin of
+        #   F602's Set.forEach. Tried after F602: F602 requires the
+        #   accumulator decl first and fails closed on a leading Set
+        #   decl; this route requires the leading Set decl and fails
+        #   closed on F602's accumulator-first shape, so no
+        #   previously-decoded input changes behavior. None falls
+        #   through like F602.
+        if _f600 is None:
+            _f600 = _js_parse_f881_setfirst_foreach_iife(text, i, depth,
+                                                        state)
         # F719: (function(){var|let S='';var|let|const ST=new Set([LITS]);
         #   for(var|let|const X of ST){S+=X|S=X+X;}return S;})() /
         #   (function(){var|let S='';
