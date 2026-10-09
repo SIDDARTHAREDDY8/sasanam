@@ -112,11 +112,12 @@ def test_p0_pin_taxonomy():
 
 @_t
 def test_b0_footer_state():
-    """Control: merged footer (F795-F817, F819-F828 open, next F829)."""
+    """Control: lane-local footer (F826/F827 closed, F828 footer-corrected,
+    F829 filed; next F830)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F829**" in text  # Wave-385 merge: F795-F828 OPEN
-          and "Open findings: F795, F796, F797, F798, F799, F800, F801, F802, F803, F804, F805, F806, F807, F808, F809, F810, F811, F812, F813, F814, F815, F816, F817, F819, F820, F821, F822, F823, F824, F825, F826, F827, F828." in text)
+    ok = ("Next free finding: **F830**" in text  # Wave-386 lane 16
+          and "Open findings: F795, F796, F797, F798, F799, F800, F801, F802, F803, F804, F805, F806, F807, F808, F809, F810, F811, F812, F813, F814, F815, F816, F817, F819, F820, F821, F822, F823, F824, F825, F829." in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -450,6 +451,18 @@ def test_r53_f821_s1_open():
 def test_r53_f821_s2_open():
     """F821 OPEN: miss reproduces."""
     miss = _misses("(function(){var f=(a,b='%s')=>a+b;return f('%s');})()" % (_A, _B))
+    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+
+@_t
+def test_r53_f829_s1_open():
+    """F829 OPEN: braced if-break in counted for body misses."""
+    miss = _misses("(function(){var r='';outer:for(var i=0;i<1;i++){r+='%s';if(1){break outer;}r+='xx';}return r+'%s';})()" % (_A, _B))
+    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+
+@_t
+def test_r53_f829_s2_open():
+    """F829 OPEN: braced if-break in for(;;) body misses."""
+    miss = _misses("(function(){var r='';outer:for(;;){if(1){r+='%s';break outer;}r+='xx';}return r+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 
