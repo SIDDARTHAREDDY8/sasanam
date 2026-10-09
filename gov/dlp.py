@@ -14696,7 +14696,8 @@ def _js_parse_f535_object(text, i, depth, state, accessor_aware=False,
                 # by ':' is a data property named "get"; a `get` followed
                 # by '(' is a method -- both handled below (the method
                 # fails closed at the colon check).
-                gname, gk = _js_parse_f535_getter_head(text, k)
+                gname, gk = _js_parse_f535_getter_head(text, k, depth=depth,
+                                                       state=state)
                 gk = _js_skip_ws(text, gk)
                 if gk >= n or text[gk] != "{":
                     raise _JSExprFail("getter needs a body")
@@ -14811,14 +14812,19 @@ def _js_parse_f535_getter_value(text, i, depth, state):
     return val, j
 
 
-def _js_parse_f535_getter_head(text, i):
+def _js_parse_f535_getter_head(text, i, pre_env=None, depth=0,
+                               state=None):
     """Parse `name()` at text[i] in a getter head (F535).
 
     Returns (name, next_index_after_rparen). The getter takes no
     arguments -- any parameter fails closed (the invocation would
     receive none, but the static model stays conservative; node
     v24.20.0 verified: a zero-arg getter's read invokes the body
-    with no arguments). Never evals.
+    with no arguments). pre_env (F886): when the caller binds
+    string-literal key declarators (the F673/F811 computed-key
+    shape), a `[IDENT]` computed name bound there resolves to its
+    literal (F67x key-branch precedent). The additive
+    `['m'+'2']` fold is pure (F492) and needs no env. Never evals.
     """
     n = len(text)
     c = text[i] if i < n else ""
@@ -14831,19 +14837,47 @@ def _js_parse_f535_getter_head(text, i):
         # F755: computed string-name getter `get ['x'](){...}` --
         # the bracketed string literal evaluates to the plain
         # string name (node-exact: identical to `get 'x'`,
-        # v24.20.0). Only string literals are admitted: numeric,
-        # identifier, or other computed names fail closed
-        # (documented boundary).
+        # v24.20.0). F886: `[IDENT]` bound to a string literal in
+        # pre_env, and the additive `['m'+'2']` fold (F492).
+        # Numeric, unbound-identifier, or other computed names fail
+        # closed (documented boundary).
+        # F886: the additive folds below share one defensive state
+        # fallback (all callers now thread a real state).
+        _fst = (state if state is not None else {"parts": 0, "ops": 0})
         q = _js_skip_ws(text, i + 1)
         if q < n and text[q] in "'\"":
             name, q = _js_parse_string(text, q)
             q = _js_skip_ws(text, q)
-            if q >= n or text[q] != "]":
-                raise _JSExprFail("bad computed getter name")
-            j = q + 1
+            if q < n and text[q] == "]":
+                j = q + 1
+            else:
+                # F886: `['m'+'2']` -- the first literal is followed
+                # by `+`, not `]`; fold the additive (F492).
+                try:
+                    name, j = _js_fold_bracket_key(text, i, depth,
+                                                   _fst)
+                except _JSExprFail:
+                    raise _JSExprFail("bad computed getter name")
+        elif q < n and text[q] in _JS_IDENT_START:
+            # `[IDENT]` or `[Symbol.for('k')]` -- try the bound
+            # identifier first, fall back to the Symbol.for form.
+            iname, q2 = _js_parse_ident(text, q)
+            q2 = _js_skip_ws(text, q2)
+            if (q2 < n and text[q2] == "]" and pre_env
+                    and iname in pre_env
+                    and isinstance(pre_env[iname], str)):
+                name, j = pre_env[iname], q2 + 1
+            else:
+                skey, j = _js_parse_f552_symbol_for(text, i)
+                name = _js_symbol_key(skey)
         else:
-            skey, j = _js_parse_f552_symbol_for(text, i)
-            name = _js_symbol_key(skey)
+            # Additive/template fold, else the Symbol.for attempt
+            # (which fails closed on non-Symbol computed names).
+            try:
+                name, j = _js_fold_bracket_key(text, i, depth, _fst)
+            except _JSExprFail:
+                skey, j = _js_parse_f552_symbol_for(text, i)
+                name = _js_symbol_key(skey)
     elif c in _JS_IDENT_START:
         name, j = _js_parse_ident(text, i)
     else:
@@ -56049,21 +56083,42 @@ def _js_parse_f808_customevent_iife(text, i, depth, state):
         sj = _js_expect(text, sj, ",")
         sj = _js_skip_ws(text, sj)
         fk = _js_match_kw(text, sj, "function")
-        if fk is None:
+        # A param shadowing the accumulator (or a reserved/literal
+        # binding) would assign the param, not the outer binding
+        # (engine-exact) -- fail closed rather than mis-decode. One
+        # guard shared by both listener forms below.
+        def _bad_listener_param(pname):
+            return (pname == "arguments" or pname in _F611_RESERVED
+                    or pname == rname or pname == tname)
+        if fk is not None:
+            sj = _js_skip_ws(text, fk)
+            sj = _js_expect(text, sj, "(")
+            sj = _js_skip_ws(text, sj)
+            ename, sj = _js_parse_ident(text, sj)
+            if _bad_listener_param(ename):
+                raise _JSExprFail("F808 bad listener param")
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ")")
+            sj = _js_skip_ws(text, sj)
+        elif sj < n and text[sj] == "(":
+            # F885: arrow-function listener `(e)=>{...}` -- node-exact
+            # twin of the `function(e){...}` form above (v24.20.0:
+            # identical dispatch semantics for the modeled single-
+            # statement body). Only the single-param paren form is
+            # admitted; multi-param, concise-body, and async arrows
+            # fail closed. The same param checks apply.
+            aq = _js_skip_ws(text, sj + 1)
+            ename, aq = _js_parse_ident(text, aq)
+            if _bad_listener_param(ename):
+                raise _JSExprFail("F885 bad listener param")
+            aq = _js_skip_ws(text, aq)
+            aq = _js_expect(text, aq, ")")
+            aq = _js_skip_ws(text, aq)
+            if not text.startswith("=>", aq):
+                raise _JSExprFail("F885 listener not an arrow")
+            sj = _js_skip_ws(text, aq + 2)
+        else:
             raise _JSExprFail("F808 listener not a function")
-        sj = _js_skip_ws(text, fk)
-        sj = _js_expect(text, sj, "(")
-        sj = _js_skip_ws(text, sj)
-        ename, sj = _js_parse_ident(text, sj)
-        if (ename == "arguments" or ename in _F611_RESERVED
-                or ename == rname or ename == tname):
-            # A param shadowing the accumulator would assign the
-            # param, not the outer binding (engine-exact) -- fail
-            # closed rather than mis-decode.
-            raise _JSExprFail("F808 bad listener param")
-        sj = _js_skip_ws(text, sj)
-        sj = _js_expect(text, sj, ")")
-        sj = _js_skip_ws(text, sj)
         if sj >= n or text[sj] != "{":
             raise _JSExprFail("F808 listener body not a block")
         lb_start, lb_end, sj = _js_span_braced(text, sj)
@@ -58686,7 +58741,7 @@ def _js_parse_f733_litobj(text, i, depth, state):
             # get; the head parse distinguishes them.
             try:
                 _gn, _gj = _js_parse_f535_getter_head(
-                    text, _js_skip_ws(text, g))
+                    text, _js_skip_ws(text, g), depth=depth, state=state)
             except _JSExprFail:
                 _gn, _gj = None, None
             if _gn is not None:
@@ -61916,6 +61971,11 @@ def _js_parse_f801_named_fn(text, j, depth, state):
     rk = _js_match_kw(text, q, "return")
     if rk is None:
         raise _JSExprFail("F801 function without return")
+    # F887: the engine tolerates whitespace between `return` and the
+    # grouping paren (`return (a+'f2')`); _js_match_kw stops just past
+    # the keyword, so skip it here (narrow: F801 only -- the shared
+    # F614/F556 body grammars are untouched).
+    rk = _js_skip_ws(text, rk)
     body, q = _js_parse_f614_additive_body(text, rk, params, state)
     q = _js_skip_ws(text, q)
     if q < n and text[q] == ";":
@@ -63133,7 +63193,9 @@ def _js_parse_f67x_object(text, i, depth, state, pre_env=None,
             # by '(' is a shorthand method (handled above).
             if not this_bodies:
                 raise _JSExprFail("F67x getter not modeled")
-            gname, gk = _js_parse_f535_getter_head(text, k)
+            gname, gk = _js_parse_f535_getter_head(text, k, pre_env=pre_env,
+                                                       depth=depth,
+                                                       state=state)
             gk = _js_skip_ws(text, gk)
             if gk >= n or text[gk] != "{":
                 raise _JSExprFail("F67x getter needs a body")
@@ -82457,10 +82519,15 @@ def _js_parse_postfix(text, i, value, depth, state):
                                                     value, depth, state)
                     continue
             return value, i
+        # F888: the engine tolerates whitespace between `.` and the
+        # method name (`a. flat()`); skip it once before the
+        # name loop (no-space inputs are unaffected -- the skip is a
+        # no-op there).
+        _mdot = _js_skip_ws(text, j + 1)
         for name in _JS_POSTFIX_METHOD_NAMES:
 
-            if text.startswith(name, j + 1):
-                k = _js_skip_ws(text, j + 1 + len(name))
+            if text.startswith(name, _mdot):
+                k = _js_skip_ws(text, _mdot + len(name))
                 if k < len(text) and text[k] == "(":
                     value, i = _js_apply_method(text, k, name, value,
                                                 depth, state)
