@@ -103713,6 +103713,1029 @@ def _js_resolve_value_bindings(text):
     return "".join(out).lstrip(" \t\n\r")
 
 
+# ---------------------------------------------------------------------------
+# F957 / F958 / F959 / F960: narrow leading-statement rewrites (wave-391).
+#
+# Each rewrite matches ONE leading statement shape and substitutes the
+# bound name's modeled member reads in the remainder with their
+# node-exact (v24.20.0) values, so the normal whole-text scan decodes
+# the reassembled credential. The F495/F501 discipline applies
+# throughout: any reassignment or rebinding of a bound name in the
+# remainder aborts the rewrite (fail closed); string literals and
+# comments are never touched (_js_split_code_strings /
+# _js_ident_tokens); a rewrite that substitutes nothing returns None
+# (no pointless variant). All work is linear in the input except the
+# F958 backtracking matcher, which is step-capped and subject-capped.
+# Never evals.
+
+
+def _js_f9x_reassigned(rest, toks, bound):
+    """True when a bound name is reassigned in the remainder (F495 scan).
+
+    Mirrors the F495/F501 reassignment guard: `=`, `+=`, `-=`, `*=`,
+    `/=`, `%=`, `++`, `--` (prefix or postfix) on a bound name aborts
+    the rewrite. `==` and `=>` are not assignments. Never evals.
+    """
+    _rn = len(rest)
+    for tname, ts, te in toks:
+        if tname not in bound:
+            continue
+        j = te
+        while j < _rn and rest[j] in " \t\n\r":
+            j += 1
+        nxt2 = rest[j:j + 2]
+        nxt1 = rest[j:j + 1]
+        if nxt1 == "=" and nxt2 not in ("==", "=>"):
+            return True
+        if nxt2 in ("+=", "-=", "*=", "/=", "%=", "++", "--"):
+            return True
+        p = ts - 1
+        while p >= 0 and rest[p] in " \t\n\r":
+            p -= 1
+        if p >= 1 and rest[p - 1:p + 1] in ("++", "--"):
+            return True
+    return False
+
+
+def _js_f9x_guard_names(rest, bound):
+    """Shared remainder guard for the F957/F958/F959d/F960 rewrites.
+
+    Returns the identifier tokens of *rest*, or None when the rewrite
+    must decline: a backtick anywhere (template literals are not
+    tokenized -- the F495 fail-safe), any rebinding of a bound name
+    (_js_remainder_rebinds), or any reassignment (_js_f9x_reassigned).
+    Never evals.
+    """
+    try:
+        toks = _js_ident_tokens(rest)
+    except _JSExprFail:
+        return None
+    if _js_remainder_rebinds(rest, toks, bound):
+        return None
+    if _js_f9x_reassigned(rest, toks, bound):
+        return None
+    return toks
+
+
+def _js_f957_rewrite(text):
+    """Rewrite leading `var|let|const U=new URL('ABS');` (F957).
+
+    Filed 2026-10-09 (wave-390 attack round 58): F913 models URL
+    .search, but `u.searchParams.get('k')` on a var-bound URL misses:
+      var u=new URL('https://h/?k=f1');var RESULT=u.searchParams.get('k')+'f2';
+    Each `U.searchParams.get('K')` (dot or string-literal bracket
+    member forms, the _js_f576_member_name discipline) in the
+    remainder is substituted with the first K value's quoted literal
+    (urllib.parse.parse_qsl, keep_blank_values -- the F576
+    node-identical parse). A missing K is JS null, which the decoder
+    never decodes -- fail closed (the F576 precedent).
+
+    Bounds (all fail closed): a non-absolute or non-literal URL (the
+    _js_parse_f576_new_url boundaries); any reassignment or rebinding
+    of U in the remainder (F495 discipline); a `.get` with a
+    non-literal key or anything but exactly `)` after it; other
+    members on U or its searchParams are left unsubstituted (the scan
+    then ignores them). Returns the substituted remainder, or None.
+    Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, 0)
+    kw, i = _js_match_decl_kw(text, i)
+    if kw is None:
+        return None
+    try:
+        uname, i = _js_parse_ident(text, _js_skip_ws(text, i))
+        if uname == "arguments":
+            raise _JSExprFail("F957 binding named arguments")
+        i = _js_expect(text, i, "=")
+        _pv = _js_parse_f576_new_url(text, _js_skip_ws(text, i), 0,
+                                     {"ops": 0, "parts": 0})
+        if _pv is None or not isinstance(_pv[0], _JSURL):
+            return None
+        url, i = _pv
+        i = _js_expect(text, i, ";")
+    except _JSExprFail:
+        return None
+    rest = text[i:]
+    toks = _js_f9x_guard_names(rest, {uname})
+    if toks is None:
+        return None
+    pairs = parse_qsl(url.query, keep_blank_values=True)
+    # Substitute via the identifier tokens (string/comment-safe):
+    # each real `U` ident is tried against the full
+    # `U.searchParams.get('K')` pattern on the raw rest.
+    out = []
+    pos = 0
+    substituted = False
+    for tname, ts, te in toks:
+        if tname != uname:
+            continue
+        if ts > 0 and (rest[ts - 1] in _JS_IDENT_CONT
+                       or rest[ts - 1] in ".$"):
+            continue
+        try:
+            mname, k = _js_f576_member_name(rest, te, "F957")
+            if mname != "searchParams":
+                continue
+            gname, k = _js_f576_member_name(rest, k, "F957")
+            if gname != "get":
+                continue
+            k = _js_skip_ws(rest, k)
+            if k >= len(rest) or rest[k] != "(":
+                continue
+            k = _js_skip_ws(rest, k + 1)
+            if k >= len(rest) or rest[k] not in "'\"":
+                continue
+            key, k = _js_parse_string(rest, k)
+            k = _js_skip_ws(rest, k)
+            if k >= len(rest) or rest[k] != ")":
+                continue
+            k += 1
+        except _JSExprFail:
+            continue
+        val = None
+        for pname, pval in pairs:
+            if pname == key:
+                val = pval
+                break
+        if val is None:
+            return None
+        out.append(rest[pos:ts])
+        out.append(_js_quote_literal(val))
+        pos = k
+        substituted = True
+    out.append(rest[pos:])
+    if not substituted:
+        return None
+    return "".join(out).lstrip(" \t\n\r")
+
+
+_F958_LINE_TERMS = ("\n", "\r", "\u2028", "\u2029")
+
+
+def _js_f958_parse_pattern(pat):
+    """Parse a restricted regex source into match tokens (F958).
+
+    Supported: capture groups of `.*` / `\\d+` (named `(?<name>...)`
+    twins), and literal runs with `\\/`, `\\|`, `\\\\` escapes.
+    Anything else -- flags, anchors, classes, alternation, other
+    quantifiers or atoms, `\\d` outside a group -- returns None (fail
+    closed). Never evals.
+    """
+    toks = []
+    lit = []
+
+    def _flush():
+        for ch in lit:
+            toks.append(("lit", ch))
+        del lit[:]
+
+    i = 0
+    n = len(pat)
+    while i < n:
+        c = pat[i]
+        if c == "\\":
+            if i + 1 >= n:
+                return None
+            e = pat[i + 1]
+            if e in "/|\\":
+                lit.append(e)
+                i += 2
+                continue
+            return None
+        if c == "(":
+            _flush()
+            if pat.startswith("(?<", i):
+                j = i + 3
+                k = j
+                while k < n and (pat[k].isalnum() or pat[k] in "_$"):
+                    k += 1
+                name = pat[j:k]
+                if not name or k >= n or pat[k] != ">":
+                    return None
+                i = k + 1
+            else:
+                name = None
+                i += 1
+            if pat.startswith(".*", i):
+                kind = "star"
+                i += 2
+            elif pat.startswith("\\d+", i):
+                kind = "digits"
+                i += 3
+            else:
+                return None
+            if i >= n or pat[i] != ")":
+                return None
+            i += 1
+            toks.append(("cap", kind, name))
+            continue
+        if c in ")|^$+*?[":
+            return None
+        lit.append(c)
+        i += 1
+    _flush()
+    return toks
+
+
+def _js_f958_run_match(toks, subject):
+    """Leftmost match of restricted tokens against *subject* (F958).
+
+    Node-exact (v24.20.0) for the supported grammar: `.` excludes
+    line terminators (no /s flag); `\\d` is [0-9]; greedy
+    longest-first with backtracking. Returns (full_match, [(name,
+    value), ...]) or None (the engine's null match -- never decoded).
+    Subjects over 2048 chars fail closed; backtracking is
+    step-capped. Never evals.
+    """
+    if len(subject) > 2048:
+        return None
+    steps = [0]
+
+    def _rec(ti, si):
+        steps[0] += 1
+        if steps[0] > 30000:
+            raise _JSExprFail("F958 backtracking cap")
+        if ti == len(toks):
+            return [], si
+        t = toks[ti]
+        if t[0] == "lit":
+            if si < len(subject) and subject[si] == t[1]:
+                return _rec(ti + 1, si + 1)
+            return None
+        kind, name = t[1], t[2]
+        if kind == "star":
+            emax = len(subject)
+            for lt in _F958_LINE_TERMS:
+                p = subject.find(lt, si)
+                if p >= 0 and p < emax:
+                    emax = p
+            e = emax
+            while e >= si:
+                r = _rec(ti + 1, e)
+                if r is not None:
+                    gs, end = r
+                    return [(name, subject[si:e])] + gs, end
+                e -= 1
+            return None
+        e = si
+        while e < len(subject) and "0" <= subject[e] <= "9":
+            e += 1
+        e2 = e
+        while e2 > si:
+            r = _rec(ti + 1, e2)
+            if r is not None:
+                gs, end = r
+                return [(name, subject[si:e2])] + gs, end
+            e2 -= 1
+        return None
+
+    for start in range(len(subject) + 1):
+        r = _rec(0, start)
+        if r is not None:
+            gs, end = r
+            return subject[start:end], gs
+    return None
+
+
+def _js_f958_subst(rest, toks, mname, full, groups):
+    """Substitute match-result reads in the remainder (F958).
+
+    Operates on the identifier tokens (string/comment-safe): each
+    real `M` ident is tried against `M[N]` (N = 0 for the full
+    match), `+M[N]` (unary plus -- only for all-digit groups, else
+    the engine yields NaN), and `M.groups.NAME` /
+    `M.groups['NAME']` on the raw rest. An out-of-range index, a
+    missing named group, or a non-digit unary-plus operand is the
+    engine's undefined/NaN -- fail closed (returns None). Anything
+    that is not one of these reads is left untouched. Returns the
+    substituted rest, or None. Never evals.
+    """
+    out = []
+    pos = 0
+    substituted = False
+    n = len(rest)
+    for tname, ts, te in toks:
+        if tname != mname:
+            continue
+        if ts > 0 and (rest[ts - 1] in _JS_IDENT_CONT
+                       or rest[ts - 1] in ".$"):
+            continue
+        p = ts - 1
+        while p >= 0 and rest[p] in " \t\n\r":
+            p -= 1
+        unary = False
+        upos = ts
+        if p >= 0 and rest[p] == "+":
+            q = p - 1
+            while q >= 0 and rest[q] in " \t\n\r":
+                q -= 1
+            if q < 0 or rest[q] in "(,[=+-*/%<>!&|^~?:;{":
+                unary = True
+                upos = p
+        try:
+            j = te
+            if j < n and rest[j] == ".":
+                gword, j = _js_f576_member_name(rest, j, "F958")
+                if gword != "groups":
+                    continue
+                gname, j = _js_f576_member_name(rest, j, "F958")
+                if unary:
+                    return None
+                val = None
+                for gn, gv in groups:
+                    if gn == gname:
+                        val = gv
+                        break
+                if val is None:
+                    return None
+                out.append(rest[pos:ts])
+                out.append(_js_quote_literal(val))
+                pos = j
+                substituted = True
+                continue
+            if j >= n or rest[j] != "[":
+                continue
+            j = _js_skip_ws(rest, j + 1)
+            k = j
+            while k < n and rest[k] in "0123456789":
+                k += 1
+            if k == j or k - j > 6:
+                return None
+            idx = int(rest[j:k])
+            j = _js_skip_ws(rest, k)
+            if j >= n or rest[j] != "]":
+                continue
+            j += 1
+            if idx == 0:
+                val = full
+            elif 1 <= idx <= len(groups):
+                val = groups[idx - 1][1]
+            else:
+                return None
+            is_digits = val != "" and all("0" <= c <= "9" for c in val)
+            if unary:
+                if not is_digits:
+                    return None
+                out.append(rest[pos:upos])
+                out.append(val)
+            else:
+                out.append(rest[pos:ts])
+                out.append(_js_quote_literal(val))
+            pos = j
+            substituted = True
+        except _JSExprFail:
+            continue
+    out.append(rest[pos:])
+    if not substituted:
+        return None
+    return "".join(out)
+
+
+def _js_f958_rewrite(text):
+    """Rewrite leading `var|let|const M='SUBJ'.match(/RE/);` (F958).
+
+    Filed 2026-10-09 (wave-390 attack round 58): the decoder has no
+    RegExp match-group production, so
+      var m='f1|f2'.match(/(.*)\\|(.*)/);var RESULT=m[1]+m[2];
+      var m='f1|f2'.match(/(?<x>.*)\\|(?<y>.*)/);var RESULT=m.groups.x+m.groups.y;
+      var m='120,111'.match(/(\\d+),(\\d+)/);var RESULT=String.fromCharCode(+m[1],+m[2])+'...';
+    all miss. The restricted pattern grammar (see
+    _js_f958_parse_pattern) is matched leftmost and node-exactly;
+    the bound match result's reads are substituted in the remainder
+    (see _js_f958_subst). A null match, an unsupported pattern, or
+    any reassignment/rebinding of M fails closed. Returns the
+    substituted remainder, or None. Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, 0)
+    kw, i = _js_match_decl_kw(text, i)
+    if kw is None:
+        return None
+    try:
+        mname, i = _js_parse_ident(text, _js_skip_ws(text, i))
+        if mname == "arguments":
+            raise _JSExprFail("F958 binding named arguments")
+        i = _js_expect(text, i, "=")
+        i = _js_skip_ws(text, i)
+        if i >= n or text[i] not in "'\"":
+            return None
+        subj, i = _js_parse_string(text, i)
+        i = _js_skip_ws(text, i)
+        mword, i = _js_f576_member_name(text, i, "F958")
+        if mword != "match":
+            return None
+        i = _js_expect(text, i, "(")
+        i = _js_skip_ws(text, i)
+        if i >= n or text[i] != "/":
+            return None
+        j = i + 1
+        pat_chars = []
+        while True:
+            if j >= n:
+                return None
+            c = text[j]
+            if c == "\\":
+                if j + 1 >= n:
+                    return None
+                pat_chars.append(c)
+                pat_chars.append(text[j + 1])
+                j += 2
+                continue
+            if c == "/":
+                break
+            if c == "\n":
+                return None
+            pat_chars.append(c)
+            j += 1
+        pat = "".join(pat_chars)
+        j += 1
+        k = j
+        while k < n and text[k] in "abcdefghijklmnopqrstuvwxyz":
+            k += 1
+        if k != j:
+            return None
+        i = _js_expect(text, k, ")")
+        i = _js_expect(text, i, ";")
+    except _JSExprFail:
+        return None
+    toks = _js_f958_parse_pattern(pat)
+    if toks is None:
+        return None
+    try:
+        mr = _js_f958_run_match(toks, subj)
+    except _JSExprFail:
+        return None
+    if mr is None:
+        return None
+    full, groups = mr
+    rest = text[i:]
+    toks2 = _js_f9x_guard_names(rest, {mname})
+    if toks2 is None:
+        return None
+    new_rest = _js_f958_subst(rest, toks2, mname, full, groups)
+    if new_rest is None:
+        return None
+    return new_rest.lstrip(" \t\n\r")
+
+
+def _js_f959_rewrite_async_iife(text, i, kw, name):
+    """Rewrite `var|let|const N=await (async()=>{...})();` (F959a).
+
+    The async-arrow-IIFE twin of the F631 async-function IIFE:
+      var R=await (async()=>{async function*g(){yield 'f1';yield 'f2';}
+        var s='';for await(var p of g()){s+=p;}return s;})();
+    The yields happen in order and for-await collects them in order
+    (node-exact, v24.20.0); the rewrite keeps the original yield
+    literals joined by `+` so the whole-text scan decodes them.
+    Anything but exactly this body shape fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, i, "(")
+    j = _js_skip_ws(text, j)
+    ak = _js_match_kw(text, j, "async")
+    if ak is None:
+        raise _JSExprFail("F959a not async")
+    j = _js_expect(text, _js_skip_ws(text, ak), "(")
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F959a not an arrow")
+    j = _js_expect(text, _js_skip_ws(text, j + 2), "{")
+    j = _js_skip_ws(text, j)
+    ak2 = _js_match_kw(text, j, "async")
+    if ak2 is None:
+        raise _JSExprFail("F959a no async generator")
+    j = _js_skip_ws(text, ak2)
+    fk = _js_match_kw(text, j, "function")
+    if fk is None:
+        raise _JSExprFail("F959a no function")
+    j = _js_skip_ws(text, fk)
+    if j >= n or text[j] != "*":
+        raise _JSExprFail("F959a not a generator")
+    j = _js_skip_ws(text, j + 1)
+    gen, j = _js_parse_ident(text, j)
+    if gen == "arguments":
+        raise _JSExprFail("F959a bad generator name")
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    yields = []
+    while True:
+        j = _js_skip_ws(text, j)
+        yk = _js_match_kw(text, j, "yield")
+        if yk is None:
+            break
+        j = _js_skip_ws(text, yk)
+        paren = False
+        if j < n and text[j] == "(":
+            paren = True
+            j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F959a yield not a literal")
+        yv, j = _js_parse_string(text, j)
+        if paren:
+            j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        yields.append(yv)
+    if not yields:
+        raise _JSExprFail("F959a no yields")
+    j = _js_expect(text, j, "}")
+    j = _js_skip_ws(text, j)
+    dkw, j = _js_match_decl_kw(text, j)
+    if dkw is None:
+        raise _JSExprFail("F959a no accumulator decl")
+    acc, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, "=")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F959a accumulator not a literal")
+    init, j = _js_parse_string(text, j)
+    if init != "":
+        raise _JSExprFail("F959a accumulator not empty")
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    fk2 = _js_match_kw(text, j, "for")
+    if fk2 is None:
+        raise _JSExprFail("F959a no for")
+    awk = _js_match_kw(text, _js_skip_ws(text, fk2), "await")
+    if awk is None:
+        raise _JSExprFail("F959a no for-await")
+    j = _js_expect(text, _js_skip_ws(text, awk), "(")
+    j = _js_skip_ws(text, j)
+    pkw, j = _js_match_decl_kw(text, j)
+    if pkw is None:
+        raise _JSExprFail("F959a no for-await decl")
+    pvar, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    ofk = _js_match_kw(text, _js_skip_ws(text, j), "of")
+    if ofk is None:
+        raise _JSExprFail("F959a no of")
+    g2, j = _js_parse_ident(text, _js_skip_ws(text, ofk))
+    if g2 != gen:
+        raise _JSExprFail("F959a for-await over another generator")
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    j = _js_skip_ws(text, j)
+    s2, j = _js_parse_ident(text, j)
+    if s2 != acc:
+        raise _JSExprFail("F959a accumulator mismatch")
+    j = _js_skip_ws(text, j)
+    if text.startswith("+=", j):
+        j = _js_skip_ws(text, j + 2)
+        p2, j = _js_parse_ident(text, j)
+        if p2 != pvar:
+            raise _JSExprFail("F959a iteration var mismatch")
+    elif j < n and text[j] == "=" and not text.startswith("==", j):
+        j = _js_skip_ws(text, j + 1)
+        s3, j = _js_parse_ident(text, j)
+        if s3 != acc:
+            raise _JSExprFail("F959a accumulator mismatch 2")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+":
+            raise _JSExprFail("F959a not an accumulation")
+        p2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if p2 != pvar:
+            raise _JSExprFail("F959a iteration var mismatch 2")
+    else:
+        raise _JSExprFail("F959a bad accumulation")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, j, "}")
+    j = _js_skip_ws(text, j)
+    rk = _js_match_kw(text, j, "return")
+    if rk is None:
+        raise _JSExprFail("F959a no return")
+    rvar, j = _js_parse_ident(text, _js_skip_ws(text, rk))
+    if rvar != acc:
+        raise _JSExprFail("F959a return not the accumulator")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    if len({gen, acc, pvar, name}) != 4:
+        raise _JSExprFail("F959a name collision")
+    rest = text[j:]
+    additive = "+".join(_js_quote_literal(y) for y in yields)
+    return "%s %s=%s;%s" % (kw, name, additive, rest)
+
+
+def _js_f959_rewrite_promise_then(text, i, kw, name):
+    """Rewrite `var|let|const N=await Promise.resolve('L').then(CB);` (F959b).
+
+    F618 models `Promise.all`/`Promise.race` with `.then`; the bare
+    `Promise.resolve('LIT').then(P=>BODY)` residual is the F959 filed
+    shape. The callback is `P=>BODY` / `(P)=>BODY` with a concise
+    body (the F618 callback grammar); the param's bare reads are
+    substituted with the resolve literal (the _js_bind_foreach_param
+    discipline -- anything else fails closed) and the substituted
+    body is spliced back so the whole-text scan decodes it.
+    Block bodies, destructuring, and non-arrow callbacks fail closed.
+    Never evals.
+    """
+    n = len(text)
+    j = i
+    val, j = _js_parse_f618_promise_resolve(text, j,
+                                            {"ops": 0, "parts": 0})
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F959b no then member")
+    tn, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if tn != "then":
+        raise _JSExprFail("F959b member not then")
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "(":
+        j = _js_skip_ws(text, j + 1)
+        pn, j = _js_parse_ident(text, j)
+        if pn == "arguments":
+            raise _JSExprFail("F959b bad param")
+        j = _js_expect(text, j, ")")
+    elif j < n and text[j] in _JS_IDENT_START:
+        pn, j = _js_parse_ident(text, j)
+        if pn == "arguments":
+            raise _JSExprFail("F959b bad param")
+    else:
+        raise _JSExprFail("F959b bad then callback")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F959b not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        raise _JSExprFail("F959b block body not modeled")
+    body, k = _js_scan_foreach_E(text, j, ")")
+    body2 = _js_bind_foreach_param(body, pn, _js_quote_literal(val))
+    j = _js_expect(text, k + 1, ";")
+    rest = text[j:]
+    return "%s %s=%s;%s" % (kw, name, body2, rest)
+
+
+def _js_f959_rewrite_all_join(text, i, kw, name):
+    """Rewrite `var|let|const N=(await Promise.all([...])).join('S');` (F959c).
+
+    F618 models `Promise.all([...]).then(CB)`; the `.join('SEP')`
+    terminal is the F959 filed shape. Every element must be
+    `Promise.resolve('LIT')` (the _js_parse_f618_promise_resolve
+    grammar); the join is rendered structurally as the quoted
+    literals interleaved with the quoted separator so the
+    whole-text scan decodes it. Anything else fails closed. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_expect(text, i, "(")
+    j = _js_skip_ws(text, j)
+    ak = _js_match_kw(text, j, "await")
+    if ak is None:
+        raise _JSExprFail("F959c no await")
+    j = _js_skip_ws(text, ak)
+    pk = _js_match_kw(text, j, "Promise")
+    if pk is None:
+        raise _JSExprFail("F959c no Promise")
+    j = _js_skip_ws(text, pk)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F959c no member")
+    an, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if an != "all":
+        raise _JSExprFail("F959c not all")
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, "[")
+    elems = []
+    st = {"ops": 0, "parts": 0}
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] != "]":
+        while True:
+            ev, j = _js_parse_f618_promise_resolve(text, j, st)
+            elems.append(ev)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                continue
+            break
+    if not elems:
+        raise _JSExprFail("F959c empty all")
+    j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail("F959c no join member")
+    jn, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if jn != "join":
+        raise _JSExprFail("F959c member not join")
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F959c separator not a literal")
+    sep, j = _js_parse_string(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    rest = text[j:]
+    parts = []
+    for e in elems:
+        if parts:
+            parts.append(_js_quote_literal(sep))
+        parts.append(_js_quote_literal(e))
+    return "%s %s=%s;%s" % (kw, name, "+".join(parts), rest)
+
+
+def _js_f959_rewrite_import(text, i, kw, name):
+    """Rewrite `var|let|const M=await import('data:...');` (F959d).
+
+    Filed 2026-10-09 (wave-390 attack round 58):
+      var m=await import('data:text/javascript,export default "f1";');
+      var RESULT=m.default+'f2';
+    The data-URL module must be exactly `export default 'LIT';`
+    (percent-encoded or multi-statement modules fail closed); each
+    `M.default` / `M['default']` read in the remainder is
+    substituted with the quoted default export. Any reassignment or
+    rebinding of M fails closed (F495 discipline). Returns the
+    substituted remainder, or None. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i + len("import"))
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F959d URL not a literal")
+    url, j = _js_parse_string(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    prefix = "data:text/javascript,"
+    if not url.startswith(prefix):
+        raise _JSExprFail("F959d not a data URL module")
+    src = url[len(prefix):]
+    k = 0
+    while k < len(src) and src[k] in " \t\n\r":
+        k += 1
+    ek = _js_match_kw(src, k, "export")
+    if ek is None:
+        raise _JSExprFail("F959d no export")
+    k = ek
+    while k < len(src) and src[k] in " \t\n\r":
+        k += 1
+    dk = _js_match_kw(src, k, "default")
+    if dk is None:
+        raise _JSExprFail("F959d no default")
+    k = dk
+    while k < len(src) and src[k] in " \t\n\r":
+        k += 1
+    if k >= len(src) or src[k] not in "'\"":
+        raise _JSExprFail("F959d default not a literal")
+    dv, k = _js_parse_string(src, k)
+    while k < len(src) and src[k] in " \t\n\r":
+        k += 1
+    if k >= len(src) or src[k] != ";":
+        raise _JSExprFail("F959d no semicolon")
+    k += 1
+    while k < len(src) and src[k] in " \t\n\r":
+        k += 1
+    if k != len(src):
+        raise _JSExprFail("F959d trailing module text")
+    rest = text[j:]
+    toks = _js_f9x_guard_names(rest, {name})
+    if toks is None:
+        raise _JSExprFail("F959d guard")
+    out = []
+    pos = 0
+    substituted = False
+    for tname, ts, te in toks:
+        if tname != name:
+            continue
+        if ts > 0 and (rest[ts - 1] in _JS_IDENT_CONT
+                       or rest[ts - 1] in ".$"):
+            continue
+        try:
+            mn, k2 = _js_f576_member_name(rest, te, "F959d")
+        except _JSExprFail:
+            continue
+        if mn != "default":
+            continue
+        out.append(rest[pos:ts])
+        out.append(_js_quote_literal(dv))
+        pos = k2
+        substituted = True
+    out.append(rest[pos:])
+    if not substituted:
+        raise _JSExprFail("F959d default never read")
+    return "".join(out).lstrip(" \t\n\r")
+
+
+def _js_f959_rewrite(text):
+    """Rewrite leading awaited async-assembly statements (F959).
+
+    Filed 2026-10-09 (wave-390 attack round 58): async credential
+    assembly -- async generators drained by for-await, promise .then
+    chains, Promise.all joins, and dynamic import() of data: URLs --
+    misses because the decoder models for-await over plain arrays
+    only and has no resolve+then / all+join / import productions:
+      var R=await (async()=>{async function*g(){yield 'f1';yield 'f2';}
+        var s='';for await(var p of g()){s+=p;}return s;})();
+      var R=await Promise.resolve('f1').then(a=>a+'f2');
+      var R=(await Promise.all([Promise.resolve('f1'),
+        Promise.resolve('f2')])).join('');
+      var m=await import('data:text/javascript,export default "f1";');
+      var RESULT=m.default+'f2';
+    Each form is rewritten to (or substituted into) a plain
+    literal-additive statement using the ORIGINAL literal pieces, so
+    the whole-text scan decodes the reassembled credential. The
+    F631 `(async function(){...})()` IIFE and the F618
+    all/race+then productions are disjoint by head shape and are
+    untouched. Anything but exactly these shapes fails closed.
+    Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, 0)
+    kw, i = _js_match_decl_kw(text, i)
+    if kw is None:
+        return None
+    try:
+        name, i = _js_parse_ident(text, _js_skip_ws(text, i))
+        if name == "arguments":
+            raise _JSExprFail("F959 binding named arguments")
+        i = _js_expect(text, i, "=")
+        i = _js_skip_ws(text, i)
+        if i < n and text[i] == "(":
+            return _js_f959_rewrite_all_join(text, i, kw, name)
+        ak = _js_match_kw(text, i, "await")
+        if ak is None:
+            return None
+        i = _js_skip_ws(text, ak)
+        if i < n and text[i] == "(":
+            return _js_f959_rewrite_async_iife(text, i, kw, name)
+        if _js_match_kw(text, i, "Promise") is not None:
+            return _js_f959_rewrite_promise_then(text, i, kw, name)
+        if _js_match_kw(text, i, "import") is not None:
+            return _js_f959_rewrite_import(text, i, kw, name)
+        return None
+    except _JSExprFail:
+        return None
+
+
+def _js_f960_rewrite(text):
+    """Rewrite leading `var|let|const WM=new WeakMap();` + sets (F960).
+
+    Filed 2026-10-09 (wave-390 attack round 58): WeakMap fragment
+    storage has no modeled path (Map is modeled for Array.from
+    only):
+      var wm=new WeakMap();var k={};wm.set(k,'f1');
+      var RESULT=wm.get(k)+'f2';
+    The rewrite consumes the `new WeakMap()` binding, the `{}` key
+    declarators (each `{}` is a fresh engine identity; multi-
+    declarators allowed), and the `WM.set(K,'LIT')` statements
+    (last wins, engine-exact), then substitutes each `WM.get(K)`
+    (dot or string-literal bracket form) in the remainder with the
+    quoted value. A get of an unset key is the engine's undefined,
+    which the decoder never decodes -- fail closed. Any
+    reassignment/rebinding of the map or keys, a non-`{}` key init,
+    a non-literal set value, or a `WM.set` in the remainder fails
+    closed. Returns the substituted remainder, or None. Never
+    evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, 0)
+    kw, i = _js_match_decl_kw(text, i)
+    if kw is None:
+        return None
+    try:
+        wname, i = _js_parse_ident(text, _js_skip_ws(text, i))
+        if wname == "arguments":
+            raise _JSExprFail("F960 binding named arguments")
+        i = _js_expect(text, i, "=")
+        i = _js_skip_ws(text, i)
+        nk = _js_match_kw(text, i, "new")
+        if nk is None:
+            return None
+        i = _js_skip_ws(text, nk)
+        wn, i = _js_parse_ident(text, i)
+        if wn != "WeakMap":
+            return None
+        i = _js_expect(text, i, "(")
+        i = _js_expect(text, i, ")")
+        i = _js_expect(text, i, ";")
+        keys = {}
+        while True:
+            j = _js_skip_ws(text, i)
+            dkw, j = _js_match_decl_kw(text, j)
+            if dkw is None:
+                break
+            try:
+                j = _js_skip_ws(text, j)
+                decls = []
+                while True:
+                    kn, j = _js_parse_ident(text, j)
+                    if kn in keys or kn == wname or kn == "arguments":
+                        raise _JSExprFail("F960 bad key name")
+                    j = _js_expect(text, j, "=")
+                    j = _js_skip_ws(text, j)
+                    if j >= n or text[j] != "{":
+                        raise _JSExprFail("F960 key not an object")
+                    j2 = _js_skip_ws(text, j + 1)
+                    if j2 >= n or text[j2] != "}":
+                        raise _JSExprFail("F960 key not empty")
+                    j = j2 + 1
+                    decls.append(kn)
+                    j = _js_skip_ws(text, j)
+                    if j < n and text[j] == ",":
+                        j = j + 1
+                        continue
+                    break
+                j = _js_expect(text, j, ";")
+            except _JSExprFail:
+                break
+            for kn in decls:
+                keys[kn] = True
+            i = j
+        setmap = {}
+        while True:
+            j = _js_skip_ws(text, i)
+            if j >= n:
+                break
+            try:
+                wn2, j = _js_parse_ident(text, j)
+            except _JSExprFail:
+                break
+            if wn2 != wname:
+                break
+            try:
+                mn, j = _js_f576_member_name(text, j, "F960")
+                if mn != "set":
+                    return None
+                j = _js_expect(text, j, "(")
+                kn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+                if kn not in keys:
+                    return None
+                j = _js_expect(text, j, ",")
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    return None
+                lv, j = _js_parse_string(text, j)
+                j = _js_expect(text, j, ")")
+                j = _js_expect(text, j, ";")
+            except _JSExprFail:
+                return None
+            setmap[kn] = _js_quote_literal(lv)
+            i = j
+        rest = text[i:]
+    except _JSExprFail:
+        return None
+    bound = set(keys)
+    bound.add(wname)
+    toks = _js_f9x_guard_names(rest, bound)
+    if toks is None:
+        return None
+    # A later WM.set would stale the modeled map -- fail closed.
+    for tname, ts, te in toks:
+        if tname != wname:
+            continue
+        if ts > 0 and (rest[ts - 1] in _JS_IDENT_CONT
+                       or rest[ts - 1] in ".$"):
+            continue
+        try:
+            mn, k = _js_f576_member_name(rest, te, "F960")
+        except _JSExprFail:
+            continue
+        if mn == "set":
+            return None
+    out = []
+    pos = 0
+    substituted = False
+    n2 = len(rest)
+    for tname, ts, te in toks:
+        if tname != wname:
+            continue
+        if ts > 0 and (rest[ts - 1] in _JS_IDENT_CONT
+                       or rest[ts - 1] in ".$"):
+            continue
+        try:
+            mn, k = _js_f576_member_name(rest, te, "F960")
+            if mn != "get":
+                continue
+            k = _js_skip_ws(rest, k)
+            if k >= n2 or rest[k] != "(":
+                continue
+            kn, k = _js_parse_ident(rest, _js_skip_ws(rest, k + 1))
+            if kn not in keys:
+                return None
+            k = _js_skip_ws(rest, k)
+            if k >= n2 or rest[k] != ")":
+                continue
+            k += 1
+        except _JSExprFail:
+            continue
+        if kn not in setmap:
+            return None
+        out.append(rest[pos:ts])
+        out.append(setmap[kn])
+        pos = k
+        substituted = True
+    out.append(rest[pos:])
+    if not substituted:
+        return None
+    return "".join(out).lstrip(" \t\n\r")
+
+
 def _js_f586_shift_ok(text, s):
     """Whether the `(` just left of a `new`-anchor match may open a
     grouping paren around a parenthesized new-expression receiver
@@ -104085,6 +105108,23 @@ def _decode_layer(text):
             _add(decoded)
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
+    # F957 / F958 / F959 / F960 (wave-391 lane 3): narrow
+    # leading-statement rewrites. Each matches one leading statement
+    # shape (URLSearchParams.get on a var-bound URL, RegExp
+    # match-group reads, awaited async-assembly, WeakMap sets) and
+    # substitutes the bound name's modeled member reads in the
+    # remainder, so the whole-text scan decodes the reassembled
+    # credential. The four shapes are disjoint; order among them is
+    # irrelevant. Never evals.
+    for _rw in (_js_f957_rewrite, _js_f958_rewrite, _js_f959_rewrite,
+                _js_f960_rewrite):
+        _rw_text = _rw(text)
+        if _rw_text is not None:
+            decoded = _try_js_expr_decode_all(_rw_text)
+            if decoded is not None:
+                _add(decoded)
+                if len(variants) >= _MAX_CANDIDATES:
+                    return variants
     # JS string-expression runs (F430/F434/F437/F457): strict static decode of
     # quoted '+' concatenation, template literals (literal-only ${...}),
     # String.fromCharCode,
