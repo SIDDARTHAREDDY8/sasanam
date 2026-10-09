@@ -107747,6 +107747,635 @@ def _js_f960_rewrite(text):
     return "".join(out).lstrip(" \t\n\r")
 
 
+# ---------------------------------------------------------------------------
+# F986 / F987: guarded conditionals + var-bound fromCharCode arrays (wave-392).
+#
+# F986 (LOW, filed 2026-10-09 by wave-391 attack round 59): fragment
+# assembly guarded by if/else branches, ternary branches,
+# `void 0||` fallbacks, typeof-guards, and instanceof-guards
+# evaluates node-exactly, but the decoder has no guard-expression
+# production. F987 (LOW, same round; F643 residual): F643 models
+# String.fromCharCode.apply/call with the code array inline;
+# binding the array to a var/const first misses node-exactly.
+#
+# F986 is a narrow whole-text statement-sequence decoder
+# (_js_f986_stmt_decode, hooked in the _stmtdec loop): decls,
+# `+=`/`=` accumulations, `if (G) {..} [else {..}]` with decidable
+# guards, and a final `var RESULT = <additive>;`. F987 is a narrow
+# leading-statement rewrite (_js_f987_rewrite, hooked in the _rw
+# loop) in the F495/F501/F957-F960 discipline. Both are node-exact
+# (v24.20.0) for their modeled subsets; everything else fails
+# closed. No new decision codes, no new re.compile (pin tests
+# unchanged). Never evals.
+
+
+_F986_KNOWN_GLOBALS = frozenset((
+    "undefined", "NaN", "Infinity", "globalThis", "window", "self",
+    "global", "arguments", "eval", "Array", "Object", "String",
+    "Number", "Boolean", "JSON", "Math", "Reflect", "Proxy",
+    "Promise", "console", "this",
+))
+
+
+def _js_f98x_scan_int(text, i):
+    """Scan one integer-literal spelling at text[i] (F986/F987).
+
+    Optional sign, then decimal/hex/octal/binary digits with
+    underscore separators (a narrow subset of node's literal
+    grammar -- no exponents, no legacy octal). Returns the index
+    just past the literal; raises _JSExprFail otherwise. The value
+    is not needed by either caller (F986 needs zero-vs-nonzero via
+    _js_f98x_int_nonzero; F987 substitutes the source text), so
+    only the spelling is validated. Never evals.
+    """
+    n = len(text)
+    j = i
+    if j < n and text[j] in "+-":
+        j += 1
+    if j + 1 < n and text[j] == "0" and text[j + 1] in "xXoObB":
+        digs = ("0123456789abcdefABCDEF" if text[j + 1] in "xX"
+                else "01234567" if text[j + 1] in "oO" else "01")
+        j += 2
+    else:
+        digs = "0123456789"
+    k = j
+    if k >= n or text[k] not in digs:
+        raise _JSExprFail("F98x not an int")
+    while k < n:
+        if text[k] in digs:
+            k += 1
+        elif text[k] == "_" and k + 1 < n and text[k + 1] in digs:
+            k += 2
+        else:
+            break
+    return k
+
+
+def _js_f98x_int_nonzero(text, i, k):
+    """True when the int-literal spelling text[i:k] is != 0 (F986)."""
+    s = text[i:k].replace("_", "")
+    if s[:1] in "+-":
+        s = s[1:]
+    if len(s) >= 2 and s[0] == "0" and s[1] in "xXoObB":
+        s = s[2:]
+    return any(ch != "0" for ch in s)
+
+
+def _js_f98x_scan_int_list(text, i):
+    """Scan `[<int>, ...]` at text[i] (F986/F987).
+
+    Dense integer-literal arrays only (no holes, spreads,
+    getters, or non-numeric elements -- the node-exactness
+    precondition for textual substitution). Returns the index
+    just past `]`. Raises _JSExprFail otherwise. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F98x not [")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "]":
+        return j + 1
+    while True:
+        j = _js_f98x_scan_int(text, j)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if j < n and text[j] == "]":
+            return j + 1
+        raise _JSExprFail("F98x bad int list")
+
+
+def _js_f986_typeof_ok(box, full, name, gstart, gend):
+    """Whether `typeof <name>` is decidable-undefined (F986).
+
+    True when <name> is not a known global and occurs nowhere in
+    *full* outside the guard span [*gstart*, *gend*) -- hence
+    undeclared, so typeof cannot throw (no TDZ) and cannot be
+    "defined". The name->positions index is built once per decode
+    (cached in *box*) so k typeof-guards cost O(n), not O(k*n)
+    (standards review HARD-1 -- the F452 aggregate-cost rule).
+    Never evals.
+    """
+    idx = box.get("_toks_idx")
+    if idx is None:
+        try:
+            toks = _js_ident_tokens(full)
+        except _JSExprFail:
+            raise _JSExprFail("F986 typeof no tokens")
+        idx = {}
+        for tname, ts, te in toks:
+            idx.setdefault(tname, []).append((ts, te))
+        box["_toks_idx"] = idx
+    if name in _F986_KNOWN_GLOBALS:
+        raise _JSExprFail("F986 typeof known global")
+    for ts, te in idx.get(name, []):
+        if ts >= gstart and te <= gend:
+            continue
+        raise _JSExprFail("F986 typeof name occurs elsewhere")
+    return True
+
+
+def _js_f986_guard(text, i, full, env, box):
+    """Parse a decidable F986 guard at text[i]; returns (truthy, next).
+
+    Decidable guards (all side-effect-free, node v24.20.0):
+    - `true` / `false` keywords;
+    - an integer literal (optional sign): truthy iff != 0;
+    - `typeof <name> === "undefined"` (also `==`) -> True and
+      `!==` / `!=` -> False, when <name> is not a known global and
+      occurs nowhere else in *full* -- hence undeclared, so
+      typeof cannot throw (no TDZ) and cannot be "defined"
+      (_js_f986_typeof_ok);
+    - `[<int-list>] instanceof Array` -> True (literal-only
+      contents cannot throw), unless `Array` is bound in *env*
+      (a shadowed RHS is not callable -- the engine throws, so
+      the guard is undecidable: spec review HARD-3);
+    - `({}) instanceof Object` -> True, likewise unless `Object`
+      is bound in *env*.
+    Anything else raises _JSExprFail (fail closed). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    for kw, val in (("true", True), ("false", False)):
+        m = _js_match_kw(text, j, kw)
+        if m is not None:
+            return val, m
+    if j < n and (text[j] in _ASCII_DIGITS or
+                  (text[j] in "+-" and j + 1 < n and
+                   text[j + 1] in _ASCII_DIGITS)):
+        k = _js_f98x_scan_int(text, j)
+        return _js_f98x_int_nonzero(text, j, k), k
+    m = _js_match_kw(text, j, "typeof")
+    if m is not None:
+        k = _js_skip_ws(text, m)
+        name, k = _js_parse_ident(text, k)
+        k = _js_skip_ws(text, k)
+        for op, want_undef in (("===", True), ("!==", False),
+                              ("==", True), ("!=", False)):
+            if text.startswith(op, k):
+                k = _js_skip_ws(text, k + len(op))
+                break
+        else:
+            raise _JSExprFail("F986 typeof op")
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F986 typeof rhs")
+        rhs, k = _js_parse_string(text, k)
+        if rhs != "undefined":
+            raise _JSExprFail("F986 typeof rhs not undefined")
+        _js_f986_typeof_ok(box, full, name, j, k)
+        return want_undef, k
+    if j < n and text[j] == "[":
+        k = _js_f98x_scan_int_list(text, j)
+        k = _js_skip_ws(text, k)
+        m = _js_match_kw(text, k, "instanceof")
+        if m is None:
+            raise _JSExprFail("F986 not instanceof")
+        k = _js_skip_ws(text, m)
+        cn, k = _js_parse_ident(text, k)
+        if cn != "Array":
+            raise _JSExprFail("F986 instanceof not Array")
+        if "Array" in env:
+            raise _JSExprFail("F986 instanceof Array shadowed")
+        return True, k
+    if j < n and text[j] == "(":
+        k = _js_skip_ws(text, j + 1)
+        if k < n and text[k] == "{":
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] == "}":
+                k = _js_skip_ws(text, k + 1)
+                if k < n and text[k] == ")":
+                    k = _js_skip_ws(text, k + 1)
+                    m = _js_match_kw(text, k, "instanceof")
+                    if m is not None:
+                        k = _js_skip_ws(text, m)
+                        cn, k = _js_parse_ident(text, k)
+                        if cn == "Object":
+                            if "Object" in env:
+                                raise _JSExprFail(
+                                    "F986 instanceof Object shadowed")
+                            return True, k
+        raise _JSExprFail("F986 instanceof shape")
+    raise _JSExprFail("F986 guard not decidable")
+
+
+def _js_f986_void0(text, j):
+    """Parse `void 0` / `void(0)` at text[j] (F986); returns next index.
+
+    Raises _JSExprFail otherwise. Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, j, "void")
+    if m is None:
+        raise _JSExprFail("F986 not void")
+    k = _js_skip_ws(text, m)
+    if k < n and text[k] == "(":
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "0":
+            raise _JSExprFail("F986 void arg")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F986 void close")
+        return _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "0":
+        raise _JSExprFail("F986 void arg")
+    return _js_skip_ws(text, k + 1)
+
+
+def _js_f986_gval(text, i, env, full, box, depth, allow_void):
+    """Parse a guarded string value at text[i]; returns (str, next).
+
+    gval := string-literal | bound-ident | "(" additive ")"
+          | "(" guard "?" additive ":" additive ")"
+          | void0 "||" gval | "(" void0 ")" "||" gval
+    where void0 is `void 0` / `void(0)`. The void productions
+    only fire when *allow_void* (additive-start): JS `+` binds
+    tighter than `||`, so `'x'+void 0||'A'` is `('x'+void 0)||'A'`
+    (node: `'xundefined'`), not `'x'+(void 0||'A')` -- a
+    mid-additive void must fail closed, never mis-decode
+    (spec review HARD-1). Inside explicit parens a fresh additive
+    starts, so `(void 0||'A')` still decodes.
+    `box["guard"]` is set True whenever a guard/void production
+    fires. Node-exact (v24.20.0); anything else raises
+    _JSExprFail. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F986 too deep")
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if allow_void and _js_match_kw(text, j, "void") is not None:
+        k = _js_f986_void0(text, j)
+        if k + 1 >= n or text[k:k + 2] != "||":
+            raise _JSExprFail("F986 void not ||")
+        v, k = _js_f986_gval(text, _js_skip_ws(text, k + 2), env,
+                             full, box, depth + 1, False)
+        box["guard"] = True
+        return v, k
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    if j < n and text[j] == "(":
+        k = _js_skip_ws(text, j + 1)
+        save = k
+        try:
+            truthy, k = _js_f986_guard(text, k, full, env, box)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "?":
+                raise _JSExprFail("F986 not ternary")
+            a, k = _js_f986_additive(text, _js_skip_ws(text, k + 1),
+                                    env, full, box, depth + 1)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ":":
+                raise _JSExprFail("F986 ternary no colon")
+            b, k = _js_f986_additive(text, _js_skip_ws(text, k + 1),
+                                    env, full, box, depth + 1)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("F986 ternary no close")
+            box["guard"] = True
+            return (a if truthy else b), k + 1
+        except _JSExprFail:
+            pass
+        # Parenthesized void fallback: "(" void0 ")" "||" gval --
+        # only at additive-start (HARD-1): mid-additive, `'x'+(void
+        # 0)||'A'` is `('x'+void 0)||'A'` in node, so the fallback
+        # must not fire there.
+        if allow_void:
+            try:
+                k = _js_f986_void0(text, save)
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != ")":
+                    raise _JSExprFail("F986 void group no close")
+                k = _js_skip_ws(text, k + 1)
+                if k + 1 >= n or text[k:k + 2] != "||":
+                    raise _JSExprFail("F986 void group not ||")
+                v, k = _js_f986_gval(text, _js_skip_ws(text, k + 2),
+                                    env, full, box, depth + 1, False)
+                box["guard"] = True
+                return v, k
+            except _JSExprFail:
+                pass
+        v, k = _js_f986_additive(text, save, env, full, box,
+                                depth + 1)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ")":
+            raise _JSExprFail("F986 group no close")
+        return v, k + 1
+    if j < n and text[j] in _JS_IDENT_START:
+        name, k = _js_parse_ident(text, j)
+        if name not in env:
+            raise _JSExprFail("F986 unbound ident")
+        return env[name], k
+    raise _JSExprFail("F986 gval")
+
+
+def _js_f986_additive(text, i, env, full, box, depth):
+    """Parse `gval ("+" gval)*` at text[i]; returns (str, next).
+
+    The void-`||` production may only open the additive (first
+    term): JS `+` binds tighter than `||` (spec review HARD-1).
+    A `++` after a term is not an additive (fails closed --
+    postfix/prefix `++` on a string binding is outside the
+    modeled subset). Never evals.
+    """
+    v, j = _js_f986_gval(text, i, env, full, box, depth, True)
+    n = len(text)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k < n and text[k] == "+" and text[k + 1:k + 2] != "+":
+            w, k = _js_f986_gval(text, k + 1, env, full, box, depth,
+                                False)
+            v += w
+            j = k
+            continue
+        return v, j
+
+
+def _js_f986_sim_block(text, bs, be, env, consts, full, box, depth):
+    """Simulate the `{...}` block text[bs:be] (F986); returns next (== be).
+
+    Statements: `var` decls, `+=`/`=` accumulations, and
+    `if (G) {...} [else {...}]` (braced bodies only -- a documented
+    narrowness). `let`/`const` decls inside a block fail closed:
+    they are block-scoped in node, which the flat env cannot
+    model soundly. Nested `var RESULT` fails closed. Never evals.
+    """
+    j = _js_skip_ws(text, bs)
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= be:
+            return j
+        j = _js_f986_stmt(text, j, env, consts, full, box, depth,
+                          in_block=True)
+
+
+def _js_f986_if(text, j, env, consts, full, box, depth):
+    """Simulate `if (G) {STMTS} [else {STMTS}]` at text[j] (F986).
+
+    The taken branch simulates into *env*/*consts*; the untaken
+    branch simulates into scratch copies (a parse failure there
+    still fails the whole decode closed -- the engine would throw
+    a SyntaxError on malformed untaken branches, which the
+    decoder never decodes). `else if` chains and unbraced bodies
+    fail closed (documented narrowness). Returns the index just
+    past the statement. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F986 too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "if"))
+    j = _js_expect(text, j, "(")
+    truthy, j = _js_f986_guard(text, j, full, env, box)
+    j = _js_expect(text, j, ")")
+    box["guard"] = True
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F986 if needs block")
+    cbs, cbe, j = _js_span_braced(text, j)
+    alt = None
+    k = _js_skip_ws(text, j)
+    m = _js_match_kw(text, k, "else")
+    if m is not None:
+        k = _js_skip_ws(text, m)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("F986 else needs block")
+        abs_, abe, k = _js_span_braced(text, k)
+        alt = (abs_, abe)
+        j = k
+    if truthy:
+        _js_f986_sim_block(text, cbs, cbe, env, consts, full, box,
+                           depth + 1)
+        if alt is not None:
+            _js_f986_sim_block(text, alt[0], alt[1], dict(env),
+                               set(consts), full, dict(box), depth + 1)
+    else:
+        _js_f986_sim_block(text, cbs, cbe, dict(env), set(consts),
+                           full, dict(box), depth + 1)
+        if alt is not None:
+            _js_f986_sim_block(text, alt[0], alt[1], env, consts,
+                               full, box, depth + 1)
+    return j
+
+
+def _js_f986_stmt(text, j, env, consts, full, box, depth,
+                 in_block=False):
+    """Parse one F986 statement at text[j]; returns the next index.
+
+    Statements: `var|let|const name = <additive>;`,
+    `name += <additive>;`, `name = <additive>;` (name must be
+    bound), and `if` statements. Mutates *env*/*consts*.
+    `let`/`const` decls inside a block fail closed (block scope
+    is not modeled); `=`/`+=` to a `const`-bound name fails
+    closed (the engine throws TypeError -- spec review HARD-2).
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F986 too deep")
+    j = _js_skip_ws(text, j)
+    kw, k = _js_match_decl_kw(text, j)
+    if kw is not None:
+        if in_block and kw != "var":
+            raise _JSExprFail("F986 block-scoped decl")
+        k = _js_skip_ws(text, k)
+        name, k = _js_parse_ident(text, k)
+        if name == "RESULT":
+            raise _JSExprFail("F986 RESULT mid-seq")
+        if name in env or name == "arguments":
+            raise _JSExprFail("F986 redeclare")
+        k = _js_expect(text, k, "=")
+        v, k = _js_f986_additive(text, k, env, full, box, depth + 1)
+        k = _js_expect(text, k, ";")
+        if len(v) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F986 value too long")
+        env[name] = v
+        if kw == "const":
+            consts.add(name)
+        return k
+    if _js_match_kw(text, j, "if") is not None:
+        return _js_f986_if(text, j, env, consts, full, box, depth)
+    name, k = _js_parse_ident(text, j)
+    if name not in env:
+        raise _JSExprFail("F986 assign unbound")
+    if name in consts:
+        raise _JSExprFail("F986 const reassign")
+    k = _js_skip_ws(text, k)
+    if k + 1 < n and text[k:k + 2] == "+=":
+        v, k = _js_f986_additive(text, k + 2, env, full, box,
+                                depth + 1)
+        k = _js_expect(text, k, ";")
+        nv = env[name] + v
+    elif k < n and text[k] == "=" and text[k + 1:k + 2] not in ("=", ">"):
+        v, k = _js_f986_additive(text, k + 1, env, full, box,
+                                depth + 1)
+        k = _js_expect(text, k, ";")
+        nv = v
+    else:
+        raise _JSExprFail("F986 bad assign")
+    if len(nv) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F986 value too long")
+    env[name] = nv
+    return k
+
+
+def _js_f986_stmt_decode(text):
+    """Decode F986 guarded-conditional statement sequences (whole-text).
+
+    `STMT* var|let|const RESULT = <additive>;` where statements are
+    literal/initializer decls, `+=`/`=` accumulations, and
+    `if (G) {..} [else {..}]` with decidable guards (constant,
+    typeof-undefined, instanceof), and the additive admits
+    `(G ? A : B)` ternaries and `void 0 || V` fallbacks -- all
+    node-exact (v24.20.0). Returns the RESULT string, or None.
+    The decode only fires when a guard production actually ran
+    (box["guard"]), so guard-free sequences keep their existing
+    decoders and variant order (F441). Never evals.
+    """
+    n = len(text)
+    box = {"guard": False}
+    try:
+        env = {}
+        consts = set()
+        j = _js_skip_ws(text, 0)
+        while True:
+            j = _js_skip_ws(text, j)
+            if j >= n:
+                raise _JSExprFail("F986 missing RESULT")
+            kw, k = _js_match_decl_kw(text, j)
+            if kw is not None:
+                k = _js_skip_ws(text, k)
+                if text.startswith("RESULT", k) and (
+                        k + 6 >= n or text[k + 6] not in _JS_IDENT_CONT):
+                    k = _js_expect(text, k + 6, "=")
+                    v, k = _js_f986_additive(text, k, env, text,
+                                            box, 0)
+                    k = _js_expect(text, k, ";")
+                    k = _js_skip_ws(text, k)
+                    if k != n:
+                        raise _JSExprFail("F986 trailing input")
+                    if not box["guard"]:
+                        return None
+                    if len(v) > _MAX_DECODE_BYTES:
+                        raise _JSExprFail("F986 RESULT too long")
+                    return v
+                j = _js_f986_stmt(text, j, env, consts, text, box, 0)
+                continue
+            if _js_match_kw(text, j, "if") is not None:
+                j = _js_f986_if(text, j, env, consts, text, box, 0)
+                continue
+            # Top-level accumulation / reassignment statements
+            # (`s+='x';` between the decls and RESULT).
+            j = _js_f986_stmt(text, j, env, consts, text, box, 0)
+    except _JSExprFail:
+        return None
+
+
+def _js_f987_rewrite(text):
+    """Rewrite leading `var|let|const C=[<ints>,...];` (F987).
+
+    Filed 2026-10-09 (wave-391 attack round 59): F643 models
+    String.fromCharCode.apply/call with the code array inline;
+    binding the array to a var/const first misses node-exactly:
+      var c=[120,111,...];var RESULT=String.fromCharCode.apply(null,c);
+      const c=[120,111,...];var RESULT=String.fromCharCode(...c)+'...';
+    The rewrite consumes one leading statement of comma-separated
+    `name=[int,...]` declarators (dense integer-literal arrays
+    only -- no holes, spreads, or getters, so textual inlining is
+    node-exact) and substitutes value-position uses in the
+    remainder:
+    - `...c` (spread, in a `(`/`,`/`[` context) -> the bare code
+      list `120,111,...` (the spread is dropped: spreading a dense
+      literal array passes its elements -- node-exact, v24.20.0);
+    - `(c` / `,c` argument positions -> the array literal
+      `[120,111,...]` (the F643/F500 productions decode the
+      rewritten forms).
+    Any other use position (member access `c.`, subscript `c[`,
+    call `c(`, bare statement `c;`, ...) aborts the whole rewrite
+    -- fail closed. Reassignment/rebinding/backticks abort via
+    _js_f9x_guard_names (F495/F501 discipline). Returns the
+    substituted remainder, or None. Never evals.
+    """
+    n = len(text)
+    i = _js_skip_ws(text, 0)
+    kw, i = _js_match_decl_kw(text, i)
+    if kw is None:
+        return None
+    bindings = []
+    try:
+        while True:
+            i = _js_skip_ws(text, i)
+            name, i = _js_parse_ident(text, i)
+            if name == "arguments" or any(b[0] == name for b in bindings):
+                raise _JSExprFail("F987 bad name")
+            i = _js_expect(text, i, "=")
+            i = _js_skip_ws(text, i)
+            if i >= n or text[i] != "[":
+                raise _JSExprFail("F987 not array")
+            arr_end = _js_f98x_scan_int_list(text, i)
+            bindings.append((name, text[i:arr_end]))
+            i = arr_end
+            i = _js_skip_ws(text, i)
+            if i < n and text[i] == ",":
+                i += 1
+                continue
+            if i < n and text[i] == ";":
+                i += 1
+                break
+            raise _JSExprFail("F987 stmt not closed")
+    except _JSExprFail:
+        return None
+    if not bindings:
+        return None
+    bound = {b[0] for b in bindings}
+    arr_src = {b[0]: b[1] for b in bindings}
+    codes = {b[0]: b[1][1:-1] for b in bindings}
+    rest = text[i:]
+    toks = _js_f9x_guard_names(rest, bound)
+    if toks is None:
+        return None
+    out = []
+    pos = 0
+    substituted = False
+    rn = len(rest)
+    for tname, ts, te in toks:
+        if tname not in bound:
+            continue
+        k = te
+        while k < rn and rest[k] in " \t\n\r":
+            k += 1
+        if k < rn and (rest[k] in ".[" or rest[k] in _JS_IDENT_CONT
+                       or rest[k] == "("):
+            # Member access, subscript, call, or property write on
+            # the bound array -- inlining would not be node-exact.
+            return None
+        p = ts - 1
+        while p >= 0 and rest[p] in " \t\n\r":
+            p -= 1
+        if p >= 2 and rest[p - 2:p + 1] == "...":
+            if p - 3 >= 0 and rest[p - 3] == ".":
+                return None
+            q = p - 3
+            while q >= 0 and rest[q] in " \t\n\r":
+                q -= 1
+            if q < 0 or rest[q] not in "([,":
+                return None
+            out.append(rest[pos:p - 2])
+            out.append(codes[tname])
+            pos = te
+            substituted = True
+        elif p >= 0 and rest[p] in "(,":
+            out.append(rest[pos:ts])
+            out.append(arr_src[tname])
+            pos = te
+            substituted = True
+        else:
+            return None
+    out.append(rest[pos:])
+    if not substituted:
+        return None
+    return "".join(out).lstrip(" \t\n\r")
+
+
 def _js_f586_shift_ok(text, s):
     """Whether the `(` just left of a `new`-anchor match may open a
     grouping paren around a parenthesized new-expression receiver
@@ -108724,7 +109353,7 @@ def _decode_layer(text):
     # credential. The four shapes are disjoint; order among them is
     # irrelevant. Never evals.
     for _rw in (_js_f957_rewrite, _js_f958_rewrite, _js_f959_rewrite,
-                _js_f960_rewrite):
+                _js_f960_rewrite, _js_f987_rewrite):
         _rw_text = _rw(text)
         if _rw_text is not None:
             decoded = _try_js_expr_decode_all(_rw_text)
@@ -108738,7 +109367,7 @@ def _decode_layer(text):
     # pre-existing variant order (F441) is preserved. Ordered after
     # the F501 rewrite for the same reason.
     for _stmtdec in (_js_f961_stmt_decode, _js_f962_stmt_decode,
-                     _js_f964_stmt_decode):
+                     _js_f964_stmt_decode, _js_f986_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
