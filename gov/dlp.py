@@ -48948,6 +48948,604 @@ def _js_parse_f756_ternary_iife(text, i, depth, state):
         return None
 
 
+# ------------------------------------------------------------------
+# F816: non-literal ternary conditions on object bindings
+# ------------------------------------------------------------------
+
+_JS_F816_OBJECT_PROTO_MEMBERS = frozenset([
+    # The exact own-property set of Object.prototype (node
+    # v24.20.0): the proto chain of an object literal with no
+    # __proto__ key. Used for the `in` operator and typeof
+    # resolution -- node-exact, never guessed.
+    "constructor", "hasOwnProperty", "isPrototypeOf",
+    "propertyIsEnumerable", "toLocaleString", "toString",
+    "valueOf", "__proto__",
+    "__defineGetter__", "__defineSetter__",
+    "__lookupGetter__", "__lookupSetter__",
+])
+
+_JS_F816_INSTANCEOF_RHS = frozenset([
+    "Object", "Array", "String", "Number", "Boolean",
+    "Function", "RegExp", "Date",
+])
+
+
+def _js_f816_parse_object_binding(text, j):
+    """Parse `{k:'v',...}` at text[j] == '{' (F816).
+
+    Keys are identifiers or string literals (a `__proto__` key
+    fails closed -- it would mutate the prototype so the chain
+    is no longer exactly Object.prototype); values are plain
+    string literals. Duplicate keys are later-wins
+    (node-exact). Returns (props dict, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    props = {}
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        return props, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F816 object key not modeled")
+        if not isinstance(key, str) or isinstance(key, _JSNumStr):
+            raise _JSExprFail("F816 object key not a plain string")
+        if key == "__proto__":
+            raise _JSExprFail("F816 __proto__ key")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F816 object value not a string literal")
+        val, j = _js_parse_string(text, j)
+        if not isinstance(val, str) or isinstance(val, _JSNumStr):
+            raise _JSExprFail("F816 object value not a plain string")
+        props[key] = val
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                raise _JSExprFail("F816 trailing comma")
+            continue
+        break
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "}")
+    return props, j
+
+
+def _js_f816_typeof_operand(text, j, bools, strs, objname, oprops):
+    """Resolve `typeof T` at text[j] to its result string (F816).
+
+    T is the bound object (→ 'object'), an own-key member read
+    (→ 'string'), a member read of a known Object.prototype
+    member (→ 'function', except __proto__ → 'object'), a member
+    read of anything else (→ 'undefined'), or a bound string /
+    boolean name (→ 'string' / 'boolean'). Anything else fails
+    closed. Returns (typeof_string, next_index). Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    if q >= n or text[q] not in _JS_IDENT_START:
+        raise _JSExprFail("F816 typeof operand not modeled")
+    name, q2 = _js_parse_ident(text, q)
+    if name == objname:
+        q3 = _js_skip_ws(text, q2)
+        if q3 < n and text[q3] == ".":
+            q3 = _js_skip_ws(text, q3 + 1)
+            mname, q3 = _js_parse_ident(text, q3)
+            q2 = q3
+        elif q3 < n and text[q3] == "[":
+            mname, q3 = _js_parse_bracket_member(text, q3)
+            q2 = q3
+        else:
+            return "object", q2
+        if mname in oprops:
+            return "string", q2
+        if mname == "__proto__":
+            return "object", q2
+        if mname in _JS_F816_OBJECT_PROTO_MEMBERS:
+            return "function", q2
+        return "undefined", q2
+    if name in strs:
+        return "string", q2
+    if name in bools:
+        return "boolean", q2
+    raise _JSExprFail("F816 typeof operand unbound")
+
+
+def _js_f816_tonumber_is_zero(lit):
+    """True iff JS ToNumber(lit) === 0 for a string literal (F816).
+
+    Needed for `!typeof T == 'lit'`: `!typeof T` is always the
+    boolean `false`, so `false == 'lit'` reduces to
+    `ToNumber('lit') == 0`. Implements the string-ToNumber
+    grammar (whitespace trim, empty -> +0, Infinity, 0x/0b/0o
+    radix, decimal) -- node-verified. Anything unparseable is
+    NaN, and `0 == NaN` is false. Never evals.
+    """
+    s = lit.strip(" \t\n\r\x0b\x0c\xa0\ufeff\u1680\u2000\u2001\u2002"
+                  "\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+                  "\u2028\u2029\u202f\u205f\u3000")
+    if s == "":
+        return True
+    if s in ("Infinity", "+Infinity", "-Infinity"):
+        return False
+    try:
+        # Radix prefixes take no sign in string-ToNumber
+        # (Number("+0x0") is NaN).
+        low = s[:2].lower()
+        if low == "0x" and len(s) > 2:
+            return int(s, 16) == 0
+        if low == "0b" and len(s) > 2:
+            return int(s, 2) == 0
+        if low == "0o" and len(s) > 2:
+            return int(s, 8) == 0
+        return float(s) == 0
+    except ValueError:
+        return False
+
+
+def _js_f816_eval_cond(text, j, bools, strs, objname, oprops):
+    """Evaluate an F816 ternary condition to a bool (F816).
+
+    COND = [!] (F756 boolean condition
+           | o.hasOwnProperty('lit' | bound-name)
+           | o['hasOwnProperty']('lit' | bound-name)
+           | 'lit'-or-bound-name in o
+           | typeof T ===|!==|==|!= 'lit'
+           | T instanceof R).
+    hasOwnProperty consults own keys only (node-exact); a
+    shadowed own `hasOwnProperty` key makes the engine throw --
+    fail closed. `in` consults own keys plus the exact
+    Object.prototype member set (the proto chain of the literal).
+    typeof/instanceof resolve over the bound kinds only. A
+    leading `!` is modeled with JS operator precedence: `!`
+    binds tighter than `in`, `===`/`!==`/`==`/`!=`, and
+    `instanceof`, so `!z in o` is `(!z) in o` (a boolean key,
+    "true"/"false"), `!T instanceof R` is always false (a
+    boolean primitive is never instanceof), and `!typeof T` is
+    always false (typeof yields a non-empty string), which makes
+    `===`/`!==` constant and reduces `==`/`!=` to a ToNumber-zero
+    check (spec-review HARD-1, wave-386 lane 11 -- the naive
+    whole-result negation mis-decoded). `!` before
+    hasOwnProperty/F756 booleans is exact (call/member binds
+    tighter than `!`). Any other condition shape fails
+    closed. Returns (bool, next_index). Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    neg = False
+    if q < n and text[q] == "!":
+        if q + 1 < n and text[q + 1] == "=":
+            raise _JSExprFail("F816 cond not a negation")
+        neg = True
+        q = _js_skip_ws(text, q + 1)
+    try:
+        val, q2 = _js_f756_eval_cond(text, q, bools)
+        return (not val) if neg else val, q2
+    except _JSExprFail:
+        pass
+    if q < n and text[q] in _JS_IDENT_START:
+        name, q2 = _js_parse_ident(text, q)
+        if name == objname:
+            # o.hasOwnProperty('lit') / o['hasOwnProperty']('lit')
+            q3 = _js_skip_ws(text, q2)
+            if q3 < n and text[q3] == ".":
+                q3 = _js_skip_ws(text, q3 + 1)
+                mn, q3 = _js_parse_ident(text, q3)
+                q3 = _js_skip_ws(text, q3)
+            elif q3 < n and text[q3] == "[":
+                mn, q3 = _js_parse_bracket_member(text, q3)
+            else:
+                mn, q3 = None, q3
+            if mn == "hasOwnProperty":
+                if "hasOwnProperty" in oprops:
+                    # Shadowed: the engine calls the own value
+                    # (throws TypeError when not callable) --
+                    # fail closed, never mis-decoded.
+                    raise _JSExprFail("F816 hasOwnProperty shadowed")
+                q3 = _js_expect(text, q3, "(")
+                q3 = _js_skip_ws(text, q3)
+                if q3 < n and text[q3] in "'\"":
+                    lit, q3 = _js_parse_string(text, q3)
+                    if (not isinstance(lit, str)
+                            or isinstance(lit, _JSNumStr)):
+                        raise _JSExprFail("F816 hasOwnProperty arg")
+                elif q3 < n and text[q3] in _JS_IDENT_START:
+                    aname, q3 = _js_parse_ident(text, q3)
+                    if aname not in strs:
+                        raise _JSExprFail("F816 hasOwnProperty arg")
+                    lit = strs[aname]
+                else:
+                    raise _JSExprFail("F816 hasOwnProperty arg")
+                q3 = _js_skip_ws(text, q3)
+                q3 = _js_expect(text, q3, ")")
+                val = lit in oprops
+                return (not val) if neg else val, q3
+            # T instanceof R with T = the bound object
+            q4 = _js_skip_ws(text, q2)
+            m = _js_match_kw(text, q4, "instanceof")
+            if m is not None:
+                q5 = _js_skip_ws(text, m)
+                rname, q5 = _js_parse_ident(text, q5)
+                if rname not in _JS_F816_INSTANCEOF_RHS:
+                    raise _JSExprFail("F816 instanceof rhs")
+                if neg:
+                    # `!` binds tighter: `!o instanceof R` is
+                    # `(!o) instanceof R`; `!o` is a boolean
+                    # primitive, never instanceof (HARD-1).
+                    return False, q5
+                val = (rname == "Object")
+                return val, q5
+        elif name in strs or name in bools:
+            # T instanceof R with T = a bound primitive
+            q4 = _js_skip_ws(text, q2)
+            m = _js_match_kw(text, q4, "instanceof")
+            if m is not None:
+                q5 = _js_skip_ws(text, m)
+                rname, q5 = _js_parse_ident(text, q5)
+                if rname not in _JS_F816_INSTANCEOF_RHS:
+                    raise _JSExprFail("F816 instanceof rhs")
+                # Primitives are never instanceof anything; `!T`
+                # is a boolean primitive, also never (HARD-1).
+                return False, q5
+    if q < n and text[q] in "'\"":
+        # 'lit' in o  (or a bound string name on the left)
+        lit, q2 = _js_parse_string(text, q)
+        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+            raise _JSExprFail("F816 in-operand not a plain string")
+        q2 = _js_skip_ws(text, q2)
+        m = _js_match_kw(text, q2, "in")
+        if m is None:
+            raise _JSExprFail("F816 not an in-condition")
+        q2 = _js_skip_ws(text, m)
+        name, q2 = _js_parse_ident(text, q2)
+        if name != objname:
+            raise _JSExprFail("F816 in-operator foreign object")
+        if neg:
+            # `!` binds tighter: `!'k' in o` is `(!'k') in o`;
+            # the key is the boolean "true"/"false" (HARD-1).
+            lit = "false" if lit else "true"
+            val = lit in oprops  # never a proto member
+            return val, q2
+        val = (lit in oprops
+               or lit in _JS_F816_OBJECT_PROTO_MEMBERS)
+        return val, q2
+    if q < n and text[q] in _JS_IDENT_START:
+        # bound-name in o
+        name, q2 = _js_parse_ident(text, q)
+        if name in strs:
+            q3 = _js_skip_ws(text, q2)
+            m = _js_match_kw(text, q3, "in")
+            if m is None:
+                raise _JSExprFail("F816 not an in-condition")
+            q3 = _js_skip_ws(text, m)
+            onm, q3 = _js_parse_ident(text, q3)
+            if onm != objname:
+                raise _JSExprFail("F816 in-operator foreign object")
+            lit = strs[name]
+            if neg:
+                # `!kk in o` is `(!kk) in o` (HARD-1).
+                lit = "false" if lit else "true"
+                val = lit in oprops  # never a proto member
+                return val, q3
+            val = (lit in oprops
+                   or lit in _JS_F816_OBJECT_PROTO_MEMBERS)
+            return val, q3
+    m = _js_match_kw(text, q, "typeof")
+    if m is not None:
+        tval, q2 = _js_f816_typeof_operand(text, m, bools, strs,
+                                           objname, oprops)
+        q2 = _js_skip_ws(text, q2)
+        op = None
+        for cand in ("===", "!==", "==", "!="):
+            if text.startswith(cand, q2):
+                op = cand
+                q2 += len(cand)
+                break
+        if op is None:
+            raise _JSExprFail("F816 typeof without comparison")
+        q2 = _js_skip_ws(text, q2)
+        if q2 >= n or text[q2] not in "'\"":
+            raise _JSExprFail("F816 typeof rhs not a literal")
+        lit, q2 = _js_parse_string(text, q2)
+        if not isinstance(lit, str) or isinstance(lit, _JSNumStr):
+            raise _JSExprFail("F816 typeof rhs not plain")
+        if neg:
+            # `!` binds tighter: `!typeof T op 'lit'` is
+            # `(!typeof T) op 'lit'`; `!typeof T` is always the
+            # boolean false (typeof yields a non-empty string),
+            # so `===` is false, `!==` is true, and `==`/`!=`
+            # reduce to a ToNumber-zero check (HARD-1).
+            if op == "===":
+                return False, q2
+            if op == "!==":
+                return True, q2
+            is_zero = _js_f816_tonumber_is_zero(lit)
+            return (not is_zero) if op == "!=" else is_zero, q2
+        # Both sides are strings: ==/!= coincide with ===/!==.
+        val = (tval == lit) if op in ("===", "==") \
+            else (tval != lit)
+        return val, q2
+    raise _JSExprFail("F816 condition not modeled")
+
+
+def _js_f816_branch(text, j, strs, objname, oprops):
+    """Parse one F816 ternary branch: `T (+ T)*` (F816).
+
+    T is a string literal, a bound string name, or an own-key
+    member read `o.key` / `o['key']` on the bound object (a
+    non-own key fails closed -- proto-chain reads are not
+    modeled). Returns (value, next_index). Never evals.
+    """
+    n = len(text)
+    total = None
+    q = j
+    while True:
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] in "'\"":
+            term, q = _js_parse_string(text, q)
+            if not isinstance(term, str) or isinstance(term, _JSNumStr):
+                raise _JSExprFail("F816 branch not a plain string")
+        elif q < n and text[q] in _JS_IDENT_START:
+            name, q2 = _js_parse_ident(text, q)
+            if name == objname:
+                q2 = _js_skip_ws(text, q2)
+                if q2 < n and text[q2] == ".":
+                    q2 = _js_skip_ws(text, q2 + 1)
+                    mname, q2 = _js_parse_ident(text, q2)
+                elif q2 < n and text[q2] == "[":
+                    mname, q2 = _js_parse_bracket_member(text, q2)
+                else:
+                    raise _JSExprFail("F816 branch bare object")
+                if mname not in oprops:
+                    raise _JSExprFail("F816 branch non-own key")
+                term = oprops[mname]
+                q = q2
+            elif name in strs:
+                term = strs[name]
+                q = q2
+            else:
+                raise _JSExprFail("F816 branch unbound")
+        else:
+            raise _JSExprFail("F816 branch not modeled")
+        total = term if total is None else total + term
+        if len(total) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F816 branch too long")
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "+":
+            q = q + 1
+            continue
+        break
+    return total, q
+
+
+def _js_f816_ternary_at(text, j, bools, strs, objname, oprops):
+    """Parse `COND ? A : B` at text[j] (F816); returns (value, next).
+
+    The condition is evaluated by _js_f816_eval_cond; each
+    branch is an F816 branch additive. Both branches must parse
+    (syntax); only the selected branch is evaluated -- the
+    engine never evaluates the other side (node v24.20.0). A
+    `??` after the condition is the nullish operator, not a
+    ternary -- fail closed. Never evals.
+    """
+    n = len(text)
+    cond, q = _js_f816_eval_cond(text, j, bools, strs, objname,
+                                 oprops)
+    q = _js_skip_ws(text, q)
+    if q >= n or text[q] != "?" or (q + 1 < n and text[q + 1] == "?"):
+        raise _JSExprFail("F816 ternary without ?")
+    aval, q = _js_f816_branch(text, q + 1, strs, objname, oprops)
+    q = _js_skip_ws(text, q)
+    q = _js_expect(text, q, ":")
+    bval, q = _js_f816_branch(text, q, strs, objname, oprops)
+    return (aval if cond else bval), q
+
+
+def _js_parse_f816_objcond_iife(text, i, depth, state):
+    """Parse `(function(){var o={...};DECL*;return ADD;})()` (F816).
+
+    F816 (LOW, filed 2026-10-09 by wave-385 attack round 53):
+    F756 (CLOSED) covers boolean-literal ternary conditions, but
+    method-call/operator conditions (hasOwnProperty, in, typeof,
+    instanceof) have no production:
+      `(function(){var o={k:'f1'};return
+      o.hasOwnProperty('k')?o.k+'f2':'z';})()`
+      `(function(){var o={k:'f1'};return 'k' in
+      o?o.k+'f2':'z';})()`
+    Node-exact (v24.20.0): one `var o={k:'v',...}` binding with
+    plain-string values (a `__proto__` key fails closed -- the
+    proto chain would no longer be exactly Object.prototype);
+    further decls are F756-style booleans/strings/aliases plus
+    ternary initializers over the F816 condition grammar; the
+    return is a `+`-additive of string literals, bound string
+    names, and parenthesized F816 ternaries (a bare ternary fails
+    closed -- precedence, F756's rule). Disjoint from F756:
+    F756's decl loop rejects a `{` binding, so every accepted
+    shape is a previous miss. Tried after F756.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - two object bindings, a non-string object value, a computed
+      key, a getter/setter, rebinding a name, `arguments` or a
+      reserved-word name;
+    - a hasOwnProperty call with a shadowed own key, a
+      non-literal/non-bound-name key argument, an `in` over a
+      foreign object, a typeof/instanceof over an unbound
+      operand or rhs;
+    - a leading `!` on an `in`, `typeof`-comparison, or
+      `instanceof` condition (`!` binds tighter than those
+      operators -- spec-review HARD-1, wave-386 lane 11);
+    - a branch member read of a non-own key, an unbound branch
+      name, a bare (unparenthesized) return ternary.
+    Returns (value, next_index), or None when text[i] is not
+    this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        bools = {}
+        strs = {}
+        objname = None
+        oprops = None
+        saw_ternary = False
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if (name == "arguments" or name in _F611_RESERVED
+                    or name in bools or name in strs
+                    or name == objname):
+                raise _JSExprFail("F816 bad decl")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "=")
+            if m < n and text[m] == "=":
+                raise _JSExprFail("F816 decl not =")
+            m = _js_skip_ws(text, m)
+            if m < n and text[m] == "{":
+                if objname is not None:
+                    raise _JSExprFail("F816 second object")
+                oprops, m = _js_f816_parse_object_binding(text, m)
+                objname = name
+            elif m < n and text[m] in "'\"":
+                val, m = _js_parse_string(text, m)
+                if not isinstance(val, str) or isinstance(val, _JSNumStr):
+                    raise _JSExprFail("F816 decl not a plain string")
+                strs[name] = val
+            elif m < n and text[m] == "(":
+                # Parenthesized-ternary decl twin (needs the
+                # object bound already -- otherwise the
+                # condition fails closed on the unbound name).
+                q = _js_expect(text, m, "(")
+                val, q = _js_f816_ternary_at(text, q, bools, strs,
+                                            objname, oprops)
+                q = _js_skip_ws(text, q)
+                m = _js_expect(text, q, ")")
+                strs[name] = val
+                saw_ternary = True
+            else:
+                q0 = _js_skip_ws(text, m)
+                aname, aq = (None, m)
+                if q0 < n and text[q0] in _JS_IDENT_START:
+                    aname, aq = _js_parse_ident(text, q0)
+                aq2 = _js_skip_ws(text, aq)
+                if (aname is not None and aname in strs
+                        and not (aq2 < n and text[aq2] == "?")):
+                    strs[name] = strs[aname]
+                    m = aq
+                else:
+                    cond, q = _js_f816_eval_cond(text, m, bools, strs,
+                                                objname, oprops)
+                    q2 = _js_skip_ws(text, q)
+                    if (q2 < n and text[q2] == "?"
+                            and not (q2 + 1 < n
+                                     and text[q2 + 1] == "?")):
+                        val, m = _js_f816_ternary_at(text, m, bools,
+                                                    strs, objname,
+                                                    oprops)
+                        strs[name] = val
+                        saw_ternary = True
+                    else:
+                        bools[name] = cond
+                        m = q
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = m
+        if objname is None:
+            # No object binding -- F756's shapes.
+            return None
+        rk = _js_match_kw(text, _js_skip_ws(text, sj), "return")
+        if rk is None:
+            raise _JSExprFail("F816 no return")
+        sj = _js_skip_ws(text, rk)
+        parts = []
+        # A bare ternary covering the whole return (the filed
+        # shapes): `return COND?B:B;`. The branches extend over
+        # `+` exactly as the engine parses them (node v24.20.0).
+        whole = None
+        try:
+            tval, tq = _js_f816_ternary_at(text, sj, bools, strs,
+                                          objname, oprops)
+            tq = _js_skip_ws(text, tq)
+            if tq < n and text[tq] == ";":
+                whole = (tval, tq)
+        except _JSExprFail:
+            whole = None
+        if whole is not None:
+            parts.append(whole[0])
+            saw_ternary = True
+            sj = whole[1]
+        else:
+            while True:
+                sj = _js_skip_ws(text, sj)
+                if sj < n and text[sj] == "(":
+                    q = _js_expect(text, sj, "(")
+                    term, q = _js_f816_ternary_at(text, q, bools, strs,
+                                                objname, oprops)
+                    q = _js_skip_ws(text, q)
+                    sj = _js_expect(text, q, ")")
+                    saw_ternary = True
+                elif sj < n and text[sj] in "'\"":
+                    term, sj = _js_parse_string(text, sj)
+                    if not isinstance(term, str) or isinstance(term, _JSNumStr):
+                        raise _JSExprFail("F816 term not a plain string")
+                elif sj < n and text[sj] in _JS_IDENT_START:
+                    name, sj = _js_parse_ident(text, sj)
+                    if name == objname:
+                        raise _JSExprFail("F816 return bare object")
+                    if name not in strs:
+                        raise _JSExprFail("F816 return unbound")
+                    term = strs[name]
+                else:
+                    raise _JSExprFail("F816 return term not modeled")
+                parts.append(term)
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sj = _js_skip_ws(text, sj)
+                if sj < n and text[sj] == "+":
+                    sj = sj + 1
+                    continue
+                break
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("concat too long")
+        if not saw_ternary:
+            # Disjointness: a ternary-free body belongs to an
+            # earlier route -- do not claim it.
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F816 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_f757_expect_new_target(text, j):
     """Match `new.target` at text[j] (F757); returns the index past `target`.
 
@@ -52543,6 +53141,504 @@ def _js_parse_f743_toprimitive_assign_iife(text, i, depth, state):
         if sj != inner_end:
             raise _JSExprFail("F743 trailing statements")
         j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+# ------------------------------------------------------------------
+# F815: toString/valueOf overrides on builtin receivers
+# ------------------------------------------------------------------
+
+def _js_f815_skip_balanced_paren(text, j):
+    """Skip a balanced `(...)` starting at text[j] == '(' (F815).
+
+    String-aware; template literals and comments fail closed (the
+    receiver args are never evaluated, so anything exotic is a
+    safe miss). Returns the index just past the closing paren.
+    Never evals.
+    """
+    n = len(text)
+    depth = 0
+    k = j
+    while k < n:
+        c = text[k]
+        if c in "'\"":
+            _, k = _js_parse_string(text, k)
+            continue
+        if c == "`":
+            raise _JSExprFail("F815 template in receiver args")
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return k + 1
+        k += 1
+    raise _JSExprFail("F815 unbalanced paren")
+
+
+def _js_f815_check_flags(flags):
+    """Validate a regex flag string (F815).
+
+    Node throws a SyntaxError on any flag outside `dgimsuvy` or
+    any duplicate flag (node v24.20.0); the decoder fails closed
+    instead (spec-review HARD-2, wave-386 lane 11). The pattern
+    itself is not validated -- Python's `re` is not JS, so an
+    invalid pattern (which throws in node and cannot launder) is
+    a documented over-decode residual, never a vector. Never
+    evals.
+    """
+    if (len(flags) != len(set(flags))
+            or any(c not in "dgimsuvy" for c in flags)):
+        raise _JSExprFail("F815 bad regex flags")
+
+
+def _js_f815_parse_receiver(text, j):
+    """Parse the F815 receiver binding RHS at text[j].
+
+    Models `new Date(...)`, `new Number(...)`, `new RegExp('lit'
+    [, 'flags'])`, a regex literal `/re/flags`, and a function
+    expression `function [name] (params) {body}` -- the builtin
+    receivers whose instances accept own toString/valueOf/
+    [Symbol.toPrimitive] overrides (node v24.20.0). The receiver
+    value itself is never needed (an own override that resolves
+    is required for any decode); args/bodies are skipped, never
+    evaluated. Regex flags are strictly validated (`dgimsuvy`,
+    no duplicates -- node throws otherwise); the pattern text
+    itself is never compiled (documented residual, HARD-2).
+    Returns (kind, next_index) with kind in
+    {"date","number","regexp","function"}. Anything else fails
+    closed. Never evals.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    m = _js_match_kw(text, q, "new")
+    if m is not None:
+        k = _js_skip_ws(text, m)
+        name, k = _js_parse_ident(text, k)
+        if name not in ("Date", "Number", "RegExp"):
+            raise _JSExprFail("F815 receiver not a modeled builtin")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            # `new Date;` (no parens) is valid JS -- a documented
+            # residual (fail closed, never mis-decoded).
+            raise _JSExprFail("F815 new without parens")
+        if name == "RegExp":
+            # Validate string-literal args; the pattern itself is
+            # never compiled (documented residual). Flags are
+            # strictly validated -- node throws on anything else.
+            k = _js_skip_ws(text, k + 1)
+            _, k = _js_parse_string(text, k)
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k = _js_skip_ws(text, k + 1)
+                flags, k = _js_parse_string(text, k)
+                _js_f815_check_flags(flags)
+                k = _js_skip_ws(text, k)
+            k = _js_expect(text, k, ")")
+            return "regexp", k
+        k = _js_f815_skip_balanced_paren(text, k)
+        return name.lower(), k
+    if q < n and text[q] == "/":
+        if q + 1 < n and text[q + 1] in "/*=":
+            raise _JSExprFail("F815 not a regex literal")
+        k = q + 1
+        in_class = False
+        while k < n:
+            c = text[k]
+            if c == "\\":
+                k += 2
+                continue
+            if c == "[":
+                in_class = True
+            elif c == "]":
+                in_class = False
+            elif c == "/" and not in_class:
+                break
+            elif c == "\n":
+                raise _JSExprFail("F815 regex newline")
+            k += 1
+        if k >= n:
+            raise _JSExprFail("F815 regex unterminated")
+        k += 1
+        fstart = k
+        while k < n and text[k] in "abcdefghijklmnopqrstuvwxyz":
+            k += 1
+        _js_f815_check_flags(text[fstart:k])
+        return "regexp", k
+    m = _js_match_kw(text, q, "function")
+    if m is not None:
+        k = _js_skip_ws(text, m)
+        if k < n and text[k] == "*":
+            raise _JSExprFail("F815 generator receiver")
+        if k < n and text[k] in _JS_IDENT_START:
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, "(")
+        k = _js_f815_skip_balanced_paren(text, k - 1)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "{":
+            raise _JSExprFail("F815 function receiver needs a body")
+        _, _, k = _js_span_braced(text, k)
+        return "function", k
+    raise _JSExprFail("F815 receiver not modeled")
+
+
+def _js_f815_strict_string_additive(add_text):
+    """Evaluate an override body as a pure string-literal additive.
+
+    Returns the string. Anything but string literals joined by
+    `+` (idents, this-terms, calls, template literals) fails
+    closed -- the engine would consult values the decoder cannot
+    see, so refusing is the only node-exact option. Never evals.
+    """
+    n = len(add_text)
+    total = None
+    j = _js_skip_ws(add_text, 0)
+    while True:
+        j = _js_skip_ws(add_text, j)
+        if j >= n or add_text[j] not in "'\"":
+            raise _JSExprFail("F815 body not a string additive")
+        term, j = _js_parse_string(add_text, j)
+        if not isinstance(term, str) or isinstance(term, _JSNumStr):
+            raise _JSExprFail("F815 body not a plain string")
+        total = term if total is None else total + term
+        if len(total) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F815 body too long")
+        j = _js_skip_ws(add_text, j)
+        if j < n and add_text[j] == "+":
+            j += 1
+            continue
+        break
+    j = _js_skip_ws(add_text, j)
+    if j != n:
+        raise _JSExprFail("F815 body trailing")
+    return total
+
+
+def _js_f815_parse_override_assign(text, j, oname, kind):
+    """Parse one F815 override assignment at text[j].
+
+    `NM.toString|valueOf = function...;`,
+    `NM['toString'|'valueOf'] = function...;`, or
+    `NM[Symbol.toPrimitive] = function...;` -- later assignments
+    win (node-exact). A non-function RHS is recorded as
+    non-callable (the engine skips it for toString/valueOf, and
+    GetMethod throws for @@toPrimitive -- both fail closed at
+    resolution). An `[Symbol.toPrimitive]` assignment on a Date
+    receiver is a silent no-op (Date.prototype[@@toPrimitive] is
+    non-writable, node v24.20.0) and installs nothing. Returns
+    (key, is_func, add_text, next_index); key is None for the
+    Date no-op. Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j)
+    nm, k = _js_parse_ident(text, k)
+    if nm != oname:
+        raise _JSExprFail("F815 foreign statement")
+    k = _js_skip_ws(text, k)
+    key = None
+    if k < n and text[k] == ".":
+        k = _js_skip_ws(text, k + 1)
+        mname, k = _js_parse_ident(text, k)
+        if mname not in ("toString", "valueOf"):
+            raise _JSExprFail("F815 override not a coercion method")
+        key = mname
+    elif k < n and text[k] == "[":
+        k2 = _js_skip_ws(text, k + 1)
+        if k2 < n and text[k2] in "'\"":
+            mname, k = _js_parse_bracket_member(text, k)
+            if mname not in ("toString", "valueOf"):
+                raise _JSExprFail("F815 override not a coercion method")
+            key = mname
+        else:
+            m2 = _js_match_kw(text, k2, "Symbol")
+            if m2 is None:
+                raise _JSExprFail("F815 bad computed key")
+            k = _js_skip_ws(text, m2)
+            if k >= n or text[k] != ".":
+                raise _JSExprFail("F815 bad computed key")
+            k = _js_skip_ws(text, k + 1)
+            m2 = _js_match_kw(text, k, "toPrimitive")
+            if m2 is None:
+                raise _JSExprFail("F815 bad computed key")
+            k = _js_skip_ws(text, m2)
+            k = _js_expect(text, k, "]")
+            if kind != "date":
+                key = ("symbol", "toPrimitive")
+            # else: silent no-op on Date -- key stays None
+    else:
+        raise _JSExprFail("F815 override not a member assignment")
+    k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "=")
+    k = _js_skip_ws(text, k)
+    m2 = _js_match_kw(text, k, "function")
+    if m2 is None:
+        # Non-function RHS: skip one simple value; recorded as
+        # non-callable (resolution fails closed).
+        k2 = k
+        if k2 < n and text[k2] in "'\"":
+            _, k2 = _js_parse_string(text, k2)
+        elif k2 < n and text[k2] in _JS_IDENT_START:
+            _, k2 = _js_parse_ident(text, k2)
+        elif k2 < n and (text[k2].isdigit()
+                         or (text[k2] == "." and k2 + 1 < n
+                             and text[k2 + 1].isdigit())):
+            while (k2 < n and (text[k2].isdigit()
+                               or text[k2] in ".eE+-")):
+                k2 += 1
+        else:
+            raise _JSExprFail("F815 override RHS not modeled")
+        k2 = _js_skip_ws(text, k2)
+        k2 = _js_expect(text, k2, ";")
+        return key, False, None, k2
+    k = _js_skip_ws(text, m2)
+    if k < n and text[k] in _JS_IDENT_START:
+        _, k = _js_parse_ident(text, k)  # optional function name
+        k = _js_skip_ws(text, k)
+    k = _js_expect(text, k, "(")
+    if k < n and text[k] != ")":
+        while True:
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ",":
+                k = _js_skip_ws(text, k + 1)
+                continue
+            break
+    k = _js_expect(text, k, ")")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "{":
+        raise _JSExprFail("F815 override needs a body")
+    bstart, bend, k2 = _js_span_braced(text, k)
+    add_text, kend = _js_scan_f67x_body_text(text, bstart, bend)
+    if _js_skip_ws(text, kend) != bend:
+        raise _JSExprFail("F815 override body trailing")
+    k = _js_skip_ws(text, k2)
+    k = _js_expect(text, k, ";")
+    return key, True, add_text, k
+
+
+def _js_f815_toprimitive(kind, overrides, hint):
+    """Resolve ToPrimitive for an F815 receiver (node v24.20.0).
+
+    overrides maps "toString"/"valueOf"/("symbol","toPrimitive")
+    to (is_func, add_text); later assignments won. An own
+    callable @@toPrimitive wins hint-independently (a numeric/
+    boolean literal body is String()-coerced, F794 parity); an
+    own non-callable @@toPrimitive makes GetMethod throw (F761)
+    -- fail closed. Otherwise the effective method order is
+    toString-then-valueOf for Dates (Date.prototype[
+    @@toPrimitive] maps hint "default" to "string") and for
+    hint "string", else valueOf-then-toString. For the default
+    hint on RegExp/Function receivers, an absent or non-callable
+    own valueOf falls through to toString because the inherited
+    Object.prototype.valueOf returns the object itself
+    (non-primitive, node v24.20.0); on Number receivers the
+    inherited Number.prototype.valueOf returns a primitive, so
+    the chain stops there. The decode succeeds ONLY when the
+    effective method is an own callable override whose body is a
+    pure string-literal additive; every other outcome (absent
+    override, non-callable override, unevaluable body) fails
+    closed, because the inherited builtin method that would fire
+    (Date.prototype.toString is TZ-dependent; Number.prototype.
+    valueOf yields a primitive; RegExp.prototype.toString yields
+    the source text) is not statically knowable -- never
+    mis-decoded. Never evals.
+    """
+    tp = overrides.get(("symbol", "toPrimitive"))
+    if tp is not None:
+        is_func, add_text = tp
+        if not is_func:
+            raise _JSExprFail("F815 @@toPrimitive non-callable")
+        prim = _js_f794_parse_primitive_literal(add_text)
+        if prim is not None:
+            pkind, pval = prim
+            return ("true" if pval else "false") if pkind == "bool" \
+                else str(pval)
+        return _js_f815_strict_string_additive(add_text)
+    if hint == "string" or kind == "date":
+        ov = overrides.get("toString")
+        if ov is None or not ov[0]:
+            raise _JSExprFail("F815 inherited coercion")
+        return _js_f815_strict_string_additive(ov[1])
+    # hint == "default" on a non-Date receiver: valueOf first.
+    ov = overrides.get("valueOf")
+    if ov is not None and ov[0]:
+        return _js_f815_strict_string_additive(ov[1])
+    if kind == "number":
+        # Number.prototype.valueOf returns a primitive -- the
+        # engine stops; an own toString never fires (node
+        # v24.20.0: "1B").
+        raise _JSExprFail("F815 inherited coercion")
+    # RegExp/Function: the inherited Object.prototype.valueOf
+    # returns the receiver itself (non-primitive), so the engine
+    # falls through to toString (node v24.20.0).
+    ov = overrides.get("toString")
+    if ov is None or not ov[0]:
+        raise _JSExprFail("F815 inherited coercion")
+    return _js_f815_strict_string_additive(ov[1])
+
+
+def _js_parse_f815_builtin_override_iife(text, i, depth, state):
+    """Parse `(function(){var NM=RECV;ASSIGN+;return ADD;})()` (F815).
+
+    F815 (LOW, filed 2026-10-09 by wave-385 attack round 53):
+    F697 (CLOSED) models toString/valueOf overrides on plain
+    objects, but overrides installed on builtin instances miss
+    while node coerces them exactly:
+      `(function(){var d=new Date(0);d.toString=function(){return
+      'f1';};return d+'f2';})()`
+      `(function(){var r=/x/;r.toString=function(){return
+      'f1';};return ''+r+'f2';})()`
+    Node-exact (v24.20.0): the receiver is `new Date(...)`,
+    `new Number(...)`, `new RegExp('lit'[, 'flags'])`, a regex
+    literal, or a function expression; one or more override
+    assignments install own toString/valueOf/[Symbol.toPrimitive]
+    methods (later-wins; a `[Symbol.toPrimitive]` assignment on a
+    Date is a silent no-op -- Date.prototype[@@toPrimitive] is
+    non-writable); the return is a `+`-additive of string
+    literals, bare receiver idents (ToPrimitive, hint "default"),
+    and `String(NM)` terms (hint "string"). Resolution is via
+    _js_f815_toprimitive: only an effective-first own callable
+    override with a pure string-literal body decodes; all else
+    fails closed. Disjoint from F697/F743: both require an object
+    literal binding; this requires a builtin receiver, which
+    neither accepts. Tried after F743.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - a non-builtin receiver, `new Date;` without parens, a
+      generator receiver, an invalid regex flag (node throws),
+      extra statements, reassignment of the receiver name, a bare
+      `arguments` binding;
+    - an override on a non-coercion method, an arrow override
+      body, an override body that is not a pure string-literal
+      additive (this-terms, idents, calls), a non-function RHS
+      that is not a simple value;
+    - a return term that is a member read/call on the receiver,
+      an unbound term, `String(x)` on another ident, a
+      `String.fromCharCode(NM)` term, shadowing of the `String`
+      ident by the receiver name.
+    Documented residual (over-decode, not a vector): the regex
+    pattern text itself is never compiled -- an invalid pattern
+    throws in node (so it cannot launder) while the decoder may
+    still decode the shape (spec-review HARD-2, wave-386
+    lane 11).
+    Returns (value, next_index), or None when text[i] is not
+    this shape. Never evals.
+
+    Note: the outer IIFE body is parsed structurally, not via
+    _js_span_braced -- that shared helper fails closed on `/` in
+    code, but a regex-literal receiver (`var r=/x/;`) legitimately
+    contains one. Every `/` outside a string in this grammar is a
+    regex literal (no division or comments occur), so the
+    structural parse is exact without a pre-scan.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    if not _js_peek_arguments_iife_head(text, i):
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j) + len("function")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        sj = j  # body start; parsed structurally (see note above)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None  # not a decl
+        sj = _js_skip_ws(text, m)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname == "arguments":
+            return None
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        kind, sj = _js_f815_parse_receiver(text, sj)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        overrides = {}
+        saw_assign = False
+        while True:
+            k = _js_skip_ws(text, sj)
+            if _js_match_kw(text, k, "return") is not None:
+                break
+            key, is_func, add_text, k = _js_f815_parse_override_assign(
+                text, k, oname, kind)
+            if key is not None:
+                overrides[key] = (is_func, add_text)
+            state["parts"] += 1  # F452: obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            saw_assign = True
+            sj = k
+        if not saw_assign:
+            return None  # no override -- earlier grammars own it
+        m2 = _js_match_kw(text, sj, "return")
+        if m2 is None:
+            raise _JSExprFail("F815 no return")
+        sj = _js_skip_ws(text, m2)
+        total = None
+        saw_coerce = False
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                term, sj = _js_parse_string(text, sj)
+            elif (oname != "String" and text.startswith("String", sj)
+                    and (sj + 6 >= n
+                         or text[sj + 6] not in _JS_IDENT_CONT)):
+                q = _js_skip_ws(text, sj + 6)
+                q = _js_expect(text, q, "(")
+                q = _js_skip_ws(text, q)
+                nm2, q = _js_parse_ident(text, q)
+                if nm2 != oname:
+                    raise _JSExprFail("F815 String of unbound")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ")")
+                term = _js_f815_toprimitive(kind, overrides, "string")
+                saw_coerce = True
+                sj = q
+            else:
+                nm2, k = _js_parse_ident(text, sj)
+                if nm2 != oname:
+                    raise _JSExprFail("F815 unbound term")
+                k = _js_skip_ws(text, k)
+                if k < n and text[k] in ".[(":
+                    # A member read or call -- other shapes' domain.
+                    raise _JSExprFail("F815 member/call term")
+                term = _js_f815_toprimitive(kind, overrides, "default")
+                saw_coerce = True
+                sj = k
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if total is None:
+                total = term
+            else:
+                if len(total) + len(term) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail("concat too long")
+                total = total + term
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                sj = sj + 1
+                continue
+            break
+        if not saw_coerce:
+            return None  # a literal-only body -- earlier grammars
+            # own it
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "}")  # end of the IIFE body
+        j = _js_skip_ws(text, sj)
         j = _js_expect(text, j, ")")
         j = _js_skip_ws(text, j)
         j = _js_expect(text, j, "(")
@@ -71465,6 +72561,24 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f743 is not None:
             val, i = _f743
             return _js_parse_postfix(text, i, val, depth, state)
+        # F815: (function(){var NM=RECV;ASSIGN+;return ADD;})() --
+        #   toString/valueOf/[Symbol.toPrimitive] overrides
+        #   installed on builtin instances (new Date / new Number /
+        #   new RegExp / regex literal / function expression).
+        #   Tried after F743: F743 requires an object-literal
+        #   binding; this requires a builtin receiver, which F743
+        #   (and F697) reject, so no previously-decoded input
+        #   changes behavior (red-first verified: 2 BREAK on the
+        #   open tree). The F743 hook and its trailing `return`
+        #   are untouched (wave-379 lesson).
+        _f815_saved_parts = state['parts']; _f815_saved_ops = state['ops']
+        _f815 = _js_parse_f815_builtin_override_iife(text, i, depth,
+                                                     state)
+        if _f815 is None:
+            state['parts'] = _f815_saved_parts; state['ops'] = _f815_saved_ops
+        if _f815 is not None:
+            val, i = _f815
+            return _js_parse_postfix(text, i, val, depth, state)
         # F701: (function(){DECL o={LIT};DECL c={...o};
         #   return ADD;})() -- spread-copy of a var-bound object
         #   (getter invocation on spread). The inline-spread twin
@@ -71771,6 +72885,22 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f756_saved_parts; state['ops'] = _f756_saved_ops
         if _f756 is not None:
             val, i = _f756
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F816: (function(){var o={...};DECL*;return ADD;})() --
+        #   ternary conditions over method-call/operator forms
+        #   (o.hasOwnProperty('k'), 'k' in o, typeof T === 's',
+        #   T instanceof R) on a var-bound plain-string object.
+        #   Tried after F756: F756's decl loop rejects a `{`
+        #   binding, so every accepted shape is a previous miss
+        #   (red-first verified: 2 BREAK on the open tree). The
+        #   F756 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f816_saved_parts = state['parts']; _f816_saved_ops = state['ops']
+        _f816 = _js_parse_f816_objcond_iife(text, i, depth, state)
+        if _f816 is None:
+            state['parts'] = _f816_saved_parts; state['ops'] = _f816_saved_ops
+        if _f816 is not None:
+            val, i = _f816
             return _js_parse_postfix(text, i, val, depth, state)
         # F757: (function(){function C(){this.M=new.target[===C]?'A':'B';}
         #   return new C().M(+'LIT')*;})() and the class twin --
