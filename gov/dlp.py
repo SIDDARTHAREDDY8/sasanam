@@ -69534,7 +69534,7 @@ def _js_parse_prototype_dispatch(text, i, depth, state):
     normal primary path, which fails closed on `.prototype`).
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         # Engine-exact: `fooArray.prototype...` is member access on
         # `fooArray` in node, never the Array global (F469 precedent).
         return None
@@ -69687,7 +69687,7 @@ def _js_parse_function_dispatch(text, i, depth, state):
     which fails closed on `.prototype`). Never evals.
     """
     n = len(text)
-    if i > 0 and text[i - 1] in _JS_IDENT_CONT:
+    if 0 < i <= n and text[i - 1] in _JS_IDENT_CONT:
         # Engine-exact: `xFunction.prototype...` is member access on
         # `xFunction` in node, never the Function global (F469
         # precedent).

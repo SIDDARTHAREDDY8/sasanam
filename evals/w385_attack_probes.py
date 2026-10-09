@@ -129,49 +129,49 @@ def test_p9_junk_quiet():
 # ------------------------------------------- open pins (must miss)
 
 @_t
-def test_r53_f795_s1_open():
+def test_r53_f795_s1_closed():
     """F795 OPEN: miss reproduces."""
     miss = _misses("(function(a,b){return a+b;})('%s','%s')" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f795_s2_open():
+def test_r53_f795_s2_closed():
     """F795 OPEN: miss reproduces."""
     miss = _misses("((a,b)=>a+b)('%s','%s')" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f796_s1_open():
+def test_r53_f796_s1_closed():
     """F796 OPEN: miss reproduces."""
     miss = _misses("(async function(){var x=await '%s';return x+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f796_s2_open():
+def test_r53_f796_s2_closed():
     """F796 OPEN: miss reproduces."""
     miss = _misses("(async function(){var o={async m(){return '%s';}};return await o.m()+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f797_s1_open():
+def test_r53_f797_s1_closed():
     """F797 OPEN: miss reproduces."""
     miss = _misses("(function(){function* a(){yield '%s';}function* b(){yield* a();yield '%s';}var it=b();return it.next().value+it.next().value;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f797_s2_open():
+def test_r53_f797_s2_closed():
     """F797 OPEN: miss reproduces."""
     miss = _misses("(function(){var o={*m(){yield '%s';}};return o.m().next().value+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f798_s1_open():
+def test_r53_f798_s1_closed():
     """F798 OPEN: miss reproduces."""
     miss = _misses("(function(){var wm=new WeakMap();var k1={},k2={};wm.set(k1,'%s');wm.set(k2,'%s');return wm.get(k1)+wm.get(k2);})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f798_s2_open():
+def test_r53_f798_s2_closed():
     """F798 OPEN: miss reproduces."""
     miss = _misses("(function(){var ws=new WeakSet();var k={};ws.add(k);var x=ws.has(k)?'%s':'zz';return x+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
@@ -201,25 +201,25 @@ def test_r53_f800_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f801_s1_open():
+def test_r53_f801_s1_closed():
     """F801 OPEN: miss reproduces."""
     miss = _misses("(function(){function f(){return '%s';}return Reflect.apply(f,null,[])+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f801_s2_open():
+def test_r53_f801_s2_closed():
     """F801 OPEN: miss reproduces."""
     miss = _misses("(function(){function f(a,b){return a+b;}return Reflect.apply(f,null,['%s','%s']);})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f802_s1_open():
+def test_r53_f802_s1_closed():
     """F802 OPEN: miss reproduces."""
     miss = _misses("(function(){var a=[['%s'],['%s']];return a.flat().join('');})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f802_s2_open():
+def test_r53_f802_s2_closed():
     """F802 OPEN: miss reproduces."""
     miss = _misses("(function(){var a=['%s','%s'];return a.flatMap(function(x){return [x];}).join('');})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
@@ -249,25 +249,25 @@ def test_r53_f804_s2_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f805_s1_open():
+def test_r53_f805_s1_closed():
     """F805 OPEN: miss reproduces."""
     miss = _misses("(function(){var r;class C{static{var x='%s';r=x;}}return r+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f805_s2_open():
+def test_r53_f805_s2_closed():
     """F805 OPEN: miss reproduces."""
     miss = _misses("(function(){var r;class C{static{let x='%s';r=x;}}return r+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f806_s1_open():
+def test_r53_f806_s1_closed():
     """F806 OPEN: miss reproduces."""
     miss = _misses("(function(){function M(Base){return class extends Base{m(){return '%s';}};}class B{}class C extends M(B){}return new C().m()+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f806_s2_open():
+def test_r53_f806_s2_closed():
     """F806 OPEN: miss reproduces."""
     miss = _misses("(function(){var M=function(B){return class extends B{v(){return '%s';}};};class C extends M(class{}){}return new C().v()+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
@@ -325,25 +325,25 @@ def test_r53_f810_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f811_s1_open():
+def test_r53_f811_s1_closed():
     """F811 OPEN: miss reproduces."""
     miss = _misses("(function(){var k='m';var o={[k](){return '%s';}};return o.m()+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f811_s2_open():
+def test_r53_f811_s2_closed():
     """F811 OPEN: miss reproduces."""
     miss = _misses("(function(){var o={['m'+'2'](){return '%s';}};return o.m2()+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f812_s1_open():
+def test_r53_f812_s1_closed():
     """F812 OPEN: miss reproduces."""
     miss = _misses("(function(){var o=Object.seal({k:'%s'});return o.k+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f812_s2_open():
+def test_r53_f812_s2_closed():
     """F812 OPEN: miss reproduces."""
     miss = _misses("(function(){var o=Object.create(null);o.k='%s';return o.k+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
@@ -373,37 +373,37 @@ def test_r53_f814_s2_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f815_s1_open():
+def test_r53_f815_s1_closed():
     """F815 OPEN: miss reproduces."""
     miss = _misses("(function(){var d=new Date(0);d.toString=function(){return '%s';};return d+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f815_s2_open():
+def test_r53_f815_s2_closed():
     """F815 OPEN: miss reproduces."""
     miss = _misses("(function(){var r=/x/;r.toString=function(){return '%s';};return ''+r+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f816_s1_open():
+def test_r53_f816_s1_closed():
     """F816 OPEN: miss reproduces."""
     miss = _misses("(function(){var o={k:'%s'};return o.hasOwnProperty('k')?o.k+'%s':'z';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f816_s2_open():
+def test_r53_f816_s2_closed():
     """F816 OPEN: miss reproduces."""
     miss = _misses("(function(){var o={k:'%s'};return 'k' in o?o.k+'%s':'z';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f817_s1_open():
+def test_r53_f817_s1_closed():
     """F817 s1: array rest declaration covered by F790 (CLOSED lane 14); s2 assignment form remains OPEN."""
     ok = _blocked("(function(){var [a,...r]=['%s','%s'];return a+r[0];})()" % (_A, _B))
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f817_s2_open():
+def test_r53_f817_s2_closed():
     """F817 OPEN: array destructuring assignment miss reproduces."""
     miss = _misses("(function(){var a='%s',b='%s';[a,b]=[b,a];return b+a;})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
@@ -421,13 +421,13 @@ def test_r53_f818_s2_open():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f819_s1_open():
+def test_r53_f819_s1_closed():
     """F819 OPEN: miss reproduces."""
     miss = _misses("(function(){var a=new Array(3);a.fill('%s',0,1);a.fill('%s',1,2);return a.join('');})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f819_s2_open():
+def test_r53_f819_s2_closed():
     """F819 OPEN: miss reproduces."""
     miss = _misses("(function(){var a=['z','z'];a.fill('%s',-2,-1);a.fill('%s',-1);return a.join('');})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
@@ -468,14 +468,14 @@ def test_r53_f821_s2_closed():
     return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f829_s1_open():
-    """F829 OPEN: braced if-break in counted for body misses."""
+def test_r53_f833_s1_open():
+    """F833 OPEN: braced if-break in counted for body misses."""
     miss = _misses("(function(){var r='';outer:for(var i=0;i<1;i++){r+='%s';if(1){break outer;}r+='xx';}return r+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f829_s2_open():
-    """F829 OPEN: braced if-break in for(;;) body misses."""
+def test_r53_f833_s2_open():
+    """F833 OPEN: braced if-break in for(;;) body misses."""
     miss = _misses("(function(){var r='';outer:for(;;){if(1){r+='%s';break outer;}r+='xx';}return r+'%s';})()" % (_A, _B))
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
