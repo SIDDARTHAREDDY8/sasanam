@@ -634,28 +634,28 @@ def test_r52_f790_s2_closed():
     return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f791_s1_open():
-    """F791 OPEN: miss reproduces."""
-    miss = _misses("(function(){class C{#m(){return '%s';}go(){return this.#m();}}return new C().go()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f791_s1_closed():
+    """F791 CLOSED (wave-385 lane 15): private method this.#m(): blocks coded."""
+    ok = _blocked("(function(){class C{#m(){return '%s';}go(){return this.#m();}}return new C().go()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f791_s2_open():
-    """F791 OPEN: miss reproduces."""
-    miss = _misses("(function(){class C{static #m(){return '%s';}static go(){return C.#m();}}return C.go()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f791_s2_closed():
+    """F791 CLOSED (wave-385 lane 15): static private method C.#m(): blocks coded."""
+    ok = _blocked("(function(){class C{static #m(){return '%s';}static go(){return C.#m();}}return C.go()+'%s';})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f792_s1_open():
-    """F792 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m=Map.groupBy(['%s','%s'],function(x){return x[0];});return m.get('x')[0]+m.get('4')[0];})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f792_s1_closed():
+    """F792 CLOSED (wave-385 lane 15): Map.groupBy reads: blocks coded."""
+    ok = _blocked("(function(){var m=Map.groupBy(['%s','%s'],function(x){return x[0];});return m.get('x')[0]+m.get('4')[0];})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r52_f792_s2_open():
-    """F792 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o=Object.groupBy(['%s','%s'],function(x){return x[0];});return o.x[0]+o['4'][0];})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r52_f792_s2_closed():
+    """F792 CLOSED (wave-385 lane 15): Object.groupBy reads: blocks coded."""
+    ok = _blocked("(function(){var o=Object.groupBy(['%s','%s'],function(x){return x[0];});return o.x[0]+o['4'][0];})()" % (_A, _B))
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r52_f793_s1_open():
