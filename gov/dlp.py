@@ -21227,13 +21227,23 @@ def _js_parse_f770_case_iife(text, i, depth, state):
     return result, k
 
 
+# F803: the narrow allowlist of method names admitted as F611
+# var-binding initializers ('LIT'.method(...)). Only node-exact
+# paren-form string methods already modeled by _js_apply_method
+# (the same grammar/bounds/fail-closed rules as the inline twin);
+# every other method name fails closed in the initializer position.
+_F803_INIT_METHODS = ("repeat", "concat")
+
+
 def _js_parse_f611_varbound_iife(text, i, depth, state):
     """Parse `(function(){DECL NAME=INIT;return EXPR;})()` (F611).
 
     The IIFE declares exactly one binding initialized to a string
-    literal or an atob('LIT') call (the F611 fragment source,
-    node-exact v24.20.0), then returns an expression over the bound
-    name. The return expression is rewritten by substituting the
+    literal, an atob('LIT') call (the F611 fragment source,
+    node-exact v24.20.0), an F803 'LIT'.repeat(n)/'LIT'.concat(...)
+    method-call result, or an F744 JSON.parse reviver call, then
+    returns an expression over the bound name. The return expression
+    is rewritten by substituting the
     bound name (value positions only -- never inside string
     literals, never property names, via _js_ident_tokens, the F501
     discipline) with the quoted value, then parsed by the normal
@@ -21241,7 +21251,8 @@ def _js_parse_f611_varbound_iife(text, i, depth, state):
     fail-closed rule applies unchanged.
 
     Bounds (all fail closed -- rejected, never mis-decoded):
-    - the initializer is not a string literal, atob('LIT'), or an
+    - the initializer is not a string literal, atob('LIT'), an F803
+      allowlisted method call, or an
       F744 JSON.parse reviver call (the single-arg JSON.parse form
       is not admitted -- pre-existing F541 varbound gap);
     - an F744 reviver initializer whose transformed value is not a
@@ -21298,6 +21309,41 @@ def _js_parse_f611_varbound_iife(text, i, depth, state):
             state["ops"] += 1  # the decode call is obfuscation-shaped
         elif k < n and text[k] in "'\"":
             init_val, k = _js_parse_string(text, k)
+            # F803: var-bound method-call results --
+            # 'LIT'.repeat(n) / 'LIT'.concat('lit', ...) initializers.
+            # The method must be in the narrow F803 allowlist
+            # (node-exact paren-form string methods already modeled
+            # by _js_apply_method, the same grammar/bounds/fail-closed
+            # rules as the inline twin); the call is evaluated by
+            # _js_apply_method with budget snapshot/restore on miss
+            # (F452 / wave-383 lesson). A non-allowlisted method, a
+            # malformed call, or a non-string result fails closed --
+            # the initializer stays a plain literal.
+            _f803s = _js_skip_ws(text, k)
+            if (_f803s < n and text[_f803s] == "."
+                    and isinstance(init_val, str)):
+                try:
+                    _f803m, _f803e = _js_parse_ident(
+                        text, _js_skip_ws(text, _f803s + 1))
+                except _JSExprFail:
+                    _f803m = None
+                if _f803m in _F803_INIT_METHODS:
+                    _f803j = _js_skip_ws(text, _f803e)
+                    if _f803j < n and text[_f803j] == "(":
+                        _f803sp = state["parts"]
+                        _f803so = state["ops"]
+                        try:
+                            init_val, k = _js_apply_method(
+                                text, _f803j, _f803m, init_val,
+                                depth, state)
+                        except _JSExprFail:
+                            state["parts"] = _f803sp
+                            state["ops"] = _f803so
+                            return None
+                        if not isinstance(init_val, str):
+                            state["parts"] = _f803sp
+                            state["ops"] = _f803so
+                            return None
         elif text.startswith("JSON", k):
             # F744: JSON.parse('LIT',function(k,v){return
             # GUARD?'REPL':v;}) initializer -- the reviver-transformed
@@ -71372,6 +71418,262 @@ def _js_parse_f637_operand(stmts, sj, alias, elems, bound, depth,
     return _js_f556_apply(params, body, args), sj
 
 
+def _js_subst_f804_arguments_indexed(fbody, args, state):
+    """Substitute `arguments[N]` indexed reads in *fbody* (F804).
+
+    *fbody* is the inner function body text; *args* the call-site
+    string-literal raw texts; *state* the scan-budget state. Every
+    `arguments[N]` in code spans -- N a canonical decimal int (no
+    leading zeros, no sign), in range of *args* -- is replaced by
+    the quoted N-th literal. Each substitution charges one part
+    (F452): the rewritten text amplifies (a 12-char read becomes up
+    to a 4096-char literal), so unbounded substitution is a DoS
+    vector -- exceeding _JS_EXPR_MAX_PARTS fails closed via
+    _JSExprFail before the rewritten text is built. Any other
+    `arguments` use (bare, `.length`/member reads, calls,
+    assignments) fails closed via _JSExprFail: the decoder never
+    guesses a value. Substitution never touches string-literal
+    contents. Returns (rewritten_body, n_subst). Never evals.
+    """
+    segs = _js_split_code_strings(fbody)
+    n_subst = 0
+    out = []
+    for is_code, s in segs:
+        if not is_code:
+            out.append(s)
+            continue
+        buf = []
+        pos = 0
+        for st in _js_code_find_idents(s, "arguments"):
+            # Property position (.arguments) is not the exotic object.
+            if st > 0 and s[st - 1] in ".$":
+                continue
+            if st > 0 and s[st - 1] in _JS_IDENT_CONT:
+                continue  # _js_code_ident_at already excludes this
+            e = st + len("arguments")
+            q = e
+            while q < len(s) and s[q] in " \t\n\r":
+                q += 1
+            if q >= len(s) or s[q] != "[":
+                raise _JSExprFail("f804 non-indexed arguments use")
+            q += 1
+            while q < len(s) and s[q] in " \t\n\r":
+                q += 1
+            d0 = q
+            while q < len(s) and s[q] in "0123456789":
+                q += 1
+            digits = s[d0:q]
+            if not digits:
+                raise _JSExprFail("f804 bad arguments index")
+            if len(digits) > 1 and digits[0] == "0":
+                raise _JSExprFail("f804 non-canonical index")
+            while q < len(s) and s[q] in " \t\n\r":
+                q += 1
+            if q >= len(s) or s[q] != "]":
+                raise _JSExprFail("f804 bad arguments index")
+            q += 1
+            idx = int(digits)
+            if idx >= len(args):
+                # Node yields undefined (stringifies to "undefined");
+                # the decoder never guesses -- fail closed.
+                raise _JSExprFail("f804 arguments index out of range")
+            state["parts"] += 1  # F452: bound the amplification
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("f804 too many arguments reads")
+            buf.append(s[pos:st])
+            buf.append(args[idx])
+            pos = q
+            n_subst += 1
+        buf.append(s[pos:])
+        out.append("".join(buf))
+    rewritten = "".join(out)
+    # Defensive: no `arguments` ident may survive in code spans.
+    rcode = "".join(s for is_code, s in _js_split_code_strings(rewritten)
+                    if is_code)
+    if _js_code_find_idents(rcode, "arguments"):
+        raise _JSExprFail("f804 arguments left unsubstituted")
+    return rewritten, n_subst
+
+
+def _js_parse_f804_named_fn_arguments_iife(text, i, depth, state):
+    """Parse `(function(){function F(){BODY}return F('lit',...);})()` (F804).
+
+    Desugars the named-function arguments-indexed-read laundering:
+    the inner function declares zero params; its body may reference
+    the `arguments` exotic object only via `arguments[N]` indexed
+    reads. Every such read is textually replaced by the quoted N-th
+    call-site literal (via _js_subst_f804_arguments_indexed); the
+    rewritten body is re-parsed as an anonymous IIFE
+    `(function(){REWRITTEN})()` at depth+1 through _js_parse_primary,
+    so every downstream decoder, bound, and fail-closed rule applies
+    unchanged (F611 handles the var-decl twin; the plain-return twin
+    parses directly).
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the inner function declares params, or the call name differs;
+    - call args are not all string literals (parsed with plain
+      `_js_parse_string` rather than the carrier-tolerant helper:
+      the substitution needs raw quoted spans `text[a0:k]`, which
+      `_js_parse_string_literal_list` does not return; both fail
+      closed, so the divergence is coverage-only, never safety);
+    - `arguments` used other than `arguments[N]` (bare, member
+      reads, calls, assignments); N out of range or non-canonical;
+    - nested function/class/arrow/new/delete, `this`/`super`, or a
+      template literal in the body (_js_span_braced rejects
+      backticks and `/` in code);
+    - the body has no `arguments[N]` read at all (not an
+      arguments-laundering shape).
+    Disjoint from every earlier route: the named-function-declaration
+    head `function IDENT(){` inside the IIFE body is rejected by all
+    anonymous-IIFE routes. Never evals.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_match_kw(text, _js_skip_ws(text, j + 1), "function")
+        if k is None:
+            return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in _JS_IDENT_START:
+            # Outer function name (engine-exact; ignored).
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # outer params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        # Inner named function declaration.
+        k = _js_skip_ws(text, k + 1)
+        k2 = _js_match_kw(text, k, "function")
+        if k2 is None:
+            return None
+        k = _js_skip_ws(text, k2)
+        fname, k = _js_parse_ident(text, k)
+        if fname in _F611_RESERVED or fname == "arguments":
+            return None  # not a valid function name (node: SyntaxError)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # inner params: the filed shapes take none
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "{":
+            return None
+        fbody_start, fbody_end, k = _js_span_braced(text, k)
+        fbody = text[fbody_start:fbody_end]
+        # `return F('lit', ...);`
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        k = _js_skip_ws(text, rk)
+        cname, k = _js_parse_ident(text, k)
+        if cname != fname:
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "(":
+            return None
+        args = []
+        k = _js_skip_ws(text, k + 1)
+        if k < n and text[k] == ")":
+            k += 1
+        else:
+            while True:
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] not in "'\"":
+                    return None
+                a0 = k
+                _, k = _js_parse_string(text, k)
+                args.append(text[a0:k])
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    return None
+                k = _js_skip_ws(text, k)
+                if k >= n:
+                    return None
+                if text[k] == ",":
+                    k = _js_skip_ws(text, k + 1)
+                    continue
+                if text[k] == ")":
+                    k += 1
+                    break
+                return None
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k += 1
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "}":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != "(":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] != ")":
+            return None  # outer invocation args: none
+        k += 1
+        # Body guards on code spans (string contents never trigger).
+        _f804segs = _js_split_code_strings(fbody)
+        _f804code = "".join(s for is_code, s in _f804segs if is_code)
+        for _kw, _msg in (("function", "nested function in f804 body"),
+                          ("class", "class in f804 body"),
+                          ("new", "new in f804 body"),
+                          ("delete", "delete in f804 body"),
+                          ("this", "this in f804 body"),
+                          ("super", "super in f804 body")):
+            if _js_code_find_idents(_f804code, _kw):
+                return None
+        if "=>" in _f804code:
+            return None  # arrow function in body
+        # Note: assignments through `arguments` (`arguments[0]=x`,
+        # `arguments=x`) are already rejected: the substitution
+        # raises on any non-`arguments[N]` use, and a substituted
+        # `'lit'=x` left-hand side fails closed in the re-parse.
+        # Reassignment of var-declared names is guarded by the
+        # re-parsed route's own discipline (F611/F501).
+        _f804sp = state["parts"]
+        _f804so = state["ops"]
+        try:
+            _rewritten, _nsubst = _js_subst_f804_arguments_indexed(
+                fbody, args, state)
+        except _JSExprFail:
+            state["parts"] = _f804sp
+            state["ops"] = _f804so
+            return None
+        if _nsubst == 0:
+            state["parts"] = _f804sp
+            state["ops"] = _f804so
+            return None
+        _iife_text = "(function(){" + _rewritten + "})()"
+        try:
+            val, _re = _js_parse_primary(_iife_text, 0, depth + 1,
+                                          state)
+        except _JSExprFail:
+            state["parts"] = _f804sp
+            state["ops"] = _f804so
+            return None
+        _re = _js_skip_ws(_iife_text, _re)
+        if _re != len(_iife_text):
+            state["parts"] = _f804sp
+            state["ops"] = _f804so
+            return None
+    except _JSExprFail:
+        return None
+    state["ops"] += 1  # the named-function wrapper is obfuscation-shaped
+    return val, k
+
+
 def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     """Parse one primary (literal / fromCharCode / parens / number / array /
     Array constructor / Reflect.construct).
@@ -71593,6 +71895,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f509_saved_parts; state['ops'] = _f509_saved_ops
         if _f509 is not None:
             val, i = _f509
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F804: (function(){function F(){BODY}return F('lit',...);})()
+        #   -- named-function arguments-indexed-read laundering
+        #   (`arguments[N]` in the inner body, zero params). Tried
+        #   after F509: the named-function-declaration head is
+        #   disjoint from every anonymous-IIFE route (all of which
+        #   reject the `function IDENT(){` head), and this route
+        #   fails closed on every anonymous shape, so no
+        #   previously-decoded input changes behavior. None falls
+        #   through like F509.
+        _f804_saved_parts = state['parts']; _f804_saved_ops = state['ops']
+        _f804 = _js_parse_f804_named_fn_arguments_iife(text, i, depth,
+                                                       state)
+        if _f804 is None:
+            state['parts'] = _f804_saved_parts; state['ops'] = _f804_saved_ops
+        if _f804 is not None:
+            val, i = _f804
             return _js_parse_postfix(text, i, val, depth, state)
         # F533: (function(){DECL a=arguments;
         #   var|let s='';for(var|let|const x of a){s+=x;}return s;})(lit, ...)

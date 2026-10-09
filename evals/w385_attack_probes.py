@@ -225,28 +225,28 @@ def test_r53_f802_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f803_s1_open():
-    """F803 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s='%s'.repeat(1);return s+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f803_s1_closed():
+    """F803 CLOSED (wave-386 lane 5): block reproduces."""
+    hit = _blocked("(function(){var s='%s'.repeat(1);return s+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f803_s2_open():
-    """F803 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s='%s'.concat('');return s+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f803_s2_closed():
+    """F803 CLOSED (wave-386 lane 5): block reproduces."""
+    hit = _blocked("(function(){var s='%s'.concat('');return s+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f804_s1_open():
-    """F804 OPEN: miss reproduces."""
-    miss = _misses("(function(){function f(){return arguments[0]+arguments[1];}return f('%s','%s');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f804_s1_closed():
+    """F804 CLOSED (wave-386 lane 5): block reproduces."""
+    hit = _blocked("(function(){function f(){return arguments[0]+arguments[1];}return f('%s','%s');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r53_f804_s2_open():
-    """F804 OPEN: miss reproduces."""
-    miss = _misses("(function(){function f(){var x=arguments[1];return arguments[0]+x;}return f('%s','%s');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f804_s2_closed():
+    """F804 CLOSED (wave-386 lane 5): block reproduces."""
+    hit = _blocked("(function(){function f(){var x=arguments[1];return arguments[0]+x;}return f('%s','%s');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r53_f805_s1_open():
