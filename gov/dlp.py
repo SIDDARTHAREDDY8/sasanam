@@ -5319,6 +5319,15 @@ def _js_parse_f814_map_forof_iife(text, i, depth, state):
     `m.set(...)` twin both node-evaluate (v24.20.0) to the exact
     credential while the decoder produces zero variants.
 
+    F908 (LOW, wave-387 attack round 55): F814 models the shape only
+    when the map declaration immediately precedes the accumulator
+    declaration; the swapped order misses:
+    `(function(){var s='';var m=new Map([['a','f1'],['b','f2']]);
+    for(var [k,v] of m)s+=v;return s;})()` and the `m.set(...)`
+    twin. Both declaration orders are now accepted (order 1 tried
+    first; the F452 budget snapshot is restored before order 2, so
+    order-1 inputs behave byte-identically to before).
+
     Node-exact desugar (v24.20.0): the Map entries are engine-exact
     (`_js_parse_new_map_head` / F746 set-tail grammar -- string
     literal keys/values, later-wins, insertion order); the for-of
@@ -5353,22 +5362,54 @@ def _js_parse_f814_map_forof_iife(text, i, depth, state):
         inner_start, inner_end, j = _js_span_braced(text, brace)
         stmts = text[inner_start:inner_end]
         sj = _js_skip_ws(stmts, 0)
-        # var|let|const M=new Map(...);
-        mname, pairs, sj = _js_parse_f814_map_decl(stmts, sj, depth,
-                                                   state)
-        state["parts"] += 1  # the map binding is obfuscation-shaped
-        if state["parts"] > _JS_EXPR_MAX_PARTS:
-            raise _JSExprFail("too many parts")
-        # (M.set('K','V');)*
-        while True:
-            _st = _js_parse_f814_set_tail(stmts, sj, mname, pairs,
-                                          state)
-            if _st is None:
-                break
-            pairs, sj = _st
-        # var|let S='';
-        acc, sj = _js_parse_f6xx_accum_decl(stmts, _js_skip_ws(stmts,
-                                                               sj))
+        # F908: the map declaration may precede OR follow the
+        # accumulator declaration (the engine resolves the binding by
+        # name, not position -- node v24.20.0). Order 1 is the F814
+        # filed order (map decl, set tails, accum decl); order 2 is
+        # the F908 residual (accum decl, map decl, set tails). Order
+        # 1 is tried first and the F452 budget snapshot is restored
+        # before order 2, so every input order 1 accepts behaves
+        # byte-identically to before.
+        _f908_saved_parts = state["parts"]
+        _f908_saved_ops = state["ops"]
+        try:
+            # var|let|const M=new Map(...);
+            mname, pairs, sj = _js_parse_f814_map_decl(stmts, sj, depth,
+                                                       state)
+            state["parts"] += 1  # the map binding is
+                                 # obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            # (M.set('K','V');)*
+            while True:
+                _st = _js_parse_f814_set_tail(stmts, sj, mname, pairs,
+                                              state)
+                if _st is None:
+                    break
+                pairs, sj = _st
+            # var|let S='';
+            acc, sj = _js_parse_f6xx_accum_decl(
+                stmts, _js_skip_ws(stmts, sj))
+        except _JSExprFail:
+            state["parts"] = _f908_saved_parts
+            state["ops"] = _f908_saved_ops
+            sj = _js_skip_ws(stmts, 0)
+            # var|let S='';
+            acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+            # var|let|const M=new Map(...);
+            mname, pairs, sj = _js_parse_f814_map_decl(stmts, sj,
+                                                       depth, state)
+            state["parts"] += 1  # the map binding is
+                                 # obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            # (M.set('K','V');)*
+            while True:
+                _st = _js_parse_f814_set_tail(stmts, sj, mname, pairs,
+                                              state)
+                if _st is None:
+                    break
+                pairs, sj = _st
         if acc == mname:
             raise _JSExprFail("F814 accumulator shadows map")
         # for(var|let [A,B] of M)
@@ -5455,6 +5496,253 @@ def _js_parse_f814_map_forof_iife(text, i, depth, state):
         sj = _js_expect(stmts, sj, ";")
         if _js_skip_ws(stmts, sj) != len(stmts):
             raise _JSExprFail("F814 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f905_entries_head(stmts, j, depth, state):
+    """Parse `Object.entries(OBJLIT)` / `Object['entries'](OBJLIT)`
+    at stmts[j] (F905).
+
+    Returns (pairs, next_index) where pairs is the engine-ordered
+    [(key, value)] list: the literal parses via
+    `_js_parse_f535_object` (string literals, canonical ints,
+    nested objects fail closed below) and keys are ordered with
+    `_js_order_jsobj_keys_values` (integer-index keys ascending
+    first, then string keys in insertion order -- node v24.20.0).
+    Symbol-registry keys are skipped (the engine excludes them from
+    entries() -- F573 parity). A non-string value fails closed (an
+    entries source over a credential model must yield strings --
+    the F623/F630 enumeration discipline). Never evals.
+    """
+    n = len(stmts)
+    if not stmts.startswith("Object", j):
+        raise _JSExprFail("F905 not Object.entries")
+    k = j + len("Object")
+    if k < n and stmts[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F905 not Object.entries")
+    k = _js_skip_ws(stmts, k)
+    if k < n and stmts[k] == "[":
+        # F480: Object['entries'] -- engine-identical to the dot
+        # form (node v24.20.0 verified).
+        _mname, k = _js_parse_bracket_member(stmts, k)
+        if _mname != "entries":
+            raise _JSExprFail("F905 not Object.entries")
+    elif k < n and stmts[k] == ".":
+        k = _js_skip_ws(stmts, k + 1)
+        m = _js_match_kw(stmts, k, "entries")
+        if m is None:
+            raise _JSExprFail("F905 not Object.entries")
+        k = m
+    else:
+        raise _JSExprFail("F905 not Object.entries")
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != "(":
+        raise _JSExprFail("F905 entries without paren")
+    k = _js_skip_ws(stmts, k + 1)
+    if k >= n or stmts[k] != "{":
+        raise _JSExprFail("F905 entries arg not object literal")
+    props, k = _js_parse_f535_object(stmts, k, depth, state)
+    k = _js_skip_ws(stmts, k)
+    if k >= n or stmts[k] != ")":
+        raise _JSExprFail("F905 entries unterminated")
+    k = k + 1
+    _sprops = {kk: vv for kk, vv in props.items()
+               if not (isinstance(kk, tuple) and kk[0] == "symbol")}
+    _keys, _vals = _js_order_jsobj_keys_values(_JSObj(_sprops))
+    return list(zip(_keys, _vals)), k
+
+
+def _js_parse_f905_entries_forof_iife(text, i, depth, state):
+    """Parse `(function(){var|let S='';for(var|let HEAD of
+    Object.entries(OBJLIT))S+=X;return S(+'LIT')*;})()` (F905).
+
+    F905 (LOW, wave-387 attack round 55): the decoder models Map
+    for-of destructuring (F814) but has no Object.entries
+    production: `(function(){var r='';for(var [k,v] of
+    Object.entries({k:'f1'})){r+=v;}return r+'f2';})()` and the
+    single-ident `for(var e of Object.entries({k:'f1'})){r+=e[1];}`
+    twin both node-evaluate (v24.20.0) to the exact credential
+    while the decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): Object.entries returns the
+    [[key, value], ...] pairs in engine enumeration order
+    (`_js_parse_f905_entries_head`); the destructured form iterates
+    pairs destructuring `[key, value]` (the F814 pair grammar --
+    exactly two idents, distinct, not shadowing the accumulator or
+    `arguments`); the ident form iterates the pair arrays with a
+    literal `[0]`/`[1]` index read in the body. `S+=A`/`S=S+A`
+    accumulates the key and `S+=B`/`S=S+B` the value; the ident
+    form's `S+=E[0]`/`S+=E[1]` accumulates the pair's key/value.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-literal entries argument, a non-string entries value, a
+    `const` loop var (F814 precedent), a non-pair destructure
+    (nested patterns, defaults, `[A]`-only), iterating anything
+    but the entries call, a body that is not the accum-plus form,
+    a non-empty accumulator initializer, a return that is not the
+    accumulator, trailing statements, non-empty call args. Tried
+    after F814: F814 requires a map-decl first statement and F746
+    a `class` head, so no previously-decoded input changes
+    behavior (red-first verified: 2 BREAK on the open tree). The
+    F814 hook and its trailing `return` are untouched (wave-379
+    lesson). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_parse_f6xx_iife_head(text, i)
+        if j is None:
+            return None
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        # var|let S='';
+        acc, sj = _js_parse_f6xx_accum_decl(stmts, sj)
+        # for(var|let HEAD of Object.entries(OBJLIT))
+        sj = _js_skip_ws(stmts, sj)
+        k = _js_match_kw(stmts, sj, "for")
+        if k is None:
+            raise _JSExprFail("F905 not a for-of")
+        sj = _js_skip_ws(stmts, k)
+        sj = _js_expect(stmts, sj, "(")
+        sj = _js_skip_ws(stmts, sj)
+        dkw = _js_match_kw(stmts, sj, "var")
+        if dkw is None:
+            dkw = _js_match_kw(stmts, sj, "let")
+        if dkw is None:
+            raise _JSExprFail("F905 for-of decl not var/let")
+        sj = _js_skip_ws(stmts, dkw)
+        if sj < len(stmts) and stmts[sj] == "[":
+            # Destructured pair form: for(var [A,B] of ...).
+            sj = _js_skip_ws(stmts, sj + 1)
+            aname, sj = _js_parse_ident(stmts, sj)
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, ",")
+            sj = _js_skip_ws(stmts, sj)
+            bname, sj = _js_parse_ident(stmts, sj)
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "]")
+            if aname == bname:
+                raise _JSExprFail("F905 destructured names not "
+                                  "distinct")
+            for _nm in (aname, bname):
+                if _nm in (acc, "arguments"):
+                    raise _JSExprFail("F905 loop var shadows")
+            destr = True
+        else:
+            # Single-ident form: for(var E of ...) with an E[0|1]
+            # index read in the body.
+            ename, sj = _js_parse_ident(stmts, sj)
+            if ename in (acc, "arguments"):
+                raise _JSExprFail("F905 loop var shadows")
+            destr = False
+        sj = _js_skip_ws(stmts, sj)
+        o = _js_match_kw(stmts, sj, "of")
+        if o is None:
+            raise _JSExprFail("F905 for-of without of")
+        sj = _js_skip_ws(stmts, o)
+        pairs, sj = _js_parse_f905_entries_head(stmts, sj, depth,
+                                                state)
+        state["parts"] += 1  # the entries call is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ")")
+        # Body: `S+=X;` / `S=S+X;`, optionally braced (F814 parity).
+        sj = _js_skip_ws(stmts, sj)
+        braced = False
+        if sj < len(stmts) and stmts[sj] == "{":
+            braced = True
+            sj = _js_skip_ws(stmts, sj + 1)
+        sj = _js_skip_ws(stmts, sj)
+        _sname, sj = _js_parse_ident(stmts, sj)
+        if _sname != acc:
+            raise _JSExprFail("F905 accum body not S+=X")
+        sj = _js_skip_ws(stmts, sj)
+        if (sj + 1 < len(stmts) and stmts[sj] == "+"
+                and stmts[sj + 1] == "="):
+            sj = _js_skip_ws(stmts, sj + 2)
+        elif sj < len(stmts) and stmts[sj] == "=":
+            sj = _js_skip_ws(stmts, sj + 1)
+            _sname2, sj = _js_parse_ident(stmts, sj)
+            if _sname2 != acc:
+                raise _JSExprFail("F905 accum body not S=S+X")
+            sj = _js_skip_ws(stmts, sj)
+            if sj >= len(stmts) or stmts[sj] != "+":
+                raise _JSExprFail("F905 accum body not S=S+X")
+            sj = _js_skip_ws(stmts, sj + 1)
+        else:
+            raise _JSExprFail("F905 accum body not S+=X")
+        if destr:
+            xname, sj = _js_parse_ident(stmts, sj)
+            if xname == aname:
+                use_key = True
+            elif xname == bname:
+                use_key = False
+            else:
+                raise _JSExprFail("F905 accum body wrong var")
+        else:
+            _en, sj = _js_parse_ident(stmts, sj)
+            if _en != ename:
+                raise _JSExprFail("F905 accum body wrong var")
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "[")
+            sj = _js_skip_ws(stmts, sj)
+            if sj >= len(stmts) or stmts[sj] not in "01":
+                raise _JSExprFail("F905 index not 0 or 1")
+            use_key = stmts[sj] == "0"
+            sj = _js_skip_ws(stmts, sj + 1)
+            sj = _js_expect(stmts, sj, "]")
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        if braced:
+            sj = _js_skip_ws(stmts, sj)
+            sj = _js_expect(stmts, sj, "}")
+        # Accumulate over the entries in engine enumeration order.
+        aval = ""
+        for (_kkey, _vval) in pairs:
+            _piece = _kkey if use_key else _vval
+            if len(aval) + len(_piece) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F905 accum too long")
+            aval = aval + _piece
+            state["parts"] += 1  # F452: charge per iteration
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+        state["ops"] += 1  # the for-of is obfuscation-shaped
+        # return S(+'LIT')*;
+        sj = _js_skip_ws(stmts, sj)
+        rk = _js_match_kw(stmts, sj, "return")
+        if rk is None:
+            raise _JSExprFail("F905 body not return")
+        sj = _js_skip_ws(stmts, rk)
+        tname, sj = _js_parse_ident(stmts, sj)
+        if tname != acc:
+            raise _JSExprFail("F905 return not the accum")
+        val = aval
+        sj = _js_skip_ws(stmts, sj)
+        while sj < len(stmts) and stmts[sj] == "+":
+            sj = _js_skip_ws(stmts, sj + 1)
+            if sj >= len(stmts) or stmts[sj] not in "'\"":
+                raise _JSExprFail("F905 tail not a literal")
+            _tail, sj = _js_parse_string(stmts, sj)
+            if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F905 concat too long")
+            val = val + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = _js_skip_ws(stmts, sj)
+        sj = _js_skip_ws(stmts, sj)
+        sj = _js_expect(stmts, sj, ";")
+        if _js_skip_ws(stmts, sj) != len(stmts):
+            raise _JSExprFail("F905 trailing statements")
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")
         return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
@@ -80442,6 +80730,134 @@ def _js_parse_f873_identity_reduce(text, i, value, name, depth, state):
     return result, j + 1
 
 
+def _js_parse_f906f907_proj_callback(text, i):
+    """Parse a return-current reduce callback at text[i] (F906/F907).
+
+    Recognized forms (all node-verified, v24.20.0) -- exactly the
+    F873 param shapes, but the body returns the SECOND parameter
+    (the engine's currentValue) unchanged:
+    - `function(a,b){return b;}`
+    - `(a,b)=>b` / `(a,b)=>{return b;}`
+    Single-param, three-param, and non-ident bodies fail closed
+    (narrow scope). Returns (next_index). Disjoint by construction:
+    F873 returns the first param (identity) and F437 requires the
+    `pA+pB` body -- neither can parse a return-current callback --
+    so no previously-decoded input changes behavior. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if text.startswith("function", j):
+        k = j + len("function")
+        if k < n and text[k] in _JS_IDENT_CONT:
+            raise _JSExprFail("F906F907 not a function callback")
+        j = _js_skip_ws(text, k)
+        j = _js_expect(text, j, "(")
+        p0, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            raise _JSExprFail("F906F907 needs two params")
+        p1, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if p1 == p0:
+            raise _JSExprFail("F906F907 duplicate params")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        _, _, j = _js_parse_return_body_single(
+            text, _js_skip_ws(text, j), p1)
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        return j
+    # Arrow form: parenthesized two-param `(a,b)=>` only (a bare
+    # `a=>b` would read an out-of-scope ident -- a different
+    # production, fails closed).
+    if j >= n or text[j] != "(":
+        raise _JSExprFail("F906F907 not a parenthesized arrow")
+    p0, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ",":
+        raise _JSExprFail("F906F907 needs two params")
+    p1, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if p1 == p0:
+        raise _JSExprFail("F906F907 duplicate params")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F906F907 not an arrow callback")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        _, _, j = _js_parse_return_body_single(
+            text, _js_skip_ws(text, j + 1), p1)
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    else:
+        q, j = _js_parse_ident(text, j)
+        if q != p1:
+            raise _JSExprFail("F906F907 arrow body not current")
+    return j
+
+
+def _js_parse_f906f907_proj_reduce(text, i, value, name, depth, state):
+    """Parse `.reduce(PROJ_CB[, INIT])` / `.reduceRight(...)` where the
+    callback always returns its second parameter (F906/F907).
+
+    The fold is node-exact without iterating: every step overwrites
+    the accumulator with the current element, so the result is the
+    LAST iterated element -- `elements[-1]` for reduce,
+    `elements[0]` for reduceRight (node-verified, v24.20.0) -- and
+    an INIT is irrelevant over a non-empty array (its type is never
+    consulted). Over an empty array the engine returns INIT
+    untouched, so a string INIT passes through while a numeric INIT
+    fails closed (it passes through as a number, which this string
+    model cannot represent); a seedless empty array fails closed
+    (the engine throws TypeError). The projected element must be a
+    string (F437 element discipline).
+
+    Tried after F873 inside the reduce branch: return-current
+    callbacks parse in neither F873 (first-param body) nor F437
+    (`pA+pB` body), so no previously-decoded input changes
+    behavior. The F483 value-dispatch path is untouched (F873
+    precedent -- return-current callbacks stay fail-closed there,
+    documented boundary). The result is capped at
+    _MAX_DECODE_BYTES; one F452 op is charged. Never evals.
+    """
+    n = len(text)
+    j = _js_parse_f906f907_proj_callback(text, i)
+    j = _js_skip_ws(text, j)
+    init = None
+    if j < n and text[j] == ",":
+        init, j = _js_parse_additive(text, j + 1, depth, state)
+    if value.elements:
+        # Every step overwrites the accumulator with the current
+        # element, so the INIT value is irrelevant (node-verified,
+        # v24.20.0) -- the result is the last iterated element,
+        # whatever the INIT's type.
+        res_elem = (value.elements[0] if name == "reduceRight"
+                    else value.elements[-1])
+        if not isinstance(res_elem, str):
+            raise _JSExprFail("F906F907 reduce over non-string "
+                              "element")
+        result = res_elem
+    else:
+        # Empty array: the engine returns INIT untouched (a seedless
+        # empty array throws TypeError). A numeric INIT passes
+        # through as a number, which this string model cannot
+        # represent -- fail closed rather than mis-decode
+        # (_JSNumStr is a str subclass, so it is excluded
+        # explicitly).
+        if init is None:
+            raise _JSExprFail("F906F907 reduce of empty array")
+        if not isinstance(init, str) or isinstance(init, _JSNumStr):
+            raise _JSExprFail("F906F907 reduce init not a string")
+        result = init
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != ")":
+        raise _JSExprFail("F906F907 bad reduce tail")
+    if len(result) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F906F907 reduce too long")
+    state["ops"] += 1  # the fold is obfuscation-shaped
+    return result, j + 1
+
+
 def _js_apply_method(text, j, name, value, depth, state):
     """Apply .concat(...) / .repeat(...) / .join(...) / .reduce(...) /
     .reduceRight(...) / .map(...) / .filter(...) / .fill(...) /
@@ -80846,6 +81262,20 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         except _JSExprFail:
             state.clear()
             state.update(_f873_saved)
+        # F906/F907: return-current callbacks -- tried after F873,
+        # before the F437 callback grammar. Return-current callbacks
+        # parse in neither F873 (first-param body) nor F437 (`pA+pB`
+        # body), so no previously-decoded input changes behavior.
+        # The speculative parse snapshots the F452 budget: on miss
+        # the counters are restored and F437 proceeds exactly as
+        # before.
+        _f906f907_saved = dict(state)
+        try:
+            return _js_parse_f906f907_proj_reduce(text, i, value,
+                                                  name, depth, state)
+        except _JSExprFail:
+            state.clear()
+            state.update(_f906f907_saved)
         if any(not isinstance(e, str) for e in value.elements):
             # F479: the fold assembles with JS '+'; null/undefined/
             # boolean/nested-array elements do not string-concat in the
@@ -90001,6 +90431,23 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f814_saved_parts; state['ops'] = _f814_saved_ops
         if _f814 is not None:
             val, i = _f814
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F905: (function(){var|let S='';for(var|let HEAD of
+        #   Object.entries(OBJLIT))S+=X;return S(+'LIT')*;})() --
+        #   Object.entries for-of accumulation (destructured pair
+        #   form and single-ident E[0|1] form). Tried after F814:
+        #   F814 requires a map-decl first statement and F746 a
+        #   `class` head, so no previously-decoded input changes
+        #   behavior (red-first verified: 2 BREAK on the open tree).
+        #   The F814 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f905_saved_parts = state['parts']; _f905_saved_ops = state['ops']
+        _f905 = _js_parse_f905_entries_forof_iife(text, i, depth,
+                                                  state)
+        if _f905 is None:
+            state['parts'] = _f905_saved_parts; state['ops'] = _f905_saved_ops
+        if _f905 is not None:
+            val, i = _f905
             return _js_parse_postfix(text, i, val, depth, state)
         # F735/F736: (function(){[STMT;]* return TERM;})() with
         #   nested-function fragment sources -- `function
