@@ -1659,6 +1659,20 @@ _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 _OCT_DIGITS = frozenset("01234567")
 _BIN_DIGITS = frozenset("01")  # F472: ToNumber 0b radix
 _DEC_DIGITS = frozenset("0123456789")  # F472: strict ToNumber decimal scan
+
+# F824/F825: the full ECMAScript WhiteSpace + LineTerminator set used
+# by ToNumber on strings (node v24.20.0). Built with chr() -- the
+# \uXXXX escapes are deliberately avoided so the set stays
+# ASCII-visible in source. NBSP/ZWNBSP alone are NOT enough: U+1680,
+# U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 are all
+# whitespace to the engine (node-verified); Python's bare
+# str.strip() is NOT a substitute -- it also strips U+0085 and
+# U+001C-U+001F, which the engine treats as non-whitespace.
+_JS_STR_WS = (" \t\n\r\f\v" + "".join(
+    [chr(0xA0), chr(0xFEFF), chr(0x1680)]
+    + [chr(c) for c in range(0x2000, 0x200B)]
+    + [chr(0x2028), chr(0x2029), chr(0x202F), chr(0x205F),
+       chr(0x3000)]))
 # F436: the semicolon is optional (legacy lenient form, mirroring
 # html.unescape); the strict form is matched first by alternation
 # order in _ENTITY_RUN, so &#65; still decodes identically.
@@ -31566,6 +31580,127 @@ def _js_parse_f793_map_callback(stmts, k, depth, state):
     raise _JSExprFail("F793 callback not a function")
 
 
+def _js_tonumber_str(s):
+    """ToNumber(s) for a JS string s (F824, F825).
+
+    Node-exact (v24.20.0) StringNumericLiteral subset: strip leading
+    / trailing JS whitespace (the _JS_STR_WS set -- full ECMAScript
+    WhiteSpace + LineTerminator), then an optional sign, a decimal
+    literal (digits with optional fraction and exponent), a 0x / 0b /
+    0o radix form (signless), or Infinity. Returns a float. Anything
+    the strict grammar rejects is NaN -- exactly the engine's
+    ToNumber for non-numeric strings -- so each caller applies its
+    own conversion semantics (Iterator.drop: NaN throws RangeError;
+    String.fromCharCode: NaN -> 0 via ToUint16). Grammar-validated
+    decimals convert with float64, exactly the engine's own literal
+    parsing including round-to-nearest; overlong digit runs become
+    inf, never raise. No regexes; never evals.
+    """
+    t = s.strip(_JS_STR_WS)
+    if t == "":
+        return 0.0  # ToNumber('') == 0
+    if t in ("Infinity", "+Infinity"):
+        return float("inf")
+    if t == "-Infinity":
+        return float("-inf")
+    neg = t[0] in "+-"
+    body = t[1:] if neg else t
+    prefix = body[:2].lower()
+    if prefix in ("0x", "0b", "0o"):
+        digits = body[2:]
+        valid = {"0x": _HEX_DIGITS, "0b": _BIN_DIGITS,
+                 "0o": _OCT_DIGITS}[prefix]
+        if neg or not digits or any(c not in valid for c in digits):
+            return float("nan")  # '-0x2', '0x', '0xZZ' are NaN
+        try:
+            return float(int(digits, {"0x": 16, "0b": 2, "0o": 8}[prefix]))
+        except ValueError:
+            # >4300 digits: far beyond float range -> Infinity
+            return float("inf")
+    j, n = (1, len(t)) if neg else (0, len(t))
+    int_digits = 0
+    while j < n and t[j] in _DEC_DIGITS:
+        j += 1
+        int_digits += 1
+    if j < n and t[j] == ".":
+        j += 1
+        while j < n and t[j] in _DEC_DIGITS:
+            j += 1
+            int_digits += 1
+    if int_digits == 0:
+        return float("nan")  # 'abc', 'NaN', '.', 'e5', ...
+    if j < n and t[j] in "eE":
+        j += 1
+        if j < n and t[j] in "+-":
+            j += 1
+        exp_digits = 0
+        while j < n and t[j] in _DEC_DIGITS:
+            j += 1
+            exp_digits += 1
+        if exp_digits == 0 or j != n:
+            return float("nan")
+    elif j != n:
+        return float("nan")
+    return float(t)
+
+
+def _js_touint16(num):
+    """ToUint16(num) for a ToNumber float (F825).
+
+    String.fromCharCode applies ToUint16 to its ToNumber'd argument
+    (node v24.20.0): NaN and infinities -> 0, otherwise truncate
+    toward zero mod 65536. Never evals.
+    """
+    if math.isnan(num) or math.isinf(num):
+        return 0
+    return math.trunc(num) % 65536
+
+
+def _js_f825_coerce_number(props, depth, state):
+    """ToNumber(ToPrimitive(obj, hint "number")) for F825.
+
+    Extends F794's [Symbol.toPrimitive] path with
+    OrdinaryToPrimitive: for hint "number" the engine tries
+    `valueOf` first, then `toString` (node v24.20.0 -- a
+    deterministic order, unlike the hint-dependent F697 string
+    coercion). Each method must be an own function whose body is a
+    bare `return <prim>;` (declared arity is irrelevant -- the engine
+    invokes both with zero arguments regardless):
+    - numeric / boolean literal -> ToNumber directly (bool -> 1/0);
+    - string literal -> ToNumber via the F824 string grammar;
+    - object / array literal body -> the call returns a
+      non-primitive, so the engine tries the next method;
+    - anything else -> fail closed (never mis-decoded).
+    An own [Symbol.toPrimitive] (callable or not) keeps F794's
+    semantics: F794 decodes literal bodies, and anything else fails
+    closed here -- the engine would invoke it (throwing, or with no
+    fall-through to valueOf), never reaching valueOf. Non-callable
+    own valueOf / toString values are skipped, like the engine
+    skips them. Returns the ToNumber float. Never evals.
+    """
+    if ("symbol", "toPrimitive") in props:
+        raise _JSExprFail("F825 toPrimitive present")
+    for mname in ("valueOf", "toString"):
+        mv = props.get(mname)
+        if not isinstance(mv, _JSF67xBody):
+            continue
+        body = mv.add_text.strip()
+        if body.startswith("{") or body.startswith("["):
+            continue  # non-primitive return -> engine tries next
+        prim = _js_f794_parse_primitive_literal(body)
+        if prim is not None:
+            kind, pval = prim
+            return float(1 if pval else 0) if kind == "bool" else float(pval)
+        if len(body) >= 2 and (body[0] == "'" or body[0] == '"') \
+                and body[-1] == body[0]:
+            sval, kend = _js_parse_string(body, 0)
+            if _js_skip_ws(body, kend) != len(body):
+                raise _JSExprFail("F825 string body trailing")
+            return _js_tonumber_str(sval)
+        raise _JSExprFail("F825 %s body not modelable" % mname)
+    raise _JSExprFail("F825 no numeric coercion method")
+
+
 def _js_parse_f793_iter_helper_iife(text, i, depth, state):
     """Parse `(function(){return [...SRC.map(f)|.drop(n)].join('SEP');})()` (F793).
 
@@ -31579,9 +31714,13 @@ def _js_parse_f793_iter_helper_iife(text, i, depth, state):
     `.map(f)` applies the callback to each item in order (the
     callback is `function(P){return ADD;}` or the arrow twins,
     ADD a string-only additive of literals and P); `.drop(n)`
-    drops the first n items (n a non-negative integer literal --
-    the engine throws RangeError on negatives, so they fail
-    closed; non-integers fail closed as unmodeled); the spread
+    drops the first n items where n is ToIntegerOrInfinity(
+    ToNumber(arg)) (F824): a non-negative decimal literal in integer
+    or fraction form (floats truncated toward zero; exponents are
+    not modeled -- use a string literal) or a string literal
+    (full ToNumber string grammar); the engine throws RangeError
+    when !(n >= 0) (negatives and NaN), which fails closed; the
+    spread
     collects the helper's iterator into an array joined by the
     string-literal SEP.
 
@@ -31642,19 +31781,49 @@ def _js_parse_f793_iter_helper_iife(text, i, depth, state):
             k = _js_skip_ws(stmts, k)
             k = _js_expect(stmts, k, "(")
             k = _js_skip_ws(stmts, k)
-            d0 = k
-            while k < n and stmts[k] in "0123456789":
-                k += 1
-            if k == d0:
-                raise _JSExprFail("F793 drop not an integer")
-            if k - d0 > _JS_EXPR_MAX_INT_DIGITS:
-                raise _JSExprFail("F793 drop too big")
-            cnt = int(stmts[d0:k])
+            # F824: the engine applies ToNumber then
+            # ToIntegerOrInfinity to the argument (node v24.20.0).
+            # Modeled: a non-negative decimal literal in integer or
+            # fraction form (floats truncated toward zero;
+            # exponents are not modeled -- use a string literal) or
+            # a string literal (full ToNumber string grammar via
+            # _js_tonumber_str). The engine throws RangeError when
+            # !(n >= 0) -- negatives AND NaN -- so those fail
+            # closed, agreeing with the engine (no credential can
+            # leak from a throw). A `-` cannot lex (fail closed);
+            # anything else fails closed.
+            if k < n and (stmts[k] == "'" or stmts[k] == '"'):
+                sval, k = _js_parse_string(stmts, k)
+                num = _js_tonumber_str(sval)
+            else:
+                d0 = k
+                while k < n and stmts[k] in "0123456789":
+                    k += 1
+                int_len = k - d0
+                frac_len = 0
+                if (k < n and stmts[k] == "."
+                        and (int_len > 0
+                             or (k + 1 < n
+                                 and stmts[k + 1] in "0123456789"))):
+                    # Float twin (`1.5`, `1.`, `.5`). A `.` that is
+                    # not float-shaped (e.g. `1.toString`) still
+                    # fails closed at the `)` expect below.
+                    k += 1
+                    f0 = k
+                    while k < n and stmts[k] in "0123456789":
+                        k += 1
+                    frac_len = k - f0
+                if int_len == 0 and frac_len == 0:
+                    raise _JSExprFail("F793 drop not a number")
+                tok = stmts[d0:k]
+                if len(tok) > _JS_EXPR_MAX_INT_DIGITS:
+                    raise _JSExprFail("F793 drop too big")
+                num = float(tok)  # no sign can lex: num >= 0
+            if math.isnan(num) or not (num >= 0):
+                raise _JSExprFail("F824 drop RangeError")
+            cnt = len(items) if math.isinf(num) else math.trunc(num)
             k = _js_skip_ws(stmts, k)
             k = _js_expect(stmts, k, ")")
-            # A negative literal cannot lex here (the `-` fails
-            # the digit scan) -- the engine's RangeError and the
-            # decoder's fail-closed agree.
             items = items[cnt:]
             state["parts"] += 1  # F452: the drop is
             # obfuscation-shaped
@@ -57889,7 +58058,15 @@ def _js_parse_f697_toprimitive_iife(text, i, depth, state):
                     raise _JSExprFail("F794 fromCharCode of unbound")
                 q = _js_skip_ws(text, q)
                 q = _js_expect(text, q, ")")
-                cp = _js_f794_toprimitive_number(props, depth, state)
+                try:
+                    cp = _js_f794_toprimitive_number(props, depth, state)
+                except _JSExprFail:
+                    # F825: no (decodable) own @@toPrimitive -- fall
+                    # back to OrdinaryToPrimitive (valueOf, then
+                    # toString; hint "number"), then ToUint16 for
+                    # fromCharCode.
+                    cp = _js_touint16(
+                        _js_f825_coerce_number(props, depth, state))
                 ch = _safe_chr(cp)
                 if ch is None:
                     raise _JSExprFail("F794 bad codepoint")
