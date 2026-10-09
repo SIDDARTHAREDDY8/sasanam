@@ -53343,6 +53343,491 @@ def _js_parse_f645_default_param_arrow_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f795_simple_params(text, i, state):
+    """Parse `(IDENT (= 'LIT')? (, IDENT (= 'LIT')?)*)` at text[i] (F795).
+
+    Simple parameter lists only: bare identifiers with optional
+    string-literal defaults. Returns (names, defaults,
+    next_index); `names` is the ordered parameter list and
+    `defaults` maps defaulted names to their literal. Rest params
+    (`...x`), patterns (`{a}`/`[a]`), duplicate names (an early
+    SyntaxError for non-simple lists; conservative fail-closed for
+    simple sloppy-mode duplicates, documented), an `arguments`
+    param, and non-literal defaults fail closed. Each param charges
+    the parts budget (F452/F605 discipline). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, i, "(")
+    j = _js_skip_ws(text, j)
+    names = []
+    defaults = {}
+    seen = set()
+    if j < n and text[j] == ")":
+        raise _JSExprFail("F795 empty param list")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in _JS_IDENT_START:
+            raise _JSExprFail("F795 bad param head")
+        name, j = _js_parse_ident(text, j)
+        if name == "arguments":
+            raise _JSExprFail("F795 param named arguments")
+        if name in seen:
+            raise _JSExprFail("F795 duplicate param")
+        seen.add(name)
+        names.append(name)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "=":
+            j = _js_skip_ws(text, j + 1)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F795 default not literal")
+            lit, j = _js_parse_string(text, j)
+            defaults[name] = lit
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            k = _js_skip_ws(text, j + 1)
+            if k < n and text[k] == ")":
+                raise _JSExprFail("F795 trailing comma")
+            j = j + 1
+            continue
+        if j < n and text[j] == ")":
+            return names, defaults, j + 1
+        raise _JSExprFail("F795 bad param list")
+
+
+def _js_parse_f795_additive_operands(text, i):
+    """Parse `LIT|IDENT (+ LIT|IDENT)*` at text[i] (F795).
+
+    Returns (operands, next_index); each operand is ('lit', value)
+    or ('ident', name). The caller binds idents against the
+    invocation args. `this`, member reads, calls, and template
+    forms fail closed (the ident parse accepts bare names only;
+    anything else raises). Never evals.
+    """
+    n = len(text)
+    operands = []
+    j = _js_skip_ws(text, i)
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F795 truncated body")
+        c = text[j]
+        if c in "'\"":
+            lit, j = _js_parse_string(text, j)
+            operands.append(("lit", lit))
+        elif c in _JS_IDENT_START:
+            name, j = _js_parse_ident(text, j)
+            operands.append(("ident", name))
+        else:
+            raise _JSExprFail("F795 bad body operand")
+        k = _js_skip_ws(text, j)
+        if k < n and text[k] == "+":
+            j = k + 1
+            continue
+        return operands, j
+
+
+def _js_parse_f795_literal_args(text, j, state):
+    """Parse `('LIT' (, 'LIT')*)` at text[j] (F795) -- the IIFE
+    invocation with string-literal-only arguments. Returns (args,
+    next_index). At least one arg is required (the zero-arg form is
+    F522/F645's domain); `undefined`/non-literal args fail closed
+    (F645 covers the all-`undefined` form). Each arg charges the
+    parts budget. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    args = []
+    total = 0
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F795 arg not a string literal")
+        lit, j = _js_parse_string(text, j)
+        args.append(lit)
+        total += len(lit)
+        if total > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F795 args too long")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = j + 1
+            continue
+        if j < n and text[j] == ")":
+            return args, j + 1
+        raise _JSExprFail("F795 bad arg list")
+
+
+def _js_f795_apply(operands, names, defaults, args, state):
+    """Bind F795 params positionally to args and evaluate the
+    additive operands (F795).
+
+    Args bind positionally; a supplied arg always wins over the
+    param's default (node-exact). A missing arg falls back to the
+    param's default when one is present (node-exact -- the engine
+    substitutes the default, not `undefined`); a missing arg for a
+    param WITHOUT a default fails closed (the F582/F524 discipline:
+    node coerces it to `undefined`, which the decoder never guesses).
+    Extra args are ignored engine-exactly (F582). Unbound idents
+    fail closed (the engine throws ReferenceError). Returns the
+    concatenated string. Never evals.
+    """
+    bindings = dict(defaults)
+    for idx, name in enumerate(names):
+        if idx < len(args):
+            bindings[name] = args[idx]
+        elif name not in defaults:
+            raise _JSExprFail("F795 fewer args than params")
+    parts = []
+    total = 0
+    for kind, val in operands:
+        if kind == "lit":
+            parts.append(val)
+        else:
+            if val not in bindings:
+                raise _JSExprFail("F795 unbound ident")
+            parts.append(bindings[val])
+        total += len(parts[-1])
+        if total > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F795 result too long")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+    return "".join(parts)
+
+
+def _js_parse_f795_param_iife(text, i, depth, state):
+    """Parse `(function(NAME?)(PARAMS){return ADD;})(ARGS)` at text[i] (F795).
+
+    Node-exact desugar (v24.20.0): the IIFE binds ARGS to PARAMS
+    positionally (extra args ignored, F582) and returns the additive
+    body with params substituted. A defaulted param with no
+    corresponding arg takes its default (node-exact; F645); a
+    supplied arg always wins over the default (node-verified). A
+    missing arg for a param WITHOUT a default fails closed
+    (F582/F524 -- node coerces it to `undefined`, which the decoder
+    never guesses). The optional function name is ignored (F522
+    precedent).
+
+    Disjoint from F645 (which requires the `()`/`(undefined, ...)`
+    invocation -- this requires >=1 string-literal arg, which F645
+    rejects; F645's shapes fail this parser's arg grammar closed),
+    from F522 (which requires the empty param list), and from
+    F509/F516/F581 (which require zero/simple params or
+    `arguments` forms). Tried after F645: F645 returns None on
+    every shape this accepts. None falls through like F645.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - named or anonymous both OK; `async`/`function*` heads never
+      reach here (the `function` keyword check excludes them);
+    - rest/pattern/duplicate/`arguments` params, non-literal
+      defaults, non-additive bodies, extra statements, a directive
+      prologue, non-literal invocation args, trailing commas in
+      params/args (node allows them), parenthesized operands
+      (`(a)`/`await('x')` -- node-exact but unmodeled), the
+      unparenthesized single-param arrow twin (`(a=>a)('x')` --
+      filed as F829) (the F795 production rejects all of these;
+      `.call`/`.apply` twins are decoded node-exactly by the
+      pre-existing F614/F636 routes, so they are not a residual of
+      this production -- documented for clarity).
+    Budget: parts/ops are snapshotted on entry and restored on miss
+    (F452 / wave-383 lesson); on success the IIFE wrapper charges
+    one op. Returns (value, next_index), or None when text[i] is
+    not this shape. Never evals.
+    """
+    n = len(text)
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] == "*":
+            return None  # generator -- not our shape
+        j = _js_skip_ws(text, k2)
+        if j < n and text[j] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored).
+            _, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+        names, defaults, j = _js_parse_f795_simple_params(text, j, state)
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        sj = _js_skip_ws(text, j)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F795 no return")
+        operands, sj = _js_parse_f795_additive_operands(
+            text, _js_skip_ws(text, m))
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ";":
+            sj = _js_skip_ws(text, sj + 1)
+        sj = _js_expect(text, sj, "}")
+        j = _js_skip_ws(text, sj)
+        j = _js_expect(text, j, ")")
+        args, j = _js_parse_f795_literal_args(
+            text, _js_skip_ws(text, j), state)
+        result = _js_f795_apply(operands, names, defaults, args, state)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, j
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
+
+
+def _js_parse_f795_param_arrow_iife(text, i, depth, state):
+    """Parse `((PARAMS)=>ADD)(ARGS)` at text[i] (F795).
+
+    The arrow twin of the parameterized IIFE: the same positional
+    binding as the function form (node-exact, v24.20.0) with an
+    expression body instead of `{return ...;}`. Block bodies
+    (`=>{...}`) fail closed.
+
+    Disjoint from F608 (which requires >=1 Set/Map spread arg --
+    this requires pure string-literal args, which F608 rejects as
+    the documented "pure-literal fixed-param calls" residual),
+    from F577 (which requires exactly one `...rest` param -- this
+    fails closed on `...`), and from F753 (array-literal spreads).
+    Tried after F608: F608 returns None on every shape this
+    accepts. None falls through to F753 like F608.
+
+    Bounds: as the function form. Budget snapshot/restore on miss
+    (F452 / wave-383 lesson). Returns (value, next_index), or None
+    when text[i] is not this shape. Never evals.
+    """
+    n = len(text)
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if k >= n or text[k] != "(":
+            return None
+        names, defaults, k = _js_parse_f795_simple_params(text, k, state)
+        k = _js_skip_ws(text, k)
+        if not text.startswith("=>", k):
+            raise _JSExprFail("F795 arrow without =>")
+        operands, k = _js_parse_f795_additive_operands(
+            text, _js_skip_ws(text, k + 2))
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ")")
+        args, k = _js_parse_f795_literal_args(
+            text, _js_skip_ws(text, k), state)
+        result = _js_f795_apply(operands, names, defaults, args, state)
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, k
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
+
+
+def _js_parse_f796_async_iife(text, i, depth, state):
+    """Parse `(async function(NAME?)?(){DECL X=await 'LIT';return ADD;})()`
+    (F796 shape A) and
+    `(async function(NAME?)?(){DECL O={async M(){return 'LIT';}};
+    return await O.M()+ADD;})()` (F796 shape B) at text[i].
+
+    Node-exact desugar (v24.20.0): `await` on a string literal is
+    the literal itself, and `await` on the modeled zero-arg async
+    method call is the method's return literal -- the decoder
+    cannot await, so it takes the deterministic fulfillment (F631
+    precedent). The async IIFE evaluates to a Promise of the
+    fulfillment; the decoder models the fulfillment string (the
+    credential is recoverable via .then/await, so the fulfillment
+    is the security-relevant value).
+
+    Disjoint from every earlier hook: no earlier route accepts the
+    `async` head (all fail closed on it -- F522 documents
+    async/generator IIFEs as unmodeled). Tried after the F795
+    function hook (which rejects the `async` head at the
+    `function`-keyword check). None falls through like F645.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - the optional function name is ignored (F522 precedent);
+      parameterized async functions are not modeled;
+    - shape A: exactly one `var|let|const X = await 'LIT';`
+      statement; the await operand must be a string literal;
+    - shape B: exactly one `var|let|const O = {async M(){
+      return 'LIT';}};` statement (zero-arg method, literal
+      return); the return must start `await O.M()` (dot form,
+      zero args) with a literal-only `+` tail;
+    - extra statements, a directive prologue, non-`()` invocation,
+      `.call`/`.apply` twins, async arrows (documented residuals).
+    Budget: parts/ops snapshotted on entry, restored on miss
+    (F452 / wave-383 lesson); on success the IIFE wrapper charges
+    one op. Returns (value, next_index), or None when text[i] is
+    not this shape. Never evals.
+    """
+    n = len(text)
+    saved_parts = state["parts"]
+    saved_ops = state["ops"]
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        ak = _js_match_kw(text, k, "async")
+        if ak is None:
+            return None
+        k = _js_skip_ws(text, ak)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx -- not our shape
+        if k2 < n and text[k2] == "*":
+            return None  # async generator -- not our shape
+        j = _js_skip_ws(text, k2)
+        if j < n and text[j] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored).
+            _, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")  # zero params only
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "{")
+        sj = _js_skip_ws(text, j)
+        dkw, sj = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            raise _JSExprFail("F796 decl not var/let/const")
+        sj = _js_skip_ws(text, sj)
+        bname, sj = _js_parse_ident(text, sj)
+        if bname == "arguments":
+            raise _JSExprFail("F796 binding named arguments")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "=")
+        sj = _js_skip_ws(text, sj)
+        # Shape A: `await 'LIT'`.
+        am = _js_match_kw(text, sj, "await")
+        if am is not None:
+            aq = _js_skip_ws(text, am)
+            if aq >= n or text[aq] not in "'\"":
+                raise _JSExprFail("F796 await operand not a literal")
+            alit, aq = _js_parse_string(text, aq)
+            aq = _js_skip_ws(text, aq)
+            aq = _js_expect(text, aq, ";")
+            rq = _js_skip_ws(text, aq)
+            rm = _js_match_kw(text, rq, "return")
+            if rm is None:
+                raise _JSExprFail("F796 shape A no return")
+            rval, rq = _js_parse_f645_bound_additive(
+                text, _js_skip_ws(text, rm), depth, state,
+                {bname: alit})
+            rq = _js_skip_ws(text, rq)
+            if rq < n and text[rq] == ";":
+                rq = _js_skip_ws(text, rq + 1)
+            rq = _js_expect(text, rq, "}")
+            j = _js_skip_ws(text, rq)
+            j = _js_expect(text, j, ")")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, "(")
+            j = _js_skip_ws(text, j)
+            j = _js_expect(text, j, ")")
+            state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+            return rval, j
+        # Shape B: `{async M(){return 'LIT';}}`.
+        if sj >= n or text[sj] != "{":
+            raise _JSExprFail("F796 decl not object literal")
+        oq = _js_skip_ws(text, sj + 1)
+        om = _js_match_kw(text, oq, "async")
+        if om is None:
+            raise _JSExprFail("F796 method not async")
+        oq = _js_skip_ws(text, om)
+        mname, oq = _js_parse_ident(text, oq)
+        oq = _js_skip_ws(text, oq)
+        oq = _js_expect(text, oq, "(")
+        oq = _js_skip_ws(text, oq)
+        oq = _js_expect(text, oq, ")")
+        oq = _js_skip_ws(text, oq)
+        oq = _js_expect(text, oq, "{")
+        oq = _js_skip_ws(text, oq)
+        orm = _js_match_kw(text, oq, "return")
+        if orm is None:
+            raise _JSExprFail("F796 method no return")
+        orq = _js_skip_ws(text, orm)
+        if orq >= n or text[orq] not in "'\"":
+            raise _JSExprFail("F796 method return not a literal")
+        mlit, orq = _js_parse_string(text, orq)
+        orq = _js_skip_ws(text, orq)
+        if orq < n and text[orq] == ";":
+            orq = _js_skip_ws(text, orq + 1)
+        orq = _js_expect(text, orq, "}")
+        orq = _js_skip_ws(text, orq)
+        orq = _js_expect(text, orq, "}")
+        orq = _js_skip_ws(text, orq)
+        orq = _js_expect(text, orq, ";")
+        rq = _js_skip_ws(text, orq)
+        rm = _js_match_kw(text, rq, "return")
+        if rm is None:
+            raise _JSExprFail("F796 shape B no return")
+        rq = _js_skip_ws(text, rm)
+        awm = _js_match_kw(text, rq, "await")
+        if awm is None:
+            raise _JSExprFail("F796 shape B return not await")
+        rq = _js_skip_ws(text, awm)
+        oname, rq = _js_parse_ident(text, rq)
+        if oname != bname:
+            raise _JSExprFail("F796 await on other binding")
+        rq = _js_skip_ws(text, rq)
+        rq = _js_expect(text, rq, ".")
+        rq = _js_skip_ws(text, rq)
+        cname, rq = _js_parse_ident(text, rq)
+        if cname != mname:
+            raise _JSExprFail("F796 await on other method")
+        rq = _js_skip_ws(text, rq)
+        rq = _js_expect(text, rq, "(")
+        rq = _js_skip_ws(text, rq)
+        rq = _js_expect(text, rq, ")")
+        # Literal-only `+` tail.
+        rval = mlit
+        while True:
+            tq = _js_skip_ws(text, rq)
+            if tq >= n or text[tq] != "+":
+                break
+            tq = _js_skip_ws(text, tq + 1)
+            if tq >= n or text[tq] not in "'\"":
+                raise _JSExprFail("F796 tail not a literal")
+            tlit, tq = _js_parse_string(text, tq)
+            if len(rval) + len(tlit) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F796 result too long")
+            rval = rval + tlit
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            rq = tq
+        rq = _js_skip_ws(text, rq)
+        if rq < n and text[rq] == ";":
+            rq = _js_skip_ws(text, rq + 1)
+        rq = _js_expect(text, rq, "}")
+        j = _js_skip_ws(text, rq)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return rval, j
+    except _JSExprFail:
+        state["parts"] = saved_parts
+        state["ops"] = saved_ops
+        return None
+
+
 def _js_parse_f621_assign_mutate_iife(text, i, depth, state):
     """Parse `(function(){DECL t=<empty>;ASSIGN+;return READ;})()` (F621).
 
@@ -69872,6 +70357,32 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f645 is not None:
             val, i = _f645
             return _js_parse_postfix(text, i, val, depth, state)
+        # F795: (function(NAME?)(PARAMS){return ADD;})(ARGS) --
+        # parameterized IIFE with string-literal call args. Tried
+        # after F645: F645 requires the `()`/`(undefined, ...)`
+        # invocation (it fails closed on literal args), and this
+        # requires >=1 literal arg (it fails closed on F645's
+        # invocations), so the grammars are disjoint and no
+        # previously-decoded input changes behavior. None falls
+        # through like F645.
+        _f795 = _js_parse_f795_param_iife(text, i, depth, state)
+        if _f795 is not None:
+            val, i = _f795
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F796: (async function(NAME?)?(){DECL X=await 'LIT';
+        #   return ADD;})() and the async-method twin
+        #   (async function(NAME?)?(){DECL O={async M(){
+        #   return 'LIT';}};return await O.M()+ADD;})() --
+        #   async-function value flows via the deterministic
+        #   fulfillment (F631 precedent). Tried after F795: F795
+        #   rejects the `async` head at the `function`-keyword
+        #   check, and no earlier hook accepts `async`, so no
+        #   previously-decoded input changes behavior. None falls
+        #   through like F795.
+        _f796 = _js_parse_f796_async_iife(text, i, depth, state)
+        if _f796 is not None:
+            val, i = _f796
+            return _js_parse_postfix(text, i, val, depth, state)
         # F649: (function(){DECL o=structuredClone({LIT});
         #   return o.M(+o.M)*;})() -- member reads through a
         #   var-bound structuredClone intermediate. Tried after
@@ -70906,6 +71417,20 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
                                                        state)
         if _f608 is not None:
             val, i = _f608
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F795 (arrow twin): ((PARAMS)=>ADD)(ARGS) -- parameterized
+        # arrow IIFE with pure string-literal call args. Tried after
+        # F608: F608 requires >=1 Set/Map spread arg (it fails
+        # closed on pure-literal args -- the documented
+        # "pure-literal fixed-param calls" residual), and this
+        # requires pure-literal args (it fails closed on spreads),
+        # so the grammars are disjoint and no previously-decoded
+        # input changes behavior. Disjoint from F577 (rest param).
+        # None falls through to F753 like F608.
+        _f795a = _js_parse_f795_param_arrow_iife(text, i, depth,
+                                                 state)
+        if _f795a is not None:
+            val, i = _f795a
             return _js_parse_postfix(text, i, val, depth, state)
         # F753 (arrow twin): ((P1..Pn)=>ADD)(...[LITS], ...) --
         # arrow IIFE with array-literal spread call args. Tried
