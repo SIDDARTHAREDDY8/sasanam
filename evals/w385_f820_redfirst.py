@@ -2,6 +2,12 @@
 """Red-first for F820: Array copyWithin/reverse reads.
 
 the decoder has no copyWithin/reverse production: both resolve node-exactly while the decoder produces zero variants (splice is F767, OPEN).
+
+CORRECTION (2026-10-09, wave-386 lane 13): the s2 shape as filed
+(`var a=['xoxb-0123','456789abcdef'];a.reverse()`) does NOT recover
+the credential at runtime -- node v24.20.0 yields
+'456789abcdefxoxb-0123'. Corrected to the credential-recovering
+order `var a=['456789abcdef','xoxb-0123']`.
 Filed 2026-10-09 03:25 UTC wave-385 lane 13 (attack round 53).
 Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
@@ -23,7 +29,7 @@ SHAPES = [
      "(function(){var a=['%s','z','%s'];a.copyWithin(1,0,1);return a[0]+a[2];})()" % (_A, _B),
      True),
     ("s2",
-     "(function(){var a=['%s','%s'];a.reverse();return a.join('');})()" % (_A, _B),
+     "(function(){var a=['%s','%s'];a.reverse();return a.join('');})()" % (_B, _A),
      True),
 ]
 

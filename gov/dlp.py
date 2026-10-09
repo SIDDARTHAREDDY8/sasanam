@@ -4387,6 +4387,361 @@ def _js_parse_f735f736_nested_fn_iife(text, i, depth, state):
         return None
 
 
+def _js_f821_parse_arrow(text, j, state):
+    """Parse `(p1='LIT',...)?=>` arrow header at text[j] (F821).
+
+    Returns (params, body_kind, operands, next_index): params is
+    the [(pname, default_or_None)] list (defaults are string
+    literals only); body_kind is "block" (`{return ADD;}`) or
+    "concise" (bare additive); operands is the [(kind, value)]
+    list for the body additive (kind "lit" or "name"). Never
+    evals; raises _JSExprFail on any non-conforming shape.
+    """
+    n = len(text)
+    q = _js_skip_ws(text, j)
+    q = _js_expect(text, q, "(")
+    params = []
+    q = _js_skip_ws(text, q)
+    if not (q < n and text[q] == ")"):
+        while True:
+            q = _js_skip_ws(text, q)
+            pname, q = _js_parse_ident(text, q)
+            if pname in ("arguments", "this"):
+                raise _JSExprFail("F821 param named arguments/this")
+            default = None
+            q = _js_skip_ws(text, q)
+            if (q < n and text[q] == "="
+                    and not text.startswith(("==", "=>"), q)):
+                q = _js_skip_ws(text, q + 1)
+                if q >= n or text[q] not in "'\"":
+                    raise _JSExprFail("F821 default not literal")
+                default, q = _js_parse_string(text, q)
+                state["parts"] += 1  # the default is obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+            if any(p == pname for p, _ in params):
+                raise _JSExprFail("F821 dup param")
+            params.append((pname, default))
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ",":
+                q = q + 1
+                q = _js_skip_ws(text, q)
+                if q < n and text[q] == ")":
+                    break  # trailing comma -- engine-legal
+                continue
+            break
+    q = _js_expect(text, q, ")")
+    q = _js_skip_ws(text, q)
+    if not text.startswith("=>", q):
+        raise _JSExprFail("F821 not an arrow")
+    q = _js_skip_ws(text, q + 2)
+    # Body: `{return ADD;}` or a concise additive.
+    if q < n and text[q] == "{":
+        inner_start, inner_end, q = _js_span_braced(text, q)
+        rk = _js_match_kw(text, _js_skip_ws(text, inner_start), "return")
+        if rk is None:
+            raise _JSExprFail("F821 block body not return")
+        bq = _js_skip_ws(text, rk)
+        operands, bq = _js_f821_parse_additive(text, bq, state)
+        bq = _js_skip_ws(text, bq)
+        bq = _js_expect(text, bq, ";")
+        if _js_skip_ws(text, bq) != inner_end:
+            raise _JSExprFail("F821 block body trailing")
+        body_kind = "block"
+    else:
+        operands, q = _js_f821_parse_additive(text, q, state)
+        body_kind = "concise"
+    return params, body_kind, operands, q
+
+
+def _js_f821_parse_additive(text, i, state):
+    """Parse a `+`-joined additive of string literals and idents
+    at text[i] (F821 body/terminal operand grammar).
+
+    Returns ([(kind, value)], next_index) with kind "lit" or
+    "name". At least one operand is required. `this` and
+    `arguments` fail closed; anything else that is not a string
+    literal or ident fails closed. Never evals.
+    """
+    n = len(text)
+    operands = []
+    q = _js_skip_ws(text, i)
+    while True:
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] in "'\"":
+            lit, q = _js_parse_string(text, q)
+            operands.append(("lit", lit))
+        else:
+            nm, q = _js_parse_ident(text, q)
+            if nm in ("this", "arguments"):
+                raise _JSExprFail("F821 this/arguments in additive")
+            operands.append(("name", nm))
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == "+":
+            # `+` followed by `+`/`=` is not our additive.
+            if text.startswith(("+", "="), q + 1):
+                raise _JSExprFail("F821 bad additive tail")
+            q = q + 1
+            continue
+        break
+    if not operands:
+        raise _JSExprFail("F821 empty additive")
+    return operands, q
+
+
+def _js_f821_eval_operands(operands, env):
+    """Evaluate F821 body operands against *env* (param bindings
+    shadow IIFE string bindings). Returns the string value;
+    raises _JSExprFail when an operand is unbound (engine
+    ReferenceError) or not a string (engine would not produce a
+    string here -- fail closed, never mis-decode).
+    """
+    out = []
+    for kind, val in operands:
+        if kind == "lit":
+            out.append(val)
+        else:
+            if val not in env:
+                raise _JSExprFail("F821 unbound ident")
+            if type(env[val]) is not str:
+                raise _JSExprFail("F821 non-string operand")
+            out.append(env[val])
+    return "".join(out)
+
+
+def _js_parse_f821_arrow_default_iife(text, i, depth, state):
+    """Parse `(function(){[STMT;]* return TERM;})()` with a
+    var-bound arrow-with-defaults (F821).
+
+    F821 (LOW, attack round 53): arrow function default parameters
+    -- the decoder models function-declaration defaults (F736)
+    but `(a='f1')=>a` has no production: it resolves
+    node-exactly while the decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): statements are exactly
+    - `var|let|const X='LIT'[,'LIT'...];` -- string bindings
+      (duplicate `var` rebinds last-wins, duplicate
+      `let`/`const` fails closed -- engine-exact, F735/F736
+      discipline);
+    - `var|let|const F=(p1='LIT',...)?=>BODY;` -- exactly one
+      var-bound arrow (params `p` or `p='LIT'`, comma-separated,
+      optional trailing comma; duplicate param names fail
+      closed); BODY is `{return ADD;}` or a concise additive
+      over string literals and bound idents.
+    A call `F('LIT'*)` evaluates the body with the call-time
+    environment: the IIFE's string bindings shadowed by the
+    parameter bindings (explicit args bind positionally; an
+    explicit `undefined` arg takes the default, engine-exact;
+    missing args take defaults). The terminal is `return TERM;`
+    with TERM a `+`-joined additive of string literals, bound
+    string idents, and arrow calls.
+    Disjoint from F735/F736: its decl-RHS branch fails closed on
+    a `(` head (only string literals and `function` are
+    accepted), and its documented bounds reject arrows; no
+    earlier route decodes any shape this accepts (red-first
+    verified: 2 BREAK each on the open tree). Tried after
+    F735/F736.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    - params without defaults called with missing args (engine
+      `undefined`), non-literal defaults or call args, rest /
+      destructuring params, duplicate param names, a param named
+      `arguments`/`this`;
+    - arrow bodies that are not exactly `return ADD;` or a
+      concise additive, bodies reading unbound idents (engine
+      ReferenceError), `this` / `arguments` in bodies, async
+      arrows, a second arrow binding;
+    - named function expressions, generator functions, `new`,
+      method calls, extra call args;
+    - string binding or arrow redeclaration (a string binding may
+      not shadow the arrow name and vice versa);
+    - forward references (statements process in order);
+    - non-`;`-terminated statements, trailing statements after
+      the return.
+    Returns (value, next_index), or None when text[i] is not
+    this shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_f655_head(text, i)
+        if brace is None:
+            raise _JSExprFail("F821 not our head")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        strings = {}
+        arrow = None  # (name, params, body_kind, operands)
+        sj = _js_skip_ws(text, inner_start)
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= inner_end:
+                raise _JSExprFail("F821 body without return")
+            rk = _js_match_kw(text, sj, "return")
+            if rk is not None:
+                break
+            dk, dnext = _js_match_decl_kw(text, sj)
+            if dk is None:
+                raise _JSExprFail("F821 bad statement")
+            q = _js_skip_ws(text, dnext)
+            vname, q = _js_parse_ident(text, q)
+            if vname == "arguments":
+                raise _JSExprFail("F821 binding named arguments")
+            q = _js_skip_ws(text, q)
+            if not (q < n and text[q] == "="
+                    and not text.startswith(("==", "=>"), q)):
+                raise _JSExprFail("F821 bad decl")
+            q = _js_skip_ws(text, q + 1)
+            if q < n and text[q] in "'\"":
+                # String binding(s): `X='LIT'(,Y='LIT')*;`
+                names = [vname]
+                lit, q = _js_parse_string(text, q)
+                lits = [lit]
+                while True:
+                    qq = _js_skip_ws(text, q)
+                    if qq >= n or text[qq] != ",":
+                        break
+                    qq = _js_skip_ws(text, qq + 1)
+                    nm2, qq = _js_parse_ident(text, qq)
+                    if nm2 == "arguments":
+                        raise _JSExprFail("F821 binding named arguments")
+                    qq = _js_skip_ws(text, qq)
+                    if not (qq < n and text[qq] == "="
+                            and not text.startswith(("==", "=>"), qq)):
+                        raise _JSExprFail("F821 bad decl")
+                    qq = _js_skip_ws(text, qq + 1)
+                    if qq >= n or text[qq] not in "'\"":
+                        raise _JSExprFail("F821 decl RHS not literal")
+                    lit2, qq = _js_parse_string(text, qq)
+                    names.append(nm2)
+                    lits.append(lit2)
+                    q = qq
+                q = _js_expect(text, q, ";")
+                for nm2, lit2 in zip(names, lits):
+                    if arrow is not None and nm2 == arrow[0]:
+                        raise _JSExprFail("F821 string shadows arrow")
+                    if nm2 in strings and dk != "var":
+                        raise _JSExprFail("F821 let/const rebind")
+                    strings[nm2] = lit2  # dup var: last wins
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+            elif q < n and text[q] == "(":
+                # Arrow binding: `F=(params)=>BODY;`
+                if arrow is not None:
+                    raise _JSExprFail("F821 second arrow")
+                if vname in strings:
+                    raise _JSExprFail("F821 arrow shadows string")
+                params, _bkind, operands, q = _js_f821_parse_arrow(
+                    text, q, state)
+                q = _js_expect(text, _js_skip_ws(text, q), ";")
+                arrow = (vname, params, _bkind, operands)
+                state["ops"] += 1  # the arrow binding is shaped
+            else:
+                raise _JSExprFail("F821 decl RHS not modeled")
+            sj = q
+        if arrow is None:
+            raise _JSExprFail("F821 no arrow binding")
+        aname, params, _bkind, operands = arrow
+        # Terminal: `return TERM;` -- additive of literals, bound
+        # string idents, and arrow calls.
+        sj = _js_skip_ws(text, rk)
+        total = ""
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] in "'\"":
+                lit, sj = _js_parse_string(text, sj)
+                total += lit
+            else:
+                nm, q2 = _js_parse_ident(text, sj)
+                if nm in ("this", "arguments"):
+                    raise _JSExprFail("F821 this/arguments in term")
+                q3 = _js_skip_ws(text, q2)
+                if nm == aname and q3 < n and text[q3] == "(":
+                    # Arrow call `F('LIT'*,)`.
+                    q3 = _js_skip_ws(text, q3 + 1)
+                    call_args = []
+                    if not (q3 < n and text[q3] == ")"):
+                        while True:
+                            q3 = _js_skip_ws(text, q3)
+                            if q3 < n and text[q3] in "'\"":
+                                aval, q3 = _js_parse_string(text, q3)
+                                call_args.append(aval)
+                            else:
+                                uid, q3 = _js_parse_ident(text, q3)
+                                _undef_shadowed = (
+                                    "undefined" in strings
+                                    or (arrow is not None
+                                        and arrow[0] == "undefined"))
+                                if uid != "undefined" or _undef_shadowed:
+                                    # A sloppy-mode `var undefined='x'`
+                                    # (or an arrow named `undefined`)
+                                    # shadows the undefined value: the
+                                    # ident is then a read, not the
+                                    # undefined value -- fail closed
+                                    # rather than mis-decode (H1, spec
+                                    # review 2026-10-09).
+                                    raise _JSExprFail(
+                                        "F821 call arg not literal")
+                                call_args.append(None)  # undefined
+                            q3 = _js_skip_ws(text, q3)
+                            if q3 < n and text[q3] == ",":
+                                q3 = q3 + 1
+                                continue
+                            break
+                    q3 = _js_expect(text, q3, ")")
+                    if len(call_args) > len(params):
+                        raise _JSExprFail("F821 extra call args")
+                    env = dict(strings)
+                    for _pi, (pname, pdefault) in enumerate(params):
+                        if _pi < len(call_args) and \
+                                call_args[_pi] is not None:
+                            env[pname] = call_args[_pi]
+                        else:
+                            if pdefault is None:
+                                raise _JSExprFail(
+                                    "F821 missing arg, no default")
+                            env[pname] = pdefault
+                    cval = _js_f821_eval_operands(operands, env)
+                    if len(total) + len(cval) > _MAX_DECODE_BYTES:
+                        raise _JSExprFail("F821 call value too long")
+                    total += cval
+                    state["ops"] += 1  # the call is obfuscation-shaped
+                    sj = q3
+                elif nm in strings:
+                    if type(strings[nm]) is not str:
+                        raise _JSExprFail("F821 non-string ident")
+                    total += strings[nm]
+                    sj = q2
+                else:
+                    raise _JSExprFail("F821 unbound ident in term")
+            if len(total) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F821 term too long")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == "+":
+                if text.startswith(("+", "="), sj + 1):
+                    raise _JSExprFail("F821 bad term tail")
+                sj = sj + 1
+                continue
+            break
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F821 trailing statements")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f746_new_sub_head(text, i, subname, depth, state):
     """Parse `new SUBNAME(...)` at text[i] (F746).
 
@@ -38477,6 +38832,313 @@ def _js_parse_f773_fill_stmt_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f820_copywithin_iife(text, i, depth, state):
+    """Parse `(function(){DECL NAME=['LIT',..];
+    NAME.copyWithin(T[,S[,E]]);return NAME[INT](+ADD)*;})()` (F820).
+
+    copyWithin statement beyond F681/F773: F681's statement loop
+    models only splice/fill (its return requires .join, so an
+    indexed-read return fails closed there); F773 requires the
+    `.fill(` statement. Node-exact (v24.20.0):
+    - decl: `var|let|const NAME=['LIT',..];` -- string literals
+      only (the F644 array grammar); `const` is fine (mutation is
+      not reassignment, F681 precedent).
+    - statement: exactly one `NAME.copyWithin(T[,S[,E]]);` --
+      T/S/E are literal ints (optional leading `-`, the
+      `_js_parse_slice_int` grammar; a fractional part is left
+      unconsumed and fails the `,`/`)` expect, F681 precedent).
+      The copy is engine-exact: negative args count back from the
+      end and clamp to [0, len]; count = min(final-from, len-to);
+      no-op when count <= 0; the source slice is snapshotted so
+      overlapping regions copy correctly in both directions.
+    - return: `NAME[INT](+ADD)*;` -- INT a non-negative literal
+      int in-bounds (reads the possibly-mutated element); the
+      `+ADD` tail mirrors F773 (string literals and `NAME[INT]`
+      reads).
+    - invocation: exactly `()`.
+    Disjoint: F681's statement loop fails closed on the
+    `copyWithin` method name; F773 requires `.fill(`; F644
+    accepts no statements; no earlier route models
+    `NAME.copyWithin(` as a statement (red-first verified:
+    2 BREAK on the open tree). Tried after F773.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    named function, params, directive prologue, extra/reordered
+    statements, reassignment of NAME, non-literal array element,
+    non-literal copyWithin arg, out-of-bounds index, non-string
+    ADD operand, trailing statements. Returns (value,
+    next_index), or None when text[i] is not this shape. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx / named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # Decl: `var|let|const NAME=['LIT',..];`
+        _dname, dm = _js_match_decl_kw(text, sj)
+        if _dname is None:
+            raise _JSExprFail("F820 decl not var/const/let")
+        sj = _js_skip_ws(text, dm)
+        aname, sj = _js_parse_ident(text, sj)
+        if aname == "arguments" or aname in _F611_RESERVED:
+            raise _JSExprFail("F820 reserved binding name")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+        elems, sj = _js_parse_f644_string_array(text, _js_skip_ws(text, sj),
+                                                state)
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        # Statement: exactly one `NAME.copyWithin(T[,S[,E]]);`
+        sj = _js_skip_ws(text, sj)
+        sname, sj = _js_parse_ident(text, sj)
+        if sname != aname:
+            raise _JSExprFail("F820 copyWithin not on bound array")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ".")
+        mname, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+        if mname != "copyWithin":
+            raise _JSExprFail("F820 statement not copyWithin")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "(")
+        args = []
+        while True:
+            arg, sj = _js_parse_slice_int(text, _js_skip_ws(text, sj))
+            args.append(arg)
+            sj = _js_skip_ws(text, sj)
+            if sj < n and text[sj] == ",":
+                sj = sj + 1
+                if len(args) >= 3:
+                    raise _JSExprFail("F820 copyWithin too many args")
+                continue
+            break
+        sj = _js_expect(text, sj, ")")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        if not 1 <= len(args) <= 3:
+            raise _JSExprFail("F820 copyWithin arg count")
+        # Engine-exact copy (v24.20.0 differential grid).
+        ln = len(elems)
+        _t = args[0]
+        _to = ln + _t if _t < 0 else _t
+        _to = max(0, min(_to, ln))
+        _s = args[1] if len(args) > 1 else 0
+        _frm = ln + _s if _s < 0 else _s
+        _frm = max(0, min(_frm, ln))
+        if len(args) > 2:
+            _e = args[2]
+            _fin = ln + _e if _e < 0 else _e
+            _fin = max(0, min(_fin, ln))
+        else:
+            _fin = ln
+        _count = min(_fin - _frm, ln - _to)
+        if _count > 0:
+            _src = elems[_frm:_frm + _count]  # snapshot: overlap-safe
+            elems[_to:_to + _count] = _src
+        state["ops"] += 1  # the mutation is obfuscation-shaped
+        # Return: `NAME[INT](+ADD)*;` (F773 grammar).
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F820 no return")
+        sj = _js_skip_ws(text, m)
+        rname, sj = _js_parse_ident(text, sj)
+        if rname != aname:
+            raise _JSExprFail("F820 return not over bound array")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "[")
+        idx, sj = _js_parse_number(text, _js_skip_ws(text, sj))
+        sj = _js_expect(text, _js_skip_ws(text, sj), "]")
+        if idx >= len(elems):
+            raise _JSExprFail("F820 index out of bounds")
+        result = elems[idx]
+        sj = _js_skip_ws(text, sj)
+        while sj < n and text[sj] == "+":
+            _rhs_j = _js_skip_ws(text, sj + 1)
+            rhs = None
+            if _rhs_j < n and text[_rhs_j] not in "'\"`":
+                _nm = text[_rhs_j:_rhs_j + len(aname)]
+                _after = _rhs_j + len(aname)
+                if _nm == aname and (_after >= n or
+                                     text[_after] not in _JS_IDENT_CONT):
+                    _rk = _js_skip_ws(text, _after)
+                    if _rk < n and text[_rk] == "[":
+                        _rk = _js_skip_ws(text, _rk + 1)
+                        _idx2, _rk = _js_parse_number(text, _rk)
+                        _rk = _js_expect(text, _js_skip_ws(text, _rk),
+                                          "]")
+                        if _idx2 >= len(elems):
+                            raise _JSExprFail("F820 ADD index OOB")
+                        rhs = elems[_idx2]
+                        sj = _rk
+            if rhs is None:
+                rhs, sj = _js_parse_primary(text, sj + 1, depth, state)
+                if type(rhs) is not str:
+                    raise _JSExprFail("F820 ADD operand not a string")
+            if len(result) + len(rhs) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F820 concat too long")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            result = result + rhs
+            sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F820 trailing statements")
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F820 result too long")
+        state["ops"] += 1  # the indexed read is obfuscation-shaped
+        # Invocation: exactly `()` (j is past the closing brace).
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f820_reverse_iife(text, i, depth, state):
+    """Parse `(function(){DECL NAME=['LIT',..];
+    NAME.reverse();return NAME.join('SEP')/NAME.join();})()` (F820).
+
+    reverse statement beyond F681: F681's statement loop models
+    only splice/fill (a `reverse()` statement fails closed there),
+    and its join return never sees a reversed array. Node-exact
+    (v24.20.0):
+    - decl: `var|let|const NAME=['LIT',..];` -- string literals
+      only (the F644 array grammar); `const` is fine (mutation is
+      not reassignment, F681 precedent).
+    - statement: exactly one `NAME.reverse();` -- any args fail
+      closed (the engine ignores them, but the no-arg form is the
+      filed shape; anything else is out of scope).
+    - return: `NAME.join('SEP');` / `NAME.join();` on the bound
+      ident (the F681/F434 join discipline: string-literal
+      separator, or the engine-default `,`).
+    - invocation: exactly `()`.
+    Disjoint: F681's statement loop fails closed on the `reverse`
+    method name (only splice/fill accepted); F773 requires
+    `.fill(`; F644 accepts no statements; the expression-position
+    `reverse` production (F518/F461 mirror) never sees an IIFE
+    statement (red-first verified: 2 BREAK on the open tree).
+    Tried after F773.
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    named function, params, directive prologue, extra/reordered
+    statements, reassignment of NAME, non-literal array element
+    or join separator, reverse with args, trailing statements.
+    Returns (value, next_index), or None when text[i] is not this
+    shape. Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        j = _js_skip_ws(text, i)
+        if j >= n or text[j] != "(":
+            return None
+        k = _js_skip_ws(text, j + 1)
+        if not text.startswith("function", k):
+            return None
+        k2 = k + len("function")
+        if k2 < n and text[k2] in _JS_IDENT_CONT:
+            return None  # functionx / named function -- not our shape
+        j = _js_skip_ws(text, k2)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        brace = _js_skip_ws(text, j)
+        j = _js_expect(text, brace, "{")
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # Decl: `var|let|const NAME=['LIT',..];`
+        _dname, dm = _js_match_decl_kw(text, sj)
+        if _dname is None:
+            raise _JSExprFail("F820 decl not var/const/let")
+        sj = _js_skip_ws(text, dm)
+        aname, sj = _js_parse_ident(text, sj)
+        if aname == "arguments" or aname in _F611_RESERVED:
+            raise _JSExprFail("F820 reserved binding name")
+        sj = _js_expect(text, _js_skip_ws(text, sj), "=")
+        elems, sj = _js_parse_f644_string_array(text, _js_skip_ws(text, sj),
+                                                state)
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        # Statement: exactly one `NAME.reverse();`
+        sj = _js_skip_ws(text, sj)
+        sname, sj = _js_parse_ident(text, sj)
+        if sname != aname:
+            raise _JSExprFail("F820 reverse not on bound array")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ".")
+        mname, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+        if mname != "reverse":
+            raise _JSExprFail("F820 statement not reverse")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] != ")":
+            raise _JSExprFail("F820 reverse takes no args")
+        sj = _js_expect(text, sj, ")")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        elems = elems[::-1]
+        state["ops"] += 1  # the mutation is obfuscation-shaped
+        # Return: `NAME.join('SEP');` / `NAME.join();` (F681 grammar).
+        sj = _js_skip_ws(text, sj)
+        m = _js_match_kw(text, sj, "return")
+        if m is None:
+            raise _JSExprFail("F820 no return")
+        sj = _js_skip_ws(text, m)
+        rname, sj = _js_parse_ident(text, sj)
+        if rname != aname:
+            raise _JSExprFail("F820 return not over bound array")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ".")
+        jname, sj = _js_parse_ident(text, _js_skip_ws(text, sj))
+        if jname != "join":
+            raise _JSExprFail("F820 return not join")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ")":
+            sep = ","
+            sj += 1
+        elif sj < n and text[sj] in "'\"":
+            sep, sj = _js_parse_string(text, sj)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, ")")
+        else:
+            raise _JSExprFail("F820 join separator not a literal")
+        sj = _js_expect(text, _js_skip_ws(text, sj), ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F820 trailing statements")
+        result = sep.join(elems)
+        if len(result) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F820 join too long")
+        state["ops"] += 1  # the join is obfuscation-shaped
+        # Invocation: exactly `()` (j is past the closing brace).
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return result, j
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f684_defaultref_params_iife(text, i, depth, state):
     """Parse `(function({K=V,...}={}){return ADD;})(...)` (F684a).
 
@@ -70709,6 +71371,19 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         if _f735f736 is not None:
             val, i = _f735f736
             return _js_parse_postfix(text, i, val, depth, state)
+        # F821: (function(){[STMT;]* var F=(p='LIT',...)=>BODY;
+        # return TERM;})() -- var-bound arrow with default params.
+        # None falls through (fails closed inside; F735/F736's
+        # decl-RHS branch rejects the `(` head and its bounds
+        # reject arrows, so no previously-decoded input changes
+        # behavior).
+        _f821_saved_parts = state['parts']; _f821_saved_ops = state['ops']
+        _f821 = _js_parse_f821_arrow_default_iife(text, i, depth, state)
+        if _f821 is None:
+            state['parts'] = _f821_saved_parts; state['ops'] = _f821_saved_ops
+        if _f821 is not None:
+            val, i = _f821
+            return _js_parse_postfix(text, i, val, depth, state)
         # F742: (function(){var v=new DataView(new
         #   ArrayBuffer(N));v.setUint8(i,b);*return ADD;})() --
         #   DataView byte laundering into String.fromCharCode
@@ -71508,6 +72183,30 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f773_saved_parts; state['ops'] = _f773_saved_ops
         if _f773 is not None:
             return _f773
+        # F820: (function(){DECL A=['LIT',..];A.copyWithin(T[,S[,E]]);
+        # return A[INT](+ADD)*;})() -- copyWithin statement with an
+        # indexed-read return. None falls through (fails closed
+        # inside; F681's statement loop rejects the copyWithin
+        # method name and F773 requires .fill(, so no
+        # previously-decoded input changes behavior).
+        _f820c_saved_parts = state['parts']; _f820c_saved_ops = state['ops']
+        _f820c = _js_parse_f820_copywithin_iife(text, i, depth, state)
+        if _f820c is None:
+            state['parts'] = _f820c_saved_parts; state['ops'] = _f820c_saved_ops
+        if _f820c is not None:
+            return _f820c
+        # F820: (function(){DECL A=['LIT',..];A.reverse();
+        # return A.join('SEP')/A.join();})() -- reverse statement
+        # with a join return. None falls through (fails closed
+        # inside; F681's statement loop rejects the reverse method
+        # name and its join return never sees a reversed array, so
+        # no previously-decoded input changes behavior).
+        _f820r_saved_parts = state['parts']; _f820r_saved_ops = state['ops']
+        _f820r = _js_parse_f820_reverse_iife(text, i, depth, state)
+        if _f820r is None:
+            state['parts'] = _f820r_saved_parts; state['ops'] = _f820r_saved_ops
+        if _f820r is not None:
+            return _f820r
         # F684a: (function({K=V,..}={}){return ADD;})(...) --
         # default-referencing-earlier-params destructuring. None
         # falls through (fails closed inside; F645's flat shapes
