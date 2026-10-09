@@ -53093,6 +53093,922 @@ def _js_parse_f734_symbol_member_iife(text, i, depth, state):
         return None
 
 
+def _js_f845_parse_key(text, j, symbols):
+    """Parse an F845 symbol-for key at text[j].
+
+    Either a var-bound symbol ident (in `symbols`, name -> registry
+    description) or a direct `Symbol.for('LIT')` call. Returns
+    (registry_description, next_index). The F552 registry namespace
+    ("symbol", name) is shared via _js_symbol_key: `Symbol.for('K')`
+    returns the same symbol on every call (registry identity, node
+    v24.20.0), so a var-bound write and a direct-call read provably
+    address the same key. Raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in _JS_IDENT_START:
+        name, q = _js_parse_ident(text, j)
+        if name in symbols:
+            return symbols[name], q
+        if name == "Symbol":
+            desc, q = _js_parse_symbol_for_expr(text, j)
+            return desc, q
+        raise _JSExprFail("F845 key not a bound symbol")
+    raise _JSExprFail("F845 key not a symbol")
+
+
+def _js_parse_f845_symbolfor_member_iife(text, i, depth, state):
+    """Parse `(function(){var s=Symbol.for('D');DECL;o[s]='LIT';*return o[s|Symbol.for('D')](+'LIT')*;})()` (F845).
+
+    F845: the decoder's object model is string-keyed and F734 models
+    only local `Symbol('D')` keys, so `Symbol.for` registry-keyed
+    member writes and reads recover the exact fragment while the
+    decoder produces zero variants:
+      `(function(){var o={};var s=Symbol.for('kk');o[s]='f1';
+      return o[Symbol.for('kk')]+'f2';})()`
+      `(function(){var s=Symbol.for('k');var o={[s]:'f1'};
+      return o[s]+'f2';})()`.
+    Node-exact (v24.20.0): `Symbol.for('K')` returns the same symbol
+    on every call (global registry), so within the IIFE a binding
+    names exactly one key and a direct `Symbol.for('K')` read
+    provably addresses the same key as the write. The model keys it
+    with the F552 registry namespace ("symbol", K) -- a local
+    `Symbol('K')` (F734's ("sym", name)) is never the registry entry
+    (node-verified), so no collision is possible.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - declarations: `var|let|const S=Symbol.for('LIT');` (the
+      description must be a string literal; `Symbol('LIT')` /
+      `Symbol()` / non-literal descriptions fail closed; comma-
+      separated declarators are accepted, node-exact),
+      `var|let|const o={};`, or `var|let|const
+      o={[K]:'LIT'(,[K2]:'LIT')*};` (computed keys: var-bound
+      symbols or direct `Symbol.for('LIT')` only; any other key
+      form fails closed). The `Symbol.for` bindings may be absent
+      when every key is a direct `Symbol.for('LIT')` call
+      (node-exact -- the registry is global). Rebinding any name
+      fails closed.
+    - write statements: `o[K]='LIT';` (1+ when the object started
+      empty; later writes win, node-exact). Only string-literal
+      values; only symbol keys.
+    - terminal: `return o[K](+'LIT')*;` -- the read must resolve to
+      a plain string (missing keys fail closed; the engine yields
+      undefined there).
+    - exactly `()` invocation; no trailing statements after the
+      return inside the body.
+
+    Tried after F734: every accepted shape carries a `Symbol.for`
+    binding or key head, which F734 rejects (it expects `(` right
+    after `Symbol`) and no earlier route accepts (red-first
+    verified: 2 BREAK on the open tree). Only previously
+    fail-closed inputs are newly decoded. Returns (value,
+    next_index), or None when text[i] is not this shape. Never
+    evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        symbols = {}
+        objname = None
+        props = None
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            # Comma-separated declarators: `var a=Symbol.for('x'),
+            # b=Symbol.for('y');` (node-exact).
+            while True:
+                m = _js_skip_ws(text, m)
+                name, m = _js_parse_ident(text, m)
+                if name in symbols or name == objname:
+                    raise _JSExprFail("F845 rebind")
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, "=")
+                m = _js_skip_ws(text, m)
+                if _js_match_kw(text, m, "Symbol") is not None:
+                    desc, m = _js_parse_symbol_for_expr(text, m)
+                    symbols[name] = desc
+                    state["parts"] += 1  # the symbol decl is obfuscation-shaped
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                elif m < n and text[m] == "{":
+                    if objname is not None:
+                        raise _JSExprFail("F845 second object")
+                    m = _js_skip_ws(text, m + 1)
+                    pdict = {}
+                    if m < n and text[m] == "}":
+                        m = m + 1  # empty literal
+                    else:
+                        while True:
+                            m = _js_skip_ws(text, m)
+                            m = _js_expect(text, m, "[")
+                            desc, m = _js_f845_parse_key(text, m, symbols)
+                            m = _js_skip_ws(text, m)
+                            m = _js_expect(text, m, "]")
+                            m = _js_skip_ws(text, m)
+                            m = _js_expect(text, m, ":")
+                            m = _js_skip_ws(text, m)
+                            if m >= n or text[m] not in "'\"":
+                                raise _JSExprFail(
+                                    "F845 value not a literal")
+                            _lit, m = _js_parse_string(text, m)
+                            pdict[_js_symbol_key(desc)] = _lit  # later-wins
+                            state["parts"] += 1
+                            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                                raise _JSExprFail("too many parts")
+                            m = _js_skip_ws(text, m)
+                            if m < n and text[m] == ",":
+                                m = m + 1
+                                continue
+                            break
+                        m = _js_skip_ws(text, m)
+                        m = _js_expect(text, m, "}")
+                    objname = name
+                    props = pdict
+                else:
+                    raise _JSExprFail("F845 decl not modeled")
+                m = _js_skip_ws(text, m)
+                if m < n and text[m] == ",":
+                    m = m + 1
+                    continue
+                break
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            sj = _js_skip_ws(text, m)
+        if objname is None:
+            return None
+        # ---- write statements: o[K]='LIT';
+        while True:
+            q = _js_skip_ws(text, sj)
+            oname, q2 = _js_parse_ident(text, q)
+            if oname != objname:
+                break
+            q = _js_skip_ws(text, q2)
+            if q >= n or text[q] != "[":
+                break
+            desc, q = _js_f845_parse_key(text, q + 1, symbols)
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "]")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "=")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F845 write value not a literal")
+            _lit, q = _js_parse_string(text, q)
+            props[_js_symbol_key(desc)] = _lit  # later-wins, node-exact
+            state["parts"] += 1  # the write is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            sj = _js_skip_ws(text, q)
+        # ---- terminal: return o[K](+'LIT')*;
+        r = _js_match_kw(text, sj, "return")
+        if r is None:
+            raise _JSExprFail("F845 no return")
+        sj = _js_skip_ws(text, r)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname != objname:
+            raise _JSExprFail("F845 terminal not the object")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "[")
+        desc, sj = _js_f845_parse_key(text, sj, symbols)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "]")
+        val = _jsobj_lookup(_JSObj(props), _js_symbol_key(desc))
+        if not isinstance(val, str) or isinstance(val, _JSNumStr):
+            raise _JSExprFail("F845 member not a string")
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(text, sj)
+            if t >= n or text[t] != "+":
+                break
+            t = _js_skip_ws(text, t + 1)
+            if t >= n or text[t] not in "'\"":
+                raise _JSExprFail("F845 tail not a literal")
+            _tail, t = _js_parse_string(text, t)
+            if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            val = val + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = t
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F845 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f846_parse_addkey(text, j, state):
+    """Parse an F846 additive string-literal key at text[j].
+
+    `'a'` or `'a'+'b'+...` -- string literals joined by `+` only.
+    Returns (key_string, next_index). Node-exact: `'k'+'ey' ===
+    'key'` (v24.20.0); any non-literal term fails closed. The
+    concatenated key is bounded by _MAX_DECODE_BYTES. Raises
+    _JSExprFail. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F846 key not a literal")
+    key, j = _js_parse_string(text, j)
+    while True:
+        q = _js_skip_ws(text, j)
+        if q >= n or text[q] != "+":
+            break
+        q = _js_skip_ws(text, q + 1)
+        if q >= n or text[q] not in "'\"":
+            raise _JSExprFail("F846 key term not a literal")
+        term, q = _js_parse_string(text, q)
+        if len(key) + len(term) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F846 key too long")
+        key = key + term
+        state["parts"] += 1  # each concatenation is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = q
+    return key, j
+
+
+def _js_parse_f846_computed_key_iife(text, i, depth, state):
+    """Parse `(function(){var o={['k'+'ey']:'LIT';};o['k'+'ey']='LIT';*return o.key|o['key']|o['k'+'ey'](+'LIT')*;})()` (F846).
+
+    F846: the decoder models literal keys but not computed ones:
+    `o['k'+'ey']` resolves node-exactly (`'k'+'ey' === 'key'`,
+    v24.20.0) while the decoder produces zero variants:
+      `(function(){var o={['k'+'ey']:'f1'};return o.key+'f2';})()`
+      `(function(){var o={};o['k'+'ey']='f1';return o['key']+'f2';})()`.
+    The model is plain-string-keyed: an additive of string literals
+    provably denotes one string, so writes, literal reads, and
+    computed reads all address the same key.
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - declarations: `var|let|const o={};` or `var|let|const
+      o={K1:'LIT'(,K2:'LIT')*};` where each K is a string literal,
+      a bare identifier (`{key:'LIT'}`, node-exact -- shorthand
+      `{key}` without a value is the F840 lane's shape and fails
+      closed here), or a `['a'+'b'+...]` computed additive.
+      Rebinding fails closed.
+    - write statements: `o[ADD]='LIT';` / `o['LIT']='LIT';` /
+      `o.IDENT='LIT';` (1+ when the object started empty;
+      later writes win, node-exact). Only string-literal values.
+    - terminal: `return o.IDENT` / `return o['LIT']` / `return
+      o[ADD]` (+'LIT')* -- the read must resolve to a plain
+      string (missing keys fail closed; the engine yields
+      undefined there).
+    - exactly `()` invocation; no trailing statements after the
+      return inside the body.
+
+    Tried after F845: every accepted shape carries a computed
+    `['a'+'b']` key or a bracket-additive write head, which F845
+    rejects (symbol keys only) and no earlier route accepts
+    (red-first verified: 2 BREAK on the open tree). Only
+    previously fail-closed inputs are newly decoded. Returns
+    (value, next_index), or None when text[i] is not this shape.
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        objname = None
+        props = None
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            m = _js_skip_ws(text, m)
+            name, m = _js_parse_ident(text, m)
+            if name == objname:
+                raise _JSExprFail("F846 rebind")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "=")
+            m = _js_skip_ws(text, m)
+            if m >= n or text[m] != "{":
+                raise _JSExprFail("F846 decl not an object")
+            if objname is not None:
+                raise _JSExprFail("F846 second object")
+            m = _js_skip_ws(text, m + 1)
+            pdict = {}
+            if m < n and text[m] == "}":
+                m = m + 1  # empty literal
+            else:
+                while True:
+                    m = _js_skip_ws(text, m)
+                    if m < n and text[m] == "[":
+                        key, m = _js_f846_parse_addkey(text, m + 1, state)
+                        m = _js_skip_ws(text, m)
+                        m = _js_expect(text, m, "]")
+                    elif m < n and text[m] in "'\"":
+                        key, m = _js_parse_string(text, m)
+                    elif m < n and text[m] in _JS_IDENT_START:
+                        # Bare identifier keys (`{key:'LIT'}`) -- plain
+                        # string keys, node-exact. (Shorthand `{key}`
+                        # without a value is the F840 lane's shape and
+                        # fails closed here: no `:` follows.)
+                        key, m = _js_parse_ident(text, m)
+                    else:
+                        raise _JSExprFail("F846 key not modeled")
+                    m = _js_skip_ws(text, m)
+                    m = _js_expect(text, m, ":")
+                    m = _js_skip_ws(text, m)
+                    if m >= n or text[m] not in "'\"":
+                        raise _JSExprFail("F846 value not a literal")
+                    _lit, m = _js_parse_string(text, m)
+                    pdict[key] = _lit  # later-wins
+                    state["parts"] += 1
+                    if state["parts"] > _JS_EXPR_MAX_PARTS:
+                        raise _JSExprFail("too many parts")
+                    m = _js_skip_ws(text, m)
+                    if m < n and text[m] == ",":
+                        m = m + 1
+                        continue
+                    break
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, "}")
+            objname = name
+            props = pdict
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            sj = _js_skip_ws(text, m)
+        if objname is None:
+            return None
+        # ---- write statements: o[KEY]='LIT'; / o.IDENT='LIT';
+        while True:
+            q = _js_skip_ws(text, sj)
+            oname, q2 = _js_parse_ident(text, q)
+            if oname != objname:
+                break
+            q = _js_skip_ws(text, q2)
+            if q < n and text[q] == ".":
+                q = _js_skip_ws(text, q + 1)
+                wkey, q = _js_parse_ident(text, q)
+            elif q < n and text[q] == "[":
+                wkey, q = _js_f846_parse_addkey(text, q + 1, state)
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "]")
+            else:
+                break
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, "=")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F846 write value not a literal")
+            _lit, q = _js_parse_string(text, q)
+            props[wkey] = _lit  # later-wins, node-exact
+            state["parts"] += 1  # the write is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ";")
+            sj = _js_skip_ws(text, q)
+        # ---- terminal: return o.IDENT | o['LIT'] | o[ADD] (+'LIT')*;
+        r = _js_match_kw(text, sj, "return")
+        if r is None:
+            raise _JSExprFail("F846 no return")
+        sj = _js_skip_ws(text, r)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname != objname:
+            raise _JSExprFail("F846 terminal not the object")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ".":
+            sj = _js_skip_ws(text, sj + 1)
+            rkey, sj = _js_parse_ident(text, sj)
+        elif sj < n and text[sj] == "[":
+            rkey, sj = _js_f846_parse_addkey(text, sj + 1, state)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "]")
+        else:
+            raise _JSExprFail("F846 terminal not a member read")
+        val = _jsobj_lookup(_JSObj(props), rkey)
+        if not isinstance(val, str) or isinstance(val, _JSNumStr):
+            raise _JSExprFail("F846 member not a string")
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(text, sj)
+            if t >= n or text[t] != "+":
+                break
+            t = _js_skip_ws(text, t + 1)
+            if t >= n or text[t] not in "'\"":
+                raise _JSExprFail("F846 tail not a literal")
+            _tail, t = _js_parse_string(text, t)
+            if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            val = val + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = t
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F846 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f847_define_properties_iife(text, i, depth, state):
+    """Parse `(function(){var o={};Object.defineProperties(o,{K:{value:'LIT',...},...});return o.K(+'LIT')*;})()` (F847).
+
+    F847: the decoder models single `Object.defineProperty` (F550)
+    but not the plural form:
+      `(function(){var o={};Object.defineProperties(o,
+      {k:{value:'f1',enumerable:true}});return o.k+'f2';})()`
+    resolves node-exactly (v24.20.0) while the decoder produces zero
+    variants. Each descriptor is parsed by the shared
+    _js_parse_f548f550_descriptor: only `value` descriptors install a
+    readable value here -- `get`/`set` descriptors fail closed (the
+    engine would invoke them on read, which this narrow statement
+    path does not model; documented residual, fail-closed not
+    mis-decoded). `writable`/`enumerable`/`configurable` boolean
+    flags are accepted and ignored (they do not affect the decoded
+    read value); `{value, get|set}` together and `{get|set,
+    writable}` fail closed inside the descriptor parser (the engine
+    throws TypeError there, node-verified).
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - exactly one declaration: `var|let|const o={};` (the
+      defineProperties target must be the fresh empty object).
+    - exactly one statement:
+      `Object.defineProperties(o,{K:{value:'LIT'[,flags]*}
+      (,K2:{...})*});` -- keys are identifiers or string literals
+      (`__proto__` fails closed); dot form only.
+    - terminal: `return o.K` / `return o['K']` (+'LIT')* -- the
+      read must resolve to a plain string (missing keys fail
+      closed; the engine yields undefined there).
+    - exactly `()` invocation; no trailing statements after the
+      return inside the body.
+
+    Tried after F846: every accepted shape carries an
+    `Object.defineProperties(` statement head, which F846 rejects
+    (its statement loop only accepts member writes) and no earlier
+    route accepts (red-first verified: 2 BREAK on the open tree).
+    Only previously fail-closed inputs are newly decoded. Returns
+    (value, next_index), or None when text[i] is not this shape.
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        _kw, m = _js_match_decl_kw(text, sj)
+        if _kw is None:
+            return None
+        m = _js_skip_ws(text, m)
+        objname, m = _js_parse_ident(text, m)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "=")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "{")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "}")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        sj = _js_skip_ws(text, m)
+        # The defineProperties statement commits the parse: dot form
+        # only, exactly two arguments.
+        if _js_match_kw(text, sj, "Object") is None:
+            return None
+        q = _js_skip_ws(text, sj + len("Object"))
+        q = _js_expect(text, q, ".")
+        q = _js_skip_ws(text, q)
+        if not text.startswith("defineProperties", q):
+            return None
+        q2 = q + len("defineProperties")
+        if q2 < n and text[q2] in _JS_IDENT_CONT:
+            return None  # a longer member name, not this builtin
+        q = _js_skip_ws(text, q2)
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        tname, q = _js_parse_ident(text, q)
+        if tname != objname:
+            raise _JSExprFail("F847 target not the object")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ",")
+        q = _js_skip_ws(text, q)
+        if q >= n or text[q] != "{":
+            raise _JSExprFail("F847 props not an object")
+        q = _js_skip_ws(text, q + 1)
+        props = {}
+        while True:
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] in "'\"":
+                pkey, q = _js_parse_string(text, q)
+            elif q < n and text[q] in _JS_IDENT_START:
+                pkey, q = _js_parse_ident(text, q)
+            else:
+                raise _JSExprFail("F847 key not a literal")
+            if pkey == "__proto__":
+                raise _JSExprFail("F847 __proto__ fails closed")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ":")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != "{":
+                raise _JSExprFail("F847 descriptor not an object")
+            dkind, dval, q = _js_parse_f548f550_descriptor(
+                text, q, depth, state)
+            if dkind != "value":
+                raise _JSExprFail("F847 only value descriptors")
+            props[pkey] = dval
+            state["parts"] += 1  # each descriptor is obfuscation-shaped
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ",":
+                q = _js_skip_ws(text, q + 1)
+                continue
+            break
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "}")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        state["ops"] += 1  # the defineProperties call is
+                           # obfuscation-shaped
+        sj = _js_skip_ws(text, q)
+        # ---- terminal: return o.K | o['K'] (+'LIT')*;
+        r = _js_match_kw(text, sj, "return")
+        if r is None:
+            raise _JSExprFail("F847 no return")
+        sj = _js_skip_ws(text, r)
+        oname, sj = _js_parse_ident(text, sj)
+        if oname != objname:
+            raise _JSExprFail("F847 terminal not the object")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] == ".":
+            sj = _js_skip_ws(text, sj + 1)
+            rkey, sj = _js_parse_ident(text, sj)
+        elif sj < n and text[sj] == "[":
+            sj = _js_skip_ws(text, sj + 1)
+            if sj >= n or text[sj] not in "'\"":
+                raise _JSExprFail("F847 read key not a literal")
+            rkey, sj = _js_parse_string(text, sj)
+            sj = _js_skip_ws(text, sj)
+            sj = _js_expect(text, sj, "]")
+        else:
+            raise _JSExprFail("F847 terminal not a member read")
+        val = _jsobj_lookup(_JSObj(props), rkey)
+        if not isinstance(val, str) or isinstance(val, _JSNumStr):
+            raise _JSExprFail("F847 member not a string")
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(text, sj)
+            if t >= n or text[t] != "+":
+                break
+            t = _js_skip_ws(text, t + 1)
+            if t >= n or text[t] not in "'\"":
+                raise _JSExprFail("F847 tail not a literal")
+            _tail, t = _js_parse_string(text, t)
+            if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            val = val + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = t
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F847 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
+def _js_f848_tagged_lit(text, j):
+    """Parse an F848 tagged literal at text[j]: a string literal or an
+    integer literal (optional leading `-`, optional whitespace after
+    it). Returns ("s"|"i", value, next_index). The tag keeps the
+    comparison type-faithful: `switch` matches with `===`, so a
+    string label never matches an integer discriminant and vice
+    versa (node v24.20.0). A fractional literal fails closed --
+    `_js_parse_number` would silently truncate. Raises _JSExprFail.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        val, q = _js_parse_string(text, j)
+        return "s", val, q
+    neg = False
+    if j < n and text[j] == "-":
+        neg = True
+        j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] in _ASCII_DIGITS:
+        # Legacy-octal spelling (`010` = 8 in node's sloppy mode, 10
+        # via int()) fails closed -- the model would mis-decode
+        # (repo convention: dlp.py:14044, 17139-17141). `08`/`09`
+        # are decimal in both and stay accepted.
+        if (text[j] == "0" and j + 1 < n
+                and text[j + 1] in "01234567"):
+            raise _JSExprFail("F848 legacy octal fails closed")
+        val, q = _js_parse_number(text, j)
+        if q < n and text[q] == ".":
+            raise _JSExprFail("F848 fractional literal")
+        # The >2^53 rounding hole is closed by _js_parse_number's
+        # 0x10FFFF cap (do not loosen without revisiting this).
+        return "i", (-val if neg else val), q
+    raise _JSExprFail("F848 not a constant")
+
+
+def _js_parse_f848_switch_iife(text, i, depth, state):
+    """Parse `(function(){var x=LIT;var r='LIT';switch(x|\"LIT\"|1){case LIT:r='LIT';break;...}return r(+'LIT')*;})()` (F848).
+
+    F848: the decoder models if/else (F756) but not switch:
+      `(function(){var x=1,r='';switch(x){case 1:r='f1';break;
+      default:r='z';}return r+'f2';})()`
+    resolves node-exactly (v24.20.0) while the decoder produces zero
+    variants. The discriminant is a bound constant (or a direct
+    literal); every case label is a string or integer literal;
+    matching uses strict equality on the tagged (type, value) pair
+    (node-exact: `'1'` never matches `1`).
+
+    Grammar (all fail closed -- rejected, never mis-decoded):
+    - head: plain `(function(){` (shared F654 head); no params,
+      no name, no async.
+    - declarations: `var|let|const NAME='LIT'(,NAME2=INT)*;` /
+      `var|let|const NAME=INT;` (comma-separated declarators,
+      node-exact; integer literals may be negative; fractional
+      literals fail closed). Rebinding fails closed.
+      No other statements may appear before the switch, so every
+      bound name is provably constant at the switch.
+    - `switch(DISC){` -- DISC is a bound name or a direct tagged
+      literal.
+    - clauses: `case LIT: (NAME='LIT';)* [break;]` and at most one
+      `default: (NAME='LIT';)* [break;]` -- assignment targets must
+      be declared string vars (the discriminant stays constant by
+      construction). A bare `break;` is required at the end of every
+      clause body except the last (nothing follows to fall through
+      to, node-exact); a missing break before another clause fails
+      closed (documented residual -- the engine would continue into
+      the next case).
+      A duplicate `default:` fails closed (node SyntaxError).
+    - `}` then terminal `return R(+'LIT')*;` where R is a declared
+      string var (its initial value when no case matched and no
+      default ran, node-exact).
+    - exactly `()` invocation; no trailing statements after the
+      return inside the body.
+
+    Tried after F847: every accepted shape carries a `switch(`
+    statement head, which F847 rejects (its statement grammar only
+    accepts `Object.defineProperties`) and no earlier route accepts
+    (F655's switch simulator needs a literal discriminant, not a
+    bound name, and lives in the labeled-block statement path, not
+    this IIFE chain; red-first verified: 2 BREAK on the open tree).
+    Only previously fail-closed inputs are newly decoded. Returns
+    (value, next_index), or None when text[i] is not this shape.
+    Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        strs = {}
+        nums = {}
+        while True:
+            _kw, m = _js_match_decl_kw(text, sj)
+            if _kw is None:
+                break
+            # Comma-separated declarators: `var x=1,r='';` (node-exact).
+            while True:
+                m = _js_skip_ws(text, m)
+                name, m = _js_parse_ident(text, m)
+                if name in strs or name in nums:
+                    raise _JSExprFail("F848 rebind")
+                m = _js_skip_ws(text, m)
+                m = _js_expect(text, m, "=")
+                tag, val, m = _js_f848_tagged_lit(text, m)
+                if tag == "s":
+                    strs[name] = val
+                else:
+                    nums[name] = val
+                state["parts"] += 1  # each declarator is obfuscation-shaped
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                m = _js_skip_ws(text, m)
+                if m < n and text[m] == ",":
+                    m = m + 1
+                    continue
+                break
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            sj = _js_skip_ws(text, m)
+        # The switch statement commits the parse.
+        if _js_match_kw(text, sj, "switch") is None:
+            return None
+        sj = _js_skip_ws(text, sj + len("switch"))
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] in _JS_IDENT_START:
+            dname, sj = _js_parse_ident(text, sj)
+            if dname in strs:
+                dtag, dval = "s", strs[dname]
+            elif dname in nums:
+                dtag, dval = "i", nums[dname]
+            else:
+                raise _JSExprFail("F848 discriminant unbound")
+        else:
+            dtag, dval, sj = _js_f848_tagged_lit(text, sj)
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ")")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "{")
+        sj = _js_skip_ws(text, sj)
+        cases = []  # (tag, label_or_None, [(target, value)])
+        seen_default = False
+        while True:
+            sj = _js_skip_ws(text, sj)
+            if sj >= n:
+                raise _JSExprFail("F848 unterminated switch")
+            if text[sj] == "}":
+                sj = sj + 1
+                break
+            ck = _js_match_kw(text, sj, "case")
+            if ck is not None:
+                ctag, cval, q = _js_f848_tagged_lit(text, ck)
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ":")
+                sj = _js_skip_ws(text, q)
+                label = (ctag, cval)
+            else:
+                dk = _js_match_kw(text, sj, "default")
+                if dk is None:
+                    raise _JSExprFail("F848 bad switch clause")
+                if seen_default:
+                    raise _JSExprFail("F848 duplicate default")
+                seen_default = True
+                q = _js_skip_ws(text, dk)
+                q = _js_expect(text, q, ":")
+                sj = _js_skip_ws(text, q)
+                label = (None, None)
+            # Body: (NAME='LIT';)* [break;] -- a missing break is
+            # sound only on the final clause (nothing follows to fall
+            # through to); a missing break before another clause
+            # fails closed (documented residual -- the engine would
+            # fall through into the next case).
+            stmts = []
+            saw_break = False
+            while True:
+                q = _js_skip_ws(text, sj)
+                bk = _js_match_kw(text, q, "break")
+                if bk is not None:
+                    bq = _js_skip_ws(text, bk)
+                    bq = _js_expect(text, bq, ";")
+                    sj = _js_skip_ws(text, bq)
+                    saw_break = True
+                    break
+                if q < n and text[q] == "}":
+                    break
+                if _js_match_kw(text, q, "case") is not None:
+                    break
+                if _js_match_kw(text, q, "default") is not None:
+                    break
+                tname, q = _js_parse_ident(text, q)
+                if tname not in strs:
+                    raise _JSExprFail(
+                        "F848 assign target not a string var")
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, "=")
+                q = _js_skip_ws(text, q)
+                if q >= n or text[q] not in "'\"":
+                    raise _JSExprFail("F848 assign value not a literal")
+                aval, q = _js_parse_string(text, q)
+                q = _js_skip_ws(text, q)
+                q = _js_expect(text, q, ";")
+                stmts.append((tname, aval))
+                state["parts"] += 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                sj = q
+            q = _js_skip_ws(text, sj)
+            if not saw_break and (q >= n or text[q] != "}"):
+                raise _JSExprFail("F848 fall-through fails closed")
+            cases.append((label[0], label[1], stmts))
+        # Simulate: first strict-equality match wins; default only
+        # when nothing matched; every accepted body ends with break.
+        start = None
+        for idx, (ctag, cval, _stmts) in enumerate(cases):
+            if ctag is not None and ctag == dtag and cval == dval:
+                start = idx
+                break
+        if start is None:
+            for idx, (ctag, _cval, _stmts) in enumerate(cases):
+                if ctag is None:
+                    start = idx
+                    break
+        if start is not None:
+            for tname, aval in cases[start][2]:
+                strs[tname] = aval
+        # ---- terminal: return R(+'LIT')*;
+        r = _js_match_kw(text, sj, "return")
+        if r is None:
+            raise _JSExprFail("F848 no return")
+        sj = _js_skip_ws(text, r)
+        rname, sj = _js_parse_ident(text, sj)
+        if rname not in strs:
+            raise _JSExprFail("F848 terminal not a string var")
+        val = strs[rname]
+        if isinstance(val, _JSNumStr):
+            raise _JSExprFail("F848 member not a string")
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(text, sj)
+            if t >= n or text[t] != "+":
+                break
+            t = _js_skip_ws(text, t + 1)
+            if t >= n or text[t] not in "'\"":
+                raise _JSExprFail("F848 tail not a literal")
+            _tail, t = _js_parse_string(text, t)
+            if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            val = val + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            sj = t
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F848 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return val, j
+    except _JSExprFail:
+        return None
+
+
 def _js_f756_eval_cond(text, j, bools):
     """Evaluate an F756 ternary condition to a bool (F756).
 
@@ -79981,6 +80897,82 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             text, i, depth, state)
         if _f734 is not None:
             val, i = _f734
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F845: (function(){var s=Symbol.for('D');DECL;o[s]='LIT';*
+        #   return o[s|Symbol.for('D')](+'LIT')*;})() -- Symbol.for
+        #   registry-keyed member writes/reads. Tried after F734:
+        #   every accepted shape carries a `Symbol.for` binding or
+        #   key head, which F734 rejects (it expects `(` right after
+        #   `Symbol`) and no earlier route accepts (red-first
+        #   verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the F756 route. The F734 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f845_saved_parts = state['parts']; _f845_saved_ops = state['ops']
+        _f845 = _js_parse_f845_symbolfor_member_iife(
+            text, i, depth, state)
+        if _f845 is None:
+            state['parts'] = _f845_saved_parts; state['ops'] = _f845_saved_ops
+        if _f845 is not None:
+            val, i = _f845
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F846: (function(){var o={['k'+'ey']:'LIT'};o['k'+'ey']='LIT';*
+        #   return o.key|o['key']|o['k'+'ey'](+'LIT')*;})() -- computed
+        #   additive string-literal keys. Tried after F845: every
+        #   accepted shape carries a computed `['a'+'b']` key or a
+        #   bracket-additive write head, which F845 rejects (symbol
+        #   keys only) and no earlier route accepts (red-first
+        #   verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the F756 route. The F845 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f846_saved_parts = state['parts']; _f846_saved_ops = state['ops']
+        _f846 = _js_parse_f846_computed_key_iife(
+            text, i, depth, state)
+        if _f846 is None:
+            state['parts'] = _f846_saved_parts; state['ops'] = _f846_saved_ops
+        if _f846 is not None:
+            val, i = _f846
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F847: (function(){var o={};Object.defineProperties(o,
+        #   {K:{value:'LIT',...},...});return o.K(+'LIT')*;})() --
+        #   the plural defineProperties form. Tried after F846:
+        #   every accepted shape carries an
+        #   `Object.defineProperties(` statement head, which F846
+        #   rejects (its statement loop only accepts member writes)
+        #   and no earlier route accepts (red-first verified: 2
+        #   BREAK on the open tree), so no previously-decoded input
+        #   changes behavior. None falls through to the F756 route.
+        #   The F846 hook and its trailing `return` are untouched
+        #   (wave-379 lesson).
+        _f847_saved_parts = state['parts']; _f847_saved_ops = state['ops']
+        _f847 = _js_parse_f847_define_properties_iife(
+            text, i, depth, state)
+        if _f847 is None:
+            state['parts'] = _f847_saved_parts; state['ops'] = _f847_saved_ops
+        if _f847 is not None:
+            val, i = _f847
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F848: (function(){var x=LIT;var r='LIT';switch(x){case
+        #   LIT:r='LIT';break;...}return r(+'LIT')*;})() -- switch
+        #   statement flows on a provably-constant discriminant.
+        #   Tried after F847: every accepted shape carries a
+        #   `switch(` statement head, which F847 rejects (its
+        #   statement grammar only accepts `Object.defineProperties`)
+        #   and no earlier route accepts (F655's switch simulator
+        #   needs a literal discriminant and lives in the
+        #   labeled-block statement path, not this IIFE chain;
+        #   red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the F756 route. The F847 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        _f848_saved_parts = state['parts']; _f848_saved_ops = state['ops']
+        _f848 = _js_parse_f848_switch_iife(
+            text, i, depth, state)
+        if _f848 is None:
+            state['parts'] = _f848_saved_parts; state['ops'] = _f848_saved_ops
+        if _f848 is not None:
+            val, i = _f848
             return _js_parse_postfix(text, i, val, depth, state)
         # F756: (function(){DECL;* return ADD;})() -- ternary
         #   conditional reads on provably-constant boolean
