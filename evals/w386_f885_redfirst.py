@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Red-first for F831: whitespace between `.` and the method name in
-the native postfix chain.
+"""Red-first for F885: arrow-function CustomEvent listeners.
 
-_js_parse_postfix does not skip whitespace between the dot and the
-method name, so `a. flat()` -- ordinary engine-tolerated whitespace --
-has no production anywhere in the decoder (inline literal forms miss
-too): it node-evaluates to the exact credential while the decoder
-produces zero variants. The no-space twin `a.flat()` blocks coded.
-Filed 2026-10-09 (wave-386 lane 4 spec-axis review hard finding).
-Prints BREAK when a payload MISSES, HELD when blocked.
+(e)=>{r=e.detail;} listeners resolve node-exactly (v24.20.0
+verified); the F808 hook models only `function` listeners, so the
+shape resolves node-exactly while the decoder produces zero
+variants.
+Filed 2026-10-09 05:33 UTC wave-386 lane 7 (review residual of F808).
+Prints BREAK when a payload MISSES (open tree), HELD when blocked.
 (node v24.20.0 verified.)
 """
 import os
@@ -19,25 +17,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
 
 from gov.dlp import find_credential  # noqa: E402
 
+# Constructed via concatenation: the write path redacts credential literals.
 _A = "xoxb-" + "0123"
 _B = "456789" + "abcdef"
 
 SHAPES = [
     ("s1",
-     "(function(){var a=[['%s'],['%s']];"
-     "return a. flat().join('');})()" % (_A, _B),
+     "(function(){var t=new EventTarget();var r='';t.addEventListener('x',(e)=>{r=e.detail;});t.dispatchEvent(new CustomEvent('x',{detail:'%s'}));return r+'%s';})()" % (_A, _B),
      True),
     ("s2",
-     "[['%s'],['%s']]. flat().join('')" % (_A, _B),
+     "(function(){var t=new EventTarget();var r='';t.addEventListener('y',(e)=>{r=e.detail.k;});t.dispatchEvent(new CustomEvent('y',{detail:{k:'%s'}}));return r+'%s';})()" % (_A, _B),
      True),
 ]
 
 CONTROLS = [
-    ("nospace-blocks",
-     "(function(){var a=[['%s'],['%s']];"
-     "return a.flat().join('');})()" % (_A, _B), True),
     ("junk-quiet",
-     "'(function(){var s=\\'ab\\';return s;})()'", False),
+     "'(function(){var s=\\\\'ab\\\\';return s;})()'", False),
 ]
 
 

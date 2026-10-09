@@ -48042,6 +48042,575 @@ def _js_f792_parse_group_read(text, j, is_map, groups):
 
 
 
+# ------------------------------------------------------------------
+# F807: structuredClone reads / F808: CustomEvent detail reads
+# ------------------------------------------------------------------
+
+def _js_f807_parse_nested_obj(text, j, depth, state):
+    """Parse `{K:'LIT'|{...},...}` at text[j] == '{' (F807/F808).
+
+    A plain data-object literal with nesting: keys are identifiers
+    or string literals (never `__proto__`, never numeric, never
+    computed -- computed keys and `__proto__` fail closed);
+    values are plain string literals (never _JSNumStr) or nested
+    objects (recursive). Getters, setters, methods, spreads, and
+    non-literal values fail closed. Each property charges the F452
+    parts budget. Returns (_JSObj, next_index). Never evals.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F807 object too deep")
+    j = _js_skip_ws(text, j + 1)
+    props = {}
+    if j < n and text[j] == "}":
+        return _JSObj(props), j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n:
+            raise _JSExprFail("F807 unterminated object")
+        c = text[j]
+        if c in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif c in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F807 object key not a literal")
+        if isinstance(key, _JSNumStr):
+            raise _JSExprFail("F807 numeric key not modeled")
+        if key == "__proto__":
+            # The engine routes __proto__ through the prototype
+            # setter; F776 owns that domain -- fail closed here.
+            raise _JSExprFail("F807 __proto__ not modeled")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "{":
+            val, j = _js_f807_parse_nested_obj(text, j, depth + 1,
+                                              state)
+        elif j < n and text[j] in "'\"":
+            val, j = _js_parse_string(text, j)
+            if isinstance(val, _JSNumStr):
+                raise _JSExprFail("F807 value not a plain string")
+        else:
+            raise _JSExprFail("F807 value not a literal")
+        if key in props:
+            raise _JSExprFail("F807 duplicate key")
+        props[key] = val
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return _JSObj(props), j + 1
+            continue
+        if j < n and text[j] == "}":
+            return _JSObj(props), j + 1
+        raise _JSExprFail("F807 bad object literal")
+
+
+def _js_f807_clone_obj(obj, depth):
+    """Deep-clone a _JSObj the way structuredClone does (F807).
+
+    Node-exact (v24.20.0): structuredClone performs a deep copy of
+    plain data objects and does NOT preserve prototypes (the clone
+    gets the default Object.prototype, which this decoder does not
+    model), so the clone's proto is None -- member reads through a
+    prototype chain fail closed on the clone (node-verified: a
+    proto-installed 'k' is invisible after cloning). Only plain
+    strings and nested _JSObjs are clonable in this domain: the
+    parser fails closed on getters/methods (node invokes accessors
+    and clones their values -- a documented bound, residual F829;
+    structuredClone throws DOMException only on function values).
+    Never evals.
+    """
+    if depth > _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("F807 clone too deep")
+    props = {}
+    for k, v in obj.props.items():
+        if isinstance(v, _JSObj):
+            props[k] = _js_f807_clone_obj(v, depth + 1)
+        else:
+            props[k] = v
+    return _JSObj(props)
+
+
+def _js_f807_parse_dot_steps(text, j):
+    """Parse `(.MEM)*` at text[j] (F807/F808).
+
+    Returns (steps, next_index). Steps may be empty (the caller
+    decides whether an empty chain is legal). Never evals.
+    """
+    n = len(text)
+    steps = []
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] != ".":
+            break
+        k = _js_skip_ws(text, k + 1)
+        mem, k = _js_parse_ident(text, k)
+        steps.append(mem)
+        j = k
+    return steps, j
+
+
+def _js_f807_resolve_member(obj, steps):
+    """Resolve NAME(.MEM)* steps on a _JSObj (F807/F808).
+
+    Walks the (possibly None) proto chain via _js_f67x_lookup
+    (own properties shadow, node-exact). A `__proto__` step fails
+    closed (F776 owns that domain). A missing key or a non-string
+    final value (the engine yields undefined / an object) fails
+    closed, never mis-decoded. Never evals.
+    """
+    cur = obj
+    for step in steps:
+        if step == "__proto__":
+            raise _JSExprFail("F807 __proto__ read not modeled")
+        if not isinstance(cur, _JSObj):
+            raise _JSExprFail("F807 member on non-object")
+        val, _ = _js_f67x_lookup(cur, step)
+        if val is None:
+            raise _JSExprFail("F807 missing member")
+        cur = val
+    if not isinstance(cur, str) or isinstance(cur, _JSNumStr):
+        raise _JSExprFail("F807 member not a string")
+    return cur
+
+
+def _js_f807f808_parse_additive(text, j, env, depth, state, tag):
+    """Parse `return TERM (+ TERM)*;` at text[j] (F807/F808).
+
+    env maps bound names to plain strings or _JSObjs. TERM is a
+    plain string literal or a bound name: a bare _JSObj name fails
+    closed (the engine yields "[object Object]"), while a
+    NAME(.MEM)+ chain resolves through _js_f807_resolve_member.
+    Returns (total, index_past_';'). Bounded by _MAX_DECODE_BYTES;
+    F452 parts charged per term, one op per term. Never evals.
+    """
+    n = len(text)
+    j = _js_match_kw(text, j, "return")
+    if j is None:
+        raise _JSExprFail(tag + " no return")
+    total = None
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            term, j = _js_parse_string(text, j)
+            if isinstance(term, _JSNumStr):
+                raise _JSExprFail(tag + " term not a plain string")
+        elif j < n and text[j] in _JS_IDENT_START:
+            tname, j = _js_parse_ident(text, j)
+            if tname not in env:
+                raise _JSExprFail(tag + " term unbound")
+            bound = env[tname]
+            if isinstance(bound, str):
+                term = bound
+            else:
+                steps, j = _js_f807_parse_dot_steps(text, j)
+                if not steps:
+                    raise _JSExprFail(tag + " bare object read")
+                term = _js_f807_resolve_member(bound, steps)
+        else:
+            raise _JSExprFail(tag + " term not modeled")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        if total is None:
+            total = term
+        else:
+            if len(total) + len(term) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            total = total + term
+        state["ops"] += 1
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j = j + 1
+            continue
+        break
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ";")
+    return total, j
+
+
+def _js_parse_f807_structuredclone_iife(text, i, depth, state):
+    """Parse `(function(){DECL O={...};DECL C=structuredClone(O);return ADD;})()` (F807).
+
+    F807 (LOW, filed 2026-10-09 by wave-385 attack round 53): the
+    decoder has no structuredClone production --
+    `structuredClone(o).k` resolves node-exactly (v24.20.0) while
+    the decoder produces zero variants.
+
+    Node-exact desugar (v24.20.0): the first declaration binds a
+    name to a plain data-object literal (flat or nested, string
+    values only); the second binds a second name to the
+    structuredClone deep copy (prototypes are NOT preserved --
+    node-verified); the return additive reads members off either
+    binding. `structuredClone` with extra arguments, an unbound
+    argument, or a shadowed `structuredClone` name fails closed
+    (documented scope boundary). Tried after F792: no earlier
+    route has a structuredClone production (red-first verified: 2
+    BREAK on the open tree), so only previously fail-closed inputs
+    are newly decoded. The F792 hook and its trailing `return`
+    are untouched (wave-379 lesson). F452 parts charged per
+    property/declaration/term with snapshot/restore on miss
+    (wave-383 lesson); results bounded by _MAX_DECODE_BYTES.
+    Never evals. Returns (value, next_index) or None.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            raise _JSExprFail("F807 decl1 not var/let/const")
+        m = _js_skip_ws(text, m)
+        oname, m = _js_parse_ident(text, m)
+        if (oname == "arguments" or oname in _F611_RESERVED
+                or oname == "structuredClone"):
+            raise _JSExprFail("F807 bad decl1 name")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "=")
+        if m < n and text[m] == "=":
+            raise _JSExprFail("F807 decl1 not =")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F807 decl1 not an object")
+        obj, m = _js_f807_parse_nested_obj(text, m, depth + 1,
+                                          state)
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        sj = _js_skip_ws(text, m)
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            raise _JSExprFail("F807 decl2 not var/let/const")
+        m = _js_skip_ws(text, m)
+        cname, m = _js_parse_ident(text, m)
+        if (cname == "arguments" or cname in _F611_RESERVED
+                or cname == oname or cname == "structuredClone"):
+            raise _JSExprFail("F807 bad decl2 name")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "=")
+        if m < n and text[m] == "=":
+            raise _JSExprFail("F807 decl2 not =")
+        m = _js_skip_ws(text, m)
+        fn, m = _js_parse_ident(text, m)
+        if fn != "structuredClone":
+            raise _JSExprFail("F807 decl2 not structuredClone")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        aname, m = _js_parse_ident(text, m)
+        if aname != oname:
+            raise _JSExprFail("F807 clone arg not bound object")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        clone = _js_f807_clone_obj(obj, 0)
+        env = {oname: obj, cname: clone}
+        sj = _js_skip_ws(text, m)
+        total, sj = _js_f807f808_parse_additive(text, sj, env,
+                                               depth, state,
+                                               "F807")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F807 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f808_customevent_iife(text, i, depth, state):
+    """Parse the CustomEvent detail-dispatch IIFE (F808).
+
+    F808 (LOW, filed 2026-10-09 by wave-385 attack round 53): the
+    decoder has no event-target production -- an EventTarget
+    dispatch carrying a detail payload resolves node-exactly
+    (v24.20.0) inside the registered listener while the decoder
+    produces zero variants:
+      `(function(){var t=new EventTarget();var r='';`
+      `t.addEventListener('x',function(e){r=e.detail;});`
+      `t.dispatchEvent(new CustomEvent('x',{detail:'f1'}));`
+      `return r+'f2';})()`
+      (and the nested-detail twin `r=e.detail.k` with
+      `{detail:{k:'f1'}}`).
+
+    Node-exact desugar (v24.20.0): `t` is a fresh EventTarget; `r`
+    starts as the initial string; exactly one listener is
+    registered for the exact event type; the dispatch constructs
+    a CustomEvent with exactly one `detail` option and synchronously
+    invokes the listener with the event, executing the single
+    `r=e.detail(.MEM)*` assignment; the return additive reads `r`.
+    Fail-closed bounds (all documented): a second listener, a
+    type mismatch between registration and dispatch (the engine
+    never invokes the listener -- out of scope), a missing
+    `detail` option, extra option keys, a member chain on a
+    string detail (the engine yields undefined), an object detail
+    read bare (the engine yields "[object Object]"), a listener
+    param shadowing the accumulator, non-`function` listeners,
+    and multi-statement listener bodies. Tried after F807: no
+    earlier route has an EventTarget/CustomEvent production
+    (red-first verified: 2 BREAK on the open tree), so only
+    previously fail-closed inputs are newly decoded. The F807
+    hook and its trailing `return` are untouched (wave-379
+    lesson). F452 parts charged per declaration/statement/term
+    with snapshot/restore on miss (wave-383 lesson); results
+    bounded by _MAX_DECODE_BYTES. Never evals. Returns (value,
+    next_index) or None.
+    """
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    try:
+        brace = _js_parse_f654_sync_iife_head(text, i)
+        if brace is None:
+            return None
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        sj = _js_skip_ws(text, inner_start)
+        # decl 1: var|let|const T = new EventTarget();
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            raise _JSExprFail("F808 decl1 not var/let/const")
+        m = _js_skip_ws(text, m)
+        tname, m = _js_parse_ident(text, m)
+        if tname == "arguments" or tname in _F611_RESERVED:
+            raise _JSExprFail("F808 bad decl1 name")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "=")
+        if m < n and text[m] == "=":
+            raise _JSExprFail("F808 decl1 not =")
+        m = _js_skip_ws(text, m)
+        nk = _js_match_kw(text, m, "new")
+        if nk is None:
+            raise _JSExprFail("F808 decl1 not new")
+        m = _js_skip_ws(text, nk)
+        ctor, m = _js_parse_ident(text, m)
+        if ctor != "EventTarget":
+            raise _JSExprFail("F808 decl1 not EventTarget")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        # decl 2: var|let|const R = 'LIT';
+        sj = _js_skip_ws(text, m)
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            raise _JSExprFail("F808 decl2 not var/let/const")
+        m = _js_skip_ws(text, m)
+        rname, m = _js_parse_ident(text, m)
+        if (rname == "arguments" or rname in _F611_RESERVED
+                or rname == tname):
+            raise _JSExprFail("F808 bad decl2 name")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "=")
+        if m < n and text[m] == "=":
+            raise _JSExprFail("F808 decl2 not =")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] not in "'\"":
+            raise _JSExprFail("F808 decl2 not a string")
+        rinit, m = _js_parse_string(text, m)
+        if isinstance(rinit, _JSNumStr):
+            raise _JSExprFail("F808 decl2 not a plain string")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        # T.addEventListener('TYPE', function(E){ R = E.detail(.MEM)*; });
+        sj = _js_skip_ws(text, m)
+        recv, sj = _js_parse_ident(text, sj)
+        if recv != tname:
+            raise _JSExprFail("F808 listener receiver not bound target")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ".")
+        sj = _js_skip_ws(text, sj)
+        meth, sj = _js_parse_ident(text, sj)
+        if meth != "addEventListener":
+            raise _JSExprFail("F808 not addEventListener")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] not in "'\"":
+            raise _JSExprFail("F808 listener type not a string")
+        etype, sj = _js_parse_string(text, sj)
+        if isinstance(etype, _JSNumStr):
+            raise _JSExprFail("F808 listener type not a plain string")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ",")
+        sj = _js_skip_ws(text, sj)
+        fk = _js_match_kw(text, sj, "function")
+        if fk is None:
+            raise _JSExprFail("F808 listener not a function")
+        sj = _js_skip_ws(text, fk)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        ename, sj = _js_parse_ident(text, sj)
+        if (ename == "arguments" or ename in _F611_RESERVED
+                or ename == rname or ename == tname):
+            # A param shadowing the accumulator would assign the
+            # param, not the outer binding (engine-exact) -- fail
+            # closed rather than mis-decode.
+            raise _JSExprFail("F808 bad listener param")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ")")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            raise _JSExprFail("F808 listener body not a block")
+        lb_start, lb_end, sj = _js_span_braced(text, sj)
+        q = _js_skip_ws(text, lb_start)
+        tgt, q = _js_parse_ident(text, q)
+        if tgt != rname:
+            raise _JSExprFail("F808 listener assigns wrong name")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "=")
+        if q < n and text[q] == "=":
+            raise _JSExprFail("F808 listener not =")
+        q = _js_skip_ws(text, q)
+        ev, q = _js_parse_ident(text, q)
+        if ev != ename:
+            raise _JSExprFail("F808 listener reads wrong event")
+        steps, q = _js_f807_parse_dot_steps(text, q)
+        if not steps or steps[0] != "detail":
+            raise _JSExprFail("F808 listener must read e.detail")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ";")
+        q = _js_skip_ws(text, q)
+        if q != lb_end:
+            raise _JSExprFail("F808 listener body not a single statement")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ")")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        # T.dispatchEvent(new CustomEvent('TYPE', {detail: VAL}));
+        sj = _js_skip_ws(text, sj)
+        recv, sj = _js_parse_ident(text, sj)
+        if recv != tname:
+            raise _JSExprFail("F808 dispatch receiver not bound target")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ".")
+        sj = _js_skip_ws(text, sj)
+        meth, sj = _js_parse_ident(text, sj)
+        if meth != "dispatchEvent":
+            raise _JSExprFail("F808 not dispatchEvent")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        nk = _js_match_kw(text, sj, "new")
+        if nk is None:
+            raise _JSExprFail("F808 dispatch not new")
+        sj = _js_skip_ws(text, nk)
+        ctor, sj = _js_parse_ident(text, sj)
+        if ctor != "CustomEvent":
+            raise _JSExprFail("F808 dispatch not CustomEvent")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "(")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] not in "'\"":
+            raise _JSExprFail("F808 event type not a string")
+        dtype, sj = _js_parse_string(text, sj)
+        if isinstance(dtype, _JSNumStr):
+            raise _JSExprFail("F808 event type not a plain string")
+        if dtype != etype:
+            # The engine never invokes the listener on a type
+            # mismatch -- out of scope, fail closed.
+            raise _JSExprFail("F808 event type mismatch")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ",")
+        sj = _js_skip_ws(text, sj)
+        if sj >= n or text[sj] != "{":
+            raise _JSExprFail("F808 options not an object")
+        sj = _js_skip_ws(text, sj + 1)
+        dkey, sj = _js_parse_ident(text, sj)
+        if dkey != "detail":
+            raise _JSExprFail("F808 options not detail")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ":")
+        sj = _js_skip_ws(text, sj)
+        if sj < n and text[sj] in "'\"":
+            detail, sj = _js_parse_string(text, sj)
+            if isinstance(detail, _JSNumStr):
+                raise _JSExprFail("F808 detail not a plain string")
+        elif sj < n and text[sj] == "{":
+            detail, sj = _js_f807_parse_nested_obj(text, sj,
+                                                  depth + 1,
+                                                  state)
+        else:
+            raise _JSExprFail("F808 detail not a literal")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, "}")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ")")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ")")
+        sj = _js_skip_ws(text, sj)
+        sj = _js_expect(text, sj, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        # Model the synchronous dispatch: the listener runs with
+        # the event, executing `r = e.detail(.MEM)*`.
+        rest = steps[1:]
+        if isinstance(detail, str):
+            if rest:
+                # The engine yields undefined -- fail closed.
+                raise _JSExprFail("F808 member on string detail")
+            rval = detail
+        else:
+            if not rest:
+                # The engine yields "[object Object]" -- fail
+                # closed rather than mis-decode.
+                raise _JSExprFail("F808 bare object detail read")
+            rval = _js_f807_resolve_member(detail, rest)
+        env = {rname: rval}
+        sj = _js_skip_ws(text, sj)
+        total, sj = _js_f807f808_parse_additive(text, sj, env,
+                                               depth, state,
+                                               "F808")
+        sj = _js_skip_ws(text, sj)
+        if sj != inner_end:
+            raise _JSExprFail("F808 trailing statements")
+        # Invocation: exactly `()`.
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        state["ops"] += 1  # the iife wrapper is obfuscation-shaped
+        return total, j
+    except _JSExprFail:
+        return None
+
+
 def _js_f768_plain_string_elements(elements):
     """Validate F768/F769 array elements are plain string literals.
 
@@ -74849,6 +75418,39 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f802_saved_parts; state['ops'] = _f802_saved_ops
         if _f802 is not None:
             val, i = _f802
+        # F807: (function(){DECL O={...};DECL C=structuredClone(O);
+        #   return ADD;})() -- structuredClone deep-copy reads.
+        #   Tried after F792: no earlier route has a structuredClone
+        #   production (red-first verified: 2 BREAK on the open
+        #   tree), so no previously-decoded input changes behavior.
+        #   None falls through to the parenthesized-additive path.
+        #   The F792 hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f807_saved_parts = state['parts']; _f807_saved_ops = state['ops']
+        _f807 = _js_parse_f807_structuredclone_iife(text, i, depth, state)
+        if _f807 is None:
+            state['parts'] = _f807_saved_parts; state['ops'] = _f807_saved_ops
+        if _f807 is not None:
+            val, i = _f807
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F808: (function(){var t=new EventTarget();var r='LIT';
+        #   t.addEventListener('TYPE',function(e){r=e.detail(.MEM)*;});
+        #   t.dispatchEvent(new CustomEvent('TYPE',{detail:VAL}));
+        #   return ADD;})() -- CustomEvent detail dispatch reads.
+        #   Tried after F807: no earlier route has an
+        #   EventTarget/CustomEvent production (red-first verified:
+        #   2 BREAK on the open tree), so no previously-decoded
+        #   input changes behavior. None falls through to the
+        #   parenthesized-additive path. The F807 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        #   Budget snapshot/restore on miss (wave-383 lesson).
+        _f808_saved_parts = state['parts']; _f808_saved_ops = state['ops']
+        _f808 = _js_parse_f808_customevent_iife(text, i, depth, state)
+        if _f808 is None:
+            state['parts'] = _f808_saved_parts; state['ops'] = _f808_saved_ops
+        if _f808 is not None:
+            val, i = _f808
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")

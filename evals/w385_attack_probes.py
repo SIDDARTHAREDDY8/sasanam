@@ -273,28 +273,32 @@ def test_r53_f806_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r53_f807_s1_open():
-    """F807 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={k:'%s'};var c=structuredClone(o);return c.k+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f807_s1_closed():
+    """F807 CLOSED (wave-386 lane 7): structuredClone read blocks."""
+    s = "(function(){var o={k:'%s'};var c=structuredClone(o);return c.k+'%s';})()" % (_A, _B)
+    ok = _blocked(s)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f807_s2_open():
-    """F807 OPEN: miss reproduces."""
-    miss = _misses("(function(){var o={a:{b:'%s'}};var c=structuredClone(o);return c.a.b+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f807_s2_closed():
+    """F807 CLOSED (wave-386 lane 7): nested structuredClone read blocks."""
+    s = "(function(){var o={a:{b:'%s'}};var c=structuredClone(o);return c.a.b+'%s';})()" % (_A, _B)
+    ok = _blocked(s)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f808_s1_open():
-    """F808 OPEN: miss reproduces."""
-    miss = _misses("(function(){var t=new EventTarget();var r='';t.addEventListener('x',function(e){r=e.detail;});t.dispatchEvent(new CustomEvent('x',{detail:'%s'}));return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f808_s1_closed():
+    """F808 CLOSED (wave-386 lane 7): CustomEvent detail read blocks."""
+    s = "(function(){var t=new EventTarget();var r='';t.addEventListener('x',function(e){r=e.detail;});t.dispatchEvent(new CustomEvent('x',{detail:'%s'}));return r+'%s';})()" % (_A, _B)
+    ok = _blocked(s)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
-def test_r53_f808_s2_open():
-    """F808 OPEN: miss reproduces."""
-    miss = _misses("(function(){var t=new EventTarget();var r='';t.addEventListener('y',function(e){r=e.detail.k;});t.dispatchEvent(new CustomEvent('y',{detail:{k:'%s'}}));return r+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r53_f808_s2_closed():
+    """F808 CLOSED (wave-386 lane 7): nested CustomEvent detail read blocks."""
+    s = "(function(){var t=new EventTarget();var r='';t.addEventListener('y',function(e){r=e.detail.k;});t.dispatchEvent(new CustomEvent('y',{detail:{k:'%s'}}));return r+'%s';})()" % (_A, _B)
+    ok = _blocked(s)
+    return ("HELD" if ok else "BREAK", "blocked=%s" % ok)
 
 @_t
 def test_r53_f809_s1_open():

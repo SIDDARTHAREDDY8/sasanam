@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Red-first for F830: whitespace between `return` and the grouping
-paren in the F801 named-function body.
+"""Red-first for F888: whitespace between `.` and the method name in
+the native postfix chain.
 
-_js_parse_f614_additive_body (reused by the F801 named-function
-parser) checks text[j] == "(" without skipping whitespace, so
-`return (a+'B')` -- ordinary engine-tolerated whitespace -- has no
-production: it node-evaluates to the exact credential while the
-decoder produces zero variants. The no-space twin `return(a+'B')`
-blocks coded. Filed 2026-10-09 (wave-386 lane 4 spec-axis review
-hard finding). Prints BREAK when a payload MISSES, HELD when blocked.
+_js_parse_postfix does not skip whitespace between the dot and the
+method name, so `a. flat()` -- ordinary engine-tolerated whitespace --
+has no production anywhere in the decoder (inline literal forms miss
+too): it node-evaluates to the exact credential while the decoder
+produces zero variants. The no-space twin `a.flat()` blocks coded.
+Filed 2026-10-09 (wave-386 lane 4 spec-axis review hard finding).
+Prints BREAK when a payload MISSES, HELD when blocked.
 (node v24.20.0 verified.)
 """
 import os
@@ -24,19 +24,18 @@ _B = "456789" + "abcdef"
 
 SHAPES = [
     ("s1",
-     "(function(){function f(a){return (a+'%s');}"
-     "return Reflect.apply(f,null,['%s']);})()" % (_B, _A),
+     "(function(){var a=[['%s'],['%s']];"
+     "return a. flat().join('');})()" % (_A, _B),
      True),
     ("s2",
-     "(function(){function f(a,b){return (a+b);}"
-     "return Reflect.apply(f,null,['%s','%s']);})()" % (_A, _B),
+     "[['%s'],['%s']]. flat().join('')" % (_A, _B),
      True),
 ]
 
 CONTROLS = [
     ("nospace-blocks",
-     "(function(){function f(a){return(a+'%s');}"
-     "return Reflect.apply(f,null,['%s']);})()" % (_B, _A), True),
+     "(function(){var a=[['%s'],['%s']];"
+     "return a.flat().join('');})()" % (_A, _B), True),
     ("junk-quiet",
      "'(function(){var s=\\'ab\\';return s;})()'", False),
 ]
