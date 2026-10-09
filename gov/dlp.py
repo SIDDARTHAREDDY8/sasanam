@@ -14435,7 +14435,8 @@ class _JSURL:
     urlsplit, matching the engine's scheme normalization).
     Only the .searchParams member was modeled (F576, resolving to a
     _JSURLParams over the query); F858 adds .hash (the '#' + fragment,
-    '' when empty -- node-exact), .username and .password reads.
+    '' when empty -- node-exact), .username and .password reads;
+    F913 adds .search (the '?' + query, '' when empty -- node-exact).
     Every other member fails closed. A resolved URL only flows
     through the _JSURL branch of _js_parse_postfix; any other use
     fails closed.
@@ -14464,7 +14465,8 @@ class _JSFormData:
     stringifies other values (USVString), which the decoder does not
     model -- non-literal values fail closed (documented boundary).
     A resolved FormData only flows through the _JSFormData branch of
-    _js_parse_postfix (.get); any other member fails closed.
+    _js_parse_postfix (.get, and .getAll per F914); any other member
+    fails closed.
     """
     __slots__ = ("entries",)
 
@@ -82777,8 +82779,10 @@ def _js_parse_postfix(text, i, value, depth, state):
         # fails closed.
         # F858: `.hash` (the '#' + fragment, '' when the fragment is
         # empty -- node-exact), `.username` and `.password` reads.
-        # Dot and string-literal bracket forms both resolve; any
-        # other member fails closed.
+        # F913: `.search` (the '?' + query, '' when the query is empty
+        # -- node-exact; the engine never yields a bare '?'). Dot and
+        # string-literal bracket forms both resolve; any other member
+        # fails closed.
         if isinstance(value, _JSURL):
             _mname, _mk = _js_f576_member_name(text, j, "url")
             if _mname == "searchParams":
@@ -82789,7 +82793,7 @@ def _js_parse_postfix(text, i, value, depth, state):
                     raise _JSExprFail("too many parts")
                 value, i = _JSURLParams(_pairs), _mk
                 continue
-            if _mname not in ("hash", "username", "password"):
+            if _mname not in ("hash", "username", "password", "search"):
                 raise _JSExprFail("url member not modeled")
             state["ops"] += 1  # the member read is obfuscation-shaped
             if _mname == "hash":
@@ -82800,29 +82804,50 @@ def _js_parse_postfix(text, i, value, depth, state):
                             if value.fragment else ""), _mk
             elif _mname == "username":
                 value, i = value.username, _mk
-            else:
+            elif _mname == "password":
                 value, i = value.password, _mk
+            else:
+                # F913: node-exact (v24.20.0) -- '?' + query when the
+                # URL has a query, '' otherwise (even with a bare '?',
+                # verified).
+                value, i = ("?" + value.query
+                            if value.query else ""), _mk
             continue
         # F860: `.get` on a statically-resolved FormData. Returns the
         # FIRST entry value (engine-exact, node v24.20.0); a missing
         # name fails closed (the engine returns null, which the
-        # decoder never decodes -- the F576 precedent). Dot and
+        # decoder never decodes -- the F576 precedent).
+        # F914: `.getAll('K')` on a statically-resolved FormData.
+        # Returns the _JSArr of ALL values with the name in insertion
+        # order (engine-exact, node v24.20.0); a missing name is the
+        # empty array in the engine (F648 precedent, node-exact).
+        # The array flows through the normal postfix chain (.join /
+        # .slice / indexed reads, F584 precedent). Dot and
         # string-literal bracket forms both resolve; any other member
         # fails closed.
         if isinstance(value, _JSFormData):
             _mname, _mk = _js_f576_member_name(text, j, "formdata")
-            if _mname != "get":
+            if _mname not in ("get", "getAll"):
                 raise _JSExprFail("formdata member not modeled")
             _gk = _js_skip_ws(text, _mk)
             if _gk >= len(text) or text[_gk] != "(":
-                raise _JSExprFail("formdata get without paren")
+                raise _JSExprFail("formdata get/getAll without paren")
             _gk = _js_skip_ws(text, _gk + 1)
             if _gk >= len(text) or text[_gk] not in "'\"":
-                raise _JSExprFail("formdata get key not a literal")
+                raise _JSExprFail("formdata get/getAll key not a literal")
             _gkey, _gk = _js_parse_string(text, _gk)
             _gk = _js_skip_ws(text, _gk)
             if _gk >= len(text) or text[_gk] != ")":
-                raise _JSExprFail("formdata get unterminated")
+                raise _JSExprFail("formdata get/getAll unterminated")
+            if _mname == "getAll":
+                _gvals = [_eval for _ename, _eval in value.entries
+                          if _ename == _gkey]
+                state["parts"] += len(_gvals) + 1
+                if state["parts"] > _JS_EXPR_MAX_PARTS:
+                    raise _JSExprFail("too many parts")
+                state["ops"] += 1  # the getAll is obfuscation-shaped
+                value, i = _JSArr(_gvals), _gk + 1
+                continue
             _gval = None
             for _ename, _eval in value.entries:
                 if _ename == _gkey:
@@ -85992,7 +86017,12 @@ def _js_f857_parse_segmenter_bind(text, sj, state):
 
     Node-exact desugar (v24.20.0): the locale is a string literal
     (grapheme segmentation of ASCII input is locale-independent per
-    UAX #29, so any literal locale is admitted); OPTS is omitted
+    UAX #29, so any literal locale is admitted); F916 admits the
+    omitted locale (`new Intl.Segmenter()` -- the engine defaults it,
+    node-verified identical clusters to 'en' for ASCII input); the
+    `undefined` keyword is admitted too (ECMA-402 treats it as the
+    default locale, node-verified identical). OPTS
+    is omitted
     (the engine defaults granularity to 'grapheme') or exactly
     `{granularity:'grapheme'}` -- any other granularity or option
     fails closed (documented boundary: word/sentence need ICU
@@ -86017,10 +86047,21 @@ def _js_f857_parse_segmenter_bind(text, sj, state):
     _sk = _js_skip_ws(text, _sk)
     _sk = _js_expect(text, _sk, "(")
     _sk = _js_skip_ws(text, _sk)
-    if _sk >= n or text[_sk] not in "'\"":
-        raise _JSExprFail("F857 locale not a literal")
-    _loc, _sk = _js_parse_string(text, _sk)
-    _sk = _js_skip_ws(text, _sk)
+    if _sk < n and text[_sk] == ")":
+        # F916: omitted locale -- the engine defaults it; grapheme
+        # segmentation of ASCII input is locale-independent per
+        # UAX #29 (node-verified: identical clusters to 'en').
+        pass
+    elif _js_match_kw(text, _sk, "undefined") is not None:
+        # F916: `undefined` locale -- ECMA-402 treats undefined as
+        # the default locale (node-verified identical clusters to
+        # the omitted form for ASCII grapheme segmentation).
+        _sk = _js_skip_ws(text, _js_match_kw(text, _sk, "undefined"))
+    else:
+        if _sk >= n or text[_sk] not in "'\"":
+            raise _JSExprFail("F857 locale not a literal")
+        _loc, _sk = _js_parse_string(text, _sk)
+        _sk = _js_skip_ws(text, _sk)
     if _sk < n and text[_sk] == ",":
         _sk = _js_skip_ws(text, _sk + 1)
         _sk = _js_expect(text, _sk, "{")
@@ -86075,8 +86116,10 @@ def _js_parse_f857_segmenter_iife(text, i, depth, state):
     read is modeled.
 
     Bounds (all fail closed -- rejected, never mis-decoded):
-    non-grapheme granularity / extra options / non-literal locale
-    or input / non-ASCII input (combining marks merge clusters);
+    non-grapheme granularity / extra options / a non-literal
+    locale (the omitted locale and the `undefined` keyword are
+    admitted per F916) / non-literal input / non-ASCII input
+    (combining marks merge clusters);
     a non-empty `r` initializer; loop forms other than
     `for(var|let|const x of s)` with body exactly `r+=x.segment;`;
     map callbacks other than the two admitted forms; a non-literal
@@ -86535,6 +86578,59 @@ def _js_parse_f859_params_get_iife(text, i, depth, state):
         return None
 
 
+def _js_f915_parse_has_ternary(text, i, fname, entries, state):
+    """Parse `(f.has('LIT')?'LIT':'LIT')` at text[i] (F915).
+
+    The parenthesized ternary must be the additive left operand (the
+    engine would re-associate an unparenthesized tail into the else
+    branch; F710/F798 precedent). The condition is engine-exact
+    (node v24.20.0): `f.has('K')` is true iff some entry has the name;
+    the branches must be plain string literals (the _JSNumStr
+    discipline, F710 precedent). Dot and string-literal bracket forms
+    both resolve. Returns (selected_str, next_index) past the closing
+    paren. Anything else raises _JSExprFail. Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, i + 1)
+    rname, k = _js_parse_ident(text, k)
+    if rname != fname:
+        raise _JSExprFail("F915 ternary receiver not the form")
+    _mname, k = _js_f576_member_name(text, k, "F915")
+    if _mname != "has":
+        raise _JSExprFail("F915 ternary not has")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "(":
+        raise _JSExprFail("F915 has without paren")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail("F915 has key not a literal")
+    _hkey, k = _js_parse_string(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F915 has unterminated")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "?":
+        raise _JSExprFail("F915 ternary without ?")
+    then_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(then_lit, str) or isinstance(then_lit, _JSNumStr):
+        raise _JSExprFail("F915 then not a plain string")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ":":
+        raise _JSExprFail("F915 ternary without :")
+    else_lit, k = _js_parse_string(text, _js_skip_ws(text, k + 1))
+    if not isinstance(else_lit, str) or isinstance(else_lit, _JSNumStr):
+        raise _JSExprFail("F915 else not a plain string")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ")":
+        raise _JSExprFail("F915 ternary unclosed")
+    _present = any(_ename == _hkey for _ename, _eval in entries)
+    state["parts"] += 1  # the ternary is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1
+    return (then_lit if _present else else_lit), k + 1
+
+
 def _js_parse_f860_formdata_iife(text, i, depth, state):
     """Parse `(function(){DECL f=new FormData();[MUT;]*return f.get('K')(+ 'LIT')*;})()` (F860).
 
@@ -86545,6 +86641,12 @@ def _js_parse_f860_formdata_iife(text, i, depth, state):
     set/append semantics, F599/F648 precedent); `.get('K')`
     returns the FIRST value with the name, and a missing name is
     null in the engine -- fail closed (the F576 precedent).
+    F914 adds `.getAll('K')` (all values, insertion order; a
+    missing name is the empty array in the engine, F648
+    precedent), flowing through the normal postfix chain. F915
+    adds the parenthesized `.has` ternary
+    `(f.has('LIT')?'LIT':'LIT')` as the additive left operand
+    (engine-exact, F710/F798 precedent).
 
     Disjoint from every earlier route: no earlier production
     accepts a `new FormData` head (red-first verified: 2 BREAK on
@@ -86555,8 +86657,9 @@ def _js_parse_f860_formdata_iife(text, i, depth, state):
     constructor argument (`new FormData(x)` throws in the engine
     for non-form args -- documented boundary); non-literal
     mutation names/values (the engine stringifies other values,
-    unmodeled); mutation members other than append/set; `.getAll`
-    and other terminals (documented residuals); a missing get name;
+    unmodeled); mutation members other than append/set; terminals
+    other than `.get`/`.getAll`/the parenthesized `.has` ternary
+    (delete/sort/... -- documented residuals); a missing get name;
     extra statements; a named function; parameters; call args.
     Returns (value, next_index), or None when text[i] is not this
     shape. Never evals.
@@ -86602,23 +86705,35 @@ def _js_parse_f860_formdata_iife(text, i, depth, state):
         sj = _js_expect(text, sj, ";")
         entries, sj = _js_f859_parse_mutations(text, sj, fname,
                                                entries, state, "F860")
-        # return f.get('K')(+ 'LIT')*;
+        # return f.get('K')(+ 'LIT')*;  or (F915)
+        # return (f.has('LIT')?'LIT':'LIT')(+ 'LIT')*;
         q = _js_skip_ws(text, sj)
         rk = _js_match_kw(text, q, "return")
         if rk is None:
             raise _JSExprFail("F860 body not return")
         q = _js_skip_ws(text, rk)
-        rname, q = _js_parse_ident(text, q)
-        if rname != fname:
-            raise _JSExprFail("F860 returns another ident")
-        # Through the _JSFormData postfix branch: .get('K') returns
-        # the first value (missing name fails closed); any other
-        # member fails closed. A bare `return f;` yields the
-        # _JSFormData itself, which is not a string -- fail closed.
-        val, q = _js_parse_postfix(text, q, _JSFormData(entries),
-                                   depth, state)
-        if not isinstance(val, str):
-            raise _JSExprFail("F860 return not a string")
+        _q0 = _js_skip_ws(text, q)
+        if _q0 < n and text[_q0] == "(":
+            # F915: the parenthesized `.has` ternary must be the
+            # additive left operand (the engine would re-associate
+            # an unparenthesized tail into the else branch; F710/F798
+            # precedent). Any other paren form fails closed.
+            val, q = _js_f915_parse_has_ternary(text, _q0, fname,
+                                                entries, state)
+        else:
+            rname, q = _js_parse_ident(text, q)
+            if rname != fname:
+                raise _JSExprFail("F860 returns another ident")
+            # Through the _JSFormData postfix branch: .get('K') /
+            # .getAll('K') (missing .get name fails closed; .getAll
+            # missing name is the empty array, F648 precedent); any
+            # other member fails closed. A bare `return f;` yields
+            # the _JSFormData itself, which is not a string -- fail
+            # closed.
+            val, q = _js_parse_postfix(text, q, _JSFormData(entries),
+                                       depth, state)
+            if not isinstance(val, str):
+                raise _JSExprFail("F860 return not a string")
         val, q = _js_f857_return_tail(text, q, val, state, "F860")
         if len(val) > _MAX_DECODE_BYTES:
             raise _JSExprFail("F860 value too long")
