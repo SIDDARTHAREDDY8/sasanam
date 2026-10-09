@@ -61,11 +61,11 @@ def _misses(payload):
 
 @_t
 def test_b0_footer_state():
-    """Control: lane-local footer (open F921-F926, F928-F947; next F948)."""
+    """Control: merged footer (F921-F936 closed; open F937-F948; next F949)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F948**" in text
-          and "F937, F938, F939, F940, F941, F942, F943, F944, F945, F946, F947.**" in text)
+    ok = ("Next free finding: **F949**" in text
+          and "F937, F938, F939, F940, F941, F942, F943, F944, F945, F946, F947, F948.**" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -170,108 +170,108 @@ def test_r57_f947_propasm_open():
 
 
 @_t
-def test_r56_f921_bind_open():
-    """F921 OPEN: miss reproduces."""
+def test_r56_f921_bind_closed():
+    """F921 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){function f(a,b){return a+b;}var g=f.bind(null,'%s');return g('%s');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f922_switch_open():
-    """F922 OPEN: miss reproduces."""
+def test_r56_f922_switch_closed():
+    """F922 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var s='';var x=1;switch(x){case 1:s+='%s';case 2:s+='%s';break;default:}return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f923_qqnull_open():
-    """F923 OPEN: miss reproduces."""
+def test_r56_f923_qqnull_closed():
+    """F923 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var s=null;s??='%s';s+='%s';return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f924_lblcont_open():
-    """F924 OPEN: miss reproduces."""
+def test_r56_f924_lblcont_closed():
+    """F924 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var s='';outer:for(var i=0;i<1;i++){for(var j=0;j<3;j++){if(j===1)continue outer;s+='%s';}}return s+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f925_super_open():
-    """F925 OPEN: miss reproduces."""
+def test_r56_f925_super_closed():
+    """F925 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var proto={x:'%s'};var o={m(){return super.x+'%s';}};Object.setPrototypeOf(o,proto);return o.m();})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f926_extends_open():
-    """F926 OPEN: miss reproduces."""
+def test_r56_f926_extends_closed():
+    """F926 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var B=class{};class C extends B{constructor(){super();this.v='%s';}}return new C().v+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f928_comma_open():
-    """F928 OPEN: miss reproduces."""
+def test_r56_f928_comma_closed():
+    """F928 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var s=(0,'%s');return s+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f929_inop_open():
-    """F929 OPEN: miss reproduces."""
+def test_r56_f929_inop_closed():
+    """F929 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var o={v:'%s'};return ('v' in o)?o.v+'%s':'';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f930_symiter_open():
-    """F930 OPEN: miss reproduces."""
+def test_r56_f930_symiter_closed():
+    """F930 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var o={};o[Symbol.iterator]=function*(){yield '%s';yield '%s';};var s='';for(var v of o)s+=v;return s;})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f931_errmsg_open():
-    """F931 OPEN: miss reproduces."""
+def test_r56_f931_errmsg_closed():
+    """F931 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var e=new Error('x');e.message='%s';return e.message+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f932_valueof_open():
-    """F932 OPEN: miss reproduces."""
+def test_r56_f932_valueof_closed():
+    """F932 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var s=new String('%s');return s.valueOf()+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f933_forofstr_open():
-    """F933 OPEN: miss reproduces."""
+def test_r56_f933_forofstr_closed():
+    """F933 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var s='';for(var c of '%s')s+=c;return s+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f934_async_open():
-    """F934 OPEN: miss reproduces."""
+def test_r56_f934_async_closed():
+    """F934 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){async function f(){return '%s';}return f().then(function(v){return v+'%s';});})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f935_zwsp_open():
-    """F935 OPEN: miss reproduces."""
+def test_r56_f935_zwsp_closed():
+    """F935 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){return 'xox\\\\u200bb-0123456789abcdef'.replace(/[\\\\u200b-\\\\u200d\\\\ufeff]/g,'');})()")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 @_t
-def test_r56_f936_poem_open():
-    """F936 OPEN: miss reproduces."""
+def test_r56_f936_poem_closed():
+    """F936 CLOSED (wave-389 merge): now blocked."""
     miss = _misses("(function(){var poem='xray\\noscar\\nxerox\\nbravo\\n-dash-\\n0 days\\n1 day\\n2 days\\n3 days\\n4 days\\n5 days\\n6 days\\n7 days\\n8 days\\n9 days\\nalpha\\nbeta\\ncharlie\\ndelta\\necho\\nfoxtrot';var s='';var lines=poem.split('\\n');for(var i=0;i<lines.length;i++){s+=lines[i][0];}return s;})()")
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("HELD" if not miss else "BREAK", "blocked=%s" % (not miss))
 
 
 # ------------------------------------------------------- green check (depth-1)
@@ -295,10 +295,10 @@ def _green_check():
     # The w388 battery was fully re-pinned at the wave-388 merge
     # (F893-F920 closed-hit pins, footer repointed to F937; F927 closed) --
     # it must now report 0 BREAKs; no stale set remains.
-    # Lane-local staleness (merge-owned repoint): this lane repointed the
-    # footer to F948, so w388's test_b0_footer_state BREAKs until the
-    # wave-389 merge repoints it.
-    stale = {"test_b0_footer_state"}
+    # The w388 battery was fully re-pinned at the wave-389 merge
+    # (F921-F936 closed-hit pins, footer repointed to F949) --
+    # it must now report 0 BREAKs; no stale set remains.
+    stale = set()
     real = broke - stale
     missing = stale - broke
     ok = not real and not missing

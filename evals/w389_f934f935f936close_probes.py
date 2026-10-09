@@ -104,15 +104,14 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer():
-    """Footer: F934-F936 CLOSED; open F921-F926, F928-F933; next F937."""
+    """Merged footer: F921-F936 closed; open F937-F948; next F949."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    m = re.search(r"Next free finding: \*\*F937\*\*\. \*\*Open findings: "
+    m = re.search(r"Next free finding: \*\*F949\*\*\. \*\*Open findings: "
                   r"([^*]+)\.", text)
     if not m:
-        return ("BREAK", "no F937 footer")
+        return ("BREAK", "no F949 footer")
     opens = [x.strip() for x in m.group(1).split(",")]
-    want = (["F%d" % i for i in range(921, 927)]
-            + ["F%d" % i for i in range(928, 934)])
+    want = ["F%d" % i for i in range(937, 949)]
     ok = (opens == want
           and text.count("CLOSED 2026-10-09 wave-389 lane 4") >= 3)
     return ("HELD" if ok else "BREAK",

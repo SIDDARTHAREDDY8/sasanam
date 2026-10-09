@@ -145,7 +145,7 @@ def test_p0_no_new_re_compile():
 
 @_t
 def test_p0_footer_state():
-    """Lane-local footer: F921-F924 closed; open F925-F926, F928-F937; next F938."""
+    """Merged footer: F921-F936 closed; open F937-F948; next F949."""
     import re
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
@@ -157,12 +157,10 @@ def test_p0_footer_state():
         m = re.search(r"\*\*Open findings: ([^*]+)\.\*\*", last)
         open_list = m.group(1) if m else ""
         items = [x.strip() for x in open_list.split(",")]
-        want = (["F%d" % n for n in range(925, 927)]
-                + ["F%d" % n for n in range(928, 938)])
-        ok = ("**F938**" in last
+        want = ["F%d" % n for n in range(937, 949)]
+        ok = ("**F949**" in last
               and items == want
-              and "F893-F920 CLOSED (28)" in last
-              and "F921-F924 CLOSED (4)" in last)
+              and "F921-F936 CLOSED (15)" in last)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -582,14 +580,15 @@ def _green_check():
     bad = []
     # This lane's red-firsts expect 0 BREAK; the parent findings'
     # red-firsts (F870/F748/F655/F784) expect 0 BREAK (no
-    # regressions from the shared-code changes); the new F937
-    # red-first expects 2 BREAK (filed open this lane).
+    # regressions from the shared-code changes); the new F948
+    # red-first expects 2 BREAK (filed open this lane; renumbered
+    # F937->F948 at the wave-389 merge, wave-272 rule).
     for batt, expect_break in (
             ("evals/w388_f921_redfirst.py", 0),
             ("evals/w388_f922_redfirst.py", 0),
             ("evals/w388_f923_redfirst.py", 0),
             ("evals/w388_f924_redfirst.py", 0),
-            ("evals/w389_f937_redfirst.py", 2),
+            ("evals/w389_f948_redfirst.py", 2),
             ("evals/w387_f870_redfirst.py", 0),
             ("evals/w383_f748_redfirst.py", 0),
             ("evals/w377_f655_redfirst.py", 0),
