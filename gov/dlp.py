@@ -28825,6 +28825,14 @@ def _js_f655_sim_inner(text, j, inner_end, env, state, depth):
                 q = _js_skip_ws(text, q)
             q = _js_expect(text, q, ";")
             raise _JSF655Break(label)
+        ik = _js_match_kw(text, j, "if")
+        if ik is not None:
+            # F900: constant-condition `if` -- the then-branch is
+            # statically decidable. Disjoint from F784 (its
+            # `if(BOOL)break LBL;` has no braces, which this fails
+            # closed on).
+            j = _js_f655_sim_if_const(text, j, env, state, depth + 1)
+            continue
         for wkw, wfn in (("switch", _js_f655_sim_switch),
                          ("try", _js_f655_sim_try),
                          ("do", _js_f655_sim_dowhile),
@@ -29069,14 +29077,24 @@ def _js_f655_sim_with(text, j, env, state, depth):
 
 
 def _js_f655_sim_labeled(text, j, env, state, depth):
-    """Simulate `LBL:{STMTS}` at text[j] (F655).
+    """Simulate `LBL:{STMTS}` or `LBL:do{STMTS}while(FALSY);` at text[j]
+    (F655 / F900).
 
     Node-exact (v24.20.0): statements run in order; `break LBL;`
     exits the labeled block, skipping the rest. A bare `break;`
     directly in the block is a node SyntaxError ("Illegal break
     statement") -- it propagates outward and fails closed. A break
     for any other label propagates outward. Returns the index just
-    past `}`. Never evals."""
+    past `}`. Never evals.
+
+    F900: a label may also sit on a do-while statement --
+    `LBL:do{STMTS}while(FALSY);` -- dispatched to
+    _js_f655_sim_labeled_dowhile. The unlabeled do-while keeps its
+    F655 `while(false)`-only grammar; the labeled form accepts any
+    falsy literal condition (node-exact: the body runs exactly
+    once). Disjoint by the `do` keyword after the colon (the block
+    form requires `{`)."""
+
     n = len(text)
     if depth >= _JS_EXPR_MAX_DEPTH:
         raise _JSExprFail("too deep")
@@ -29086,13 +29104,144 @@ def _js_f655_sim_labeled(text, j, env, state, depth):
         # fail closed, never mis-decode.
         raise _JSExprFail("F655 reserved label")
     j = _js_expect(text, _js_skip_ws(text, j), ":")
-    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    _jj = _js_skip_ws(text, j)
+    if _js_match_kw(text, _jj, "do") is not None:
+        # F900: `LBL:do{...}while(FALSY);` -- the labeled do-while.
+        return _js_f655_sim_labeled_dowhile(text, _jj, lbl, env,
+                                            state, depth)
+    j = _js_expect(text, _jj, "{")
     bs, be, j = _js_span_braced(text, j - 1)
     try:
         _js_f655_sim_inner(text, _js_skip_ws(text, bs), be, env, state, depth)
     except _JSF655Break as brk:
         if brk.label != lbl:
             raise
+    return j
+
+
+def _js_f655_parse_falsy_cond(text, j):
+    """Parse a falsy-literal do-while condition at text[j] (F900).
+
+    Accepts `false`, `0` (the canonical integer spelling), the
+    empty string literals `''` / `""`, `null`, `undefined`, and
+    `NaN` -- every falsy literal class the engine evaluates
+    without side effects. Anything else (truthy literals,
+    non-literals, `0.0` non-canonical spellings) fails closed:
+    the decoder never decodes a shape that could loop. Returns
+    next_index. Never evals."""
+    n = len(text)
+    for kw in ("false", "null", "undefined", "NaN"):
+        m = _js_match_kw(text, j, kw)
+        if m is not None:
+            return m
+    if j < n and text[j] in "'\"":
+        val, q = _js_parse_string(text, j)
+        if val != "":
+            raise _JSExprFail("F900 do-while condition truthy")
+        return q
+    if j < n and text[j] in _ASCII_DIGITS:
+        val, q = _js_parse_number(text, j)
+        if val != 0:
+            raise _JSExprFail("F900 do-while condition truthy")
+        return q
+    raise _JSExprFail("F900 do-while condition not a falsy literal")
+
+
+def _js_f655_sim_labeled_dowhile(text, j, lbl, env, state, depth):
+    """Simulate `LBL:do{STMTS}while(FALSY);` at text[j] == `do` (F900).
+
+    Node-exact (v24.20.0): the body runs exactly once -- the
+    condition is a falsy literal (see _js_f655_parse_falsy_cond),
+    so the loop never iterates. `break LBL;` exits the loop
+    (the labeled statement); a bare `break;` exits the loop too
+    (it targets the innermost loop -- the engine agrees); `break
+    OTHER;` propagates outward to an enclosing labeled
+    construct. `continue` (labeled or not) fails closed -- the
+    F655 statement sim has no continue production, so the inner
+    parse rejects it. Returns the index just past `;`. Never
+    evals."""
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "do"))
+    j = _js_expect(text, j, "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    try:
+        _js_f655_sim_inner(text, _js_skip_ws(text, bs), be, env, state,
+                           depth + 1)
+    except _JSF655Break as brk:
+        if brk.label is not None and brk.label != lbl:
+            raise
+    j = _js_skip_ws(text, j)
+    wk = _js_match_kw(text, j, "while")
+    if wk is None:
+        raise _JSExprFail("F900 do without while")
+    j = _js_expect(text, _js_skip_ws(text, wk), "(")
+    j = _js_f655_parse_falsy_cond(text, _js_skip_ws(text, j))
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    state["parts"] += 1  # the labeled loop is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return j
+
+
+def _js_f655_sim_if_const(text, j, env, state, depth):
+    """Simulate `if(CONST){STMTS}` at text[j] == `if` (F900).
+
+    Node-exact (v24.20.0) for constant conditions: `true`, a
+    nonzero integer literal (optional `+`/`-` sign), or a
+    non-empty string literal runs the then-branch; `false`, `0`,
+    `''`, `null`, `undefined`, and `NaN` skip it. The condition
+    classes are side-effect-free literals, so the branch choice
+    is static. An `else` (any form) fails closed -- a documented
+    boundary (the filed shapes are else-free). A `_JSF655Break`
+    from the branch propagates to the enclosing construct
+    untouched. Returns the index just past the then-block's `}`.
+    Never evals."""
+    n = len(text)
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        raise _JSExprFail("too deep")
+    j = _js_skip_ws(text, _js_match_kw(text, j, "if"))
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    truthy = None
+    for kw, val in (("true", True), ("false", False), ("null", False),
+                    ("undefined", False), ("NaN", False)):
+        m = _js_match_kw(text, j, kw)
+        if m is not None:
+            truthy = val
+            j = m
+            break
+    if truthy is None:
+        if j < n and text[j] in "'\"":
+            lit, j = _js_parse_string(text, j)
+            truthy = lit != ""
+        elif j < n and (text[j] in _ASCII_DIGITS or
+                        (text[j] in "+-" and j + 1 < n and
+                         text[j + 1] in _ASCII_DIGITS)):
+            # Optional sign (spec review HARD-6): `_js_parse_number`
+            # rejects it, so consume it here; `-0` is falsy like
+            # `0` (Python -0 == 0, matching JS).
+            _neg = text[j] == "-"
+            if text[j] in "+-":
+                j = _js_skip_ws(text, j + 1)
+            num, j = _js_parse_number(text, j)
+            truthy = (-num if _neg else num) != 0
+        else:
+            raise _JSExprFail("F900 if condition not constant")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    bs, be, j = _js_span_braced(text, j - 1)
+    if truthy:
+        _js_f655_sim_inner(text, _js_skip_ws(text, bs), be, env,
+                           state, depth + 1)
+    _ek = _js_match_kw(text, _js_skip_ws(text, j), "else")
+    if _ek is not None:
+        raise _JSExprFail("F900 if-else not modeled")
+    state["parts"] += 1  # the branch is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
     return j
 
 
@@ -78996,6 +79145,20 @@ _F765_MAX_STEPS = 200000
 _F765_CLASS_EXTRA = ".:^$+*?()!"
 
 
+# F898: the JS `\s` whitespace set for the `\S` shorthand --
+# node-exact (v24.20.0; WhiteSpace + LineTerminator, BMP only --
+# astral whitespace does not exist in the spec). Verified by
+# enumerating /\s/ over 0x0000-0xFFFF in node (spec review
+# HARD-4): 0x9-0xD, 0x20, 0xA0, 0x1680, 0x2000-0x200A, 0x2028,
+# 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF.
+_F765_WS_CHARS = frozenset(
+    " \t\n\v\f\r"
+    "\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005"
+    "\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f"
+    "\u205f\u3000\ufeff"
+)
+
+
 def _f765_parse_class(text, j):
     """Parse a `[...]` character class at text[j] == '[' (F765).
 
@@ -79116,7 +79279,20 @@ def _f765_parse_terms(text, j, in_group):
                 raise _JSExprFail("F765 bad quantifier")
             atoms[-1] = ("plus", atoms[-1])
             j += 1
-        elif c in "*?|^$\\":
+        elif c == "\\":
+            # F898: the `\S` shorthand (non-whitespace), desugared
+            # to the negated ASCII-whitespace class -- the matcher
+            # handles negated classes natively, and the F765 atoms
+            # are ASCII-only by construction (a non-ASCII
+            # non-whitespace char is outside the modeled class, a
+            # documented boundary). Any other escape still fails
+            # closed, exactly as before.
+            if j + 1 < n and text[j + 1] == "S":
+                atoms.append(("class", _F765_WS_CHARS, True))
+                j += 2
+            else:
+                raise _JSExprFail("F765 regex atom not modeled")
+        elif c in "*?|^$":
             raise _JSExprFail("F765 regex atom not modeled")
         elif c.isascii() and (c.isalnum() or c in " _-,"
                               or c == ":"):
@@ -88307,6 +88483,1049 @@ def _js_parse_f872_sortzero_iife(text, i, depth, state):
         return None
 
 
+# F897/F898/F899: wave-388 closure parsers (var-bound dispatch twins,
+# Error-stack reads, Proxy forwarding traps)
+# ---------------------------------------------------------------------------
+
+def _js_f897_parse_tail(text, j, val, state):
+    """Parse `(+'LIT')*` at text[j], appending to val (F897/F898/F899).
+
+    The F746 literal-tail discipline shared by the wave-388
+    closure parsers. Returns (val, next_index). Never evals."""
+    n = len(text)
+    while True:
+        t = _js_skip_ws(text, j)
+        if t >= n or text[t] != "+":
+            break
+        t = _js_skip_ws(text, t + 1)
+        if t >= n or text[t] not in "'\"":
+            raise _JSExprFail("F897 tail not a literal")
+        _tail, t = _js_parse_string(text, t)
+        if len(val) + len(_tail) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F897 concat too long")
+        val = val + _tail
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        state["ops"] += 1  # the concatenation is obfuscation-shaped
+        j = t
+    return val, j
+
+
+def _js_f897_parse_decl(text, j, state):
+    """Parse `var|let|const NAME = INIT;` at text[j] (F897).
+
+    Returns (name, init_kind, init_value, next_index) where
+    init_kind is "typedarray" (INIT = `new <IntTypedArray>([...])`,
+    init_value the decoded string via _js_parse_f643_typed_array)
+    or "intarray" (INIT = `[n, ...]`, init_value the decoded string
+    via _js_parse_fromcharcode_spread_inner). Any other
+    initializer fails closed. Never evals."""
+    n = len(text)
+    dkw, q = _js_match_decl_kw(text, j)
+    if dkw is None:
+        raise _JSExprFail("F897 decl not var/let/const")
+    q = _js_skip_ws(text, q)
+    name, q = _js_parse_ident(text, q)
+    if name in ("arguments",) or name in _F611_RESERVED:
+        raise _JSExprFail("F897 bad decl name")
+    q = _js_expect(text, _js_skip_ws(text, q), "=")
+    q = _js_skip_ws(text, q)
+    if _js_match_kw(text, q, "new") is not None:
+        val, q = _js_parse_f643_typed_array(text, q)
+        kind = "typedarray"
+    elif q < n and text[q] == "[":
+        val, q = _js_parse_fromcharcode_spread_inner(text, q,
+                                                     state=None)
+        kind = "intarray"
+    else:
+        raise _JSExprFail("F897 decl not an int array")
+    q = _js_expect(text, _js_skip_ws(text, q), ";")
+    state["parts"] += 1  # the binding is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return name, kind, val, q
+
+
+def _js_f897_parse_fcc_head(text, j):
+    """Parse `String.fromCharCode.` at text[j] (F897).
+
+    Returns (dispatch_name, next_index) with dispatch_name in
+    ("apply", "call"). The `String` / `fromCharCode` idents are
+    matched as keywords (word-boundary exact); the bracket forms
+    `String['fromCharCode']` and `['apply']`/`['call']` are
+    engine-identical and accepted. Anything else fails closed.
+    Never evals."""
+    n = len(text)
+    if _js_match_kw(text, j, "String") is None:
+        raise _JSExprFail("F897 not String.fromCharCode")
+    j = _js_skip_ws(text, j + len("String"))
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        # `String['fromCharCode']` -- engine-identical member read.
+        fname, j = _js_parse_string(text, _js_skip_ws(text, j + 1))
+        if fname != "fromCharCode":
+            raise _JSExprFail("F897 not String.fromCharCode")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+    else:
+        j = _js_expect(text, j, ".")
+        j = _js_skip_ws(text, j)
+        if _js_match_kw(text, j, "fromCharCode") is None:
+            raise _JSExprFail("F897 not String.fromCharCode")
+        j = _js_skip_ws(text, j + len("fromCharCode"))
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "[":
+        # `['apply']` / `['call']` -- engine-identical.
+        dname, j = _js_parse_string(text, _js_skip_ws(text, j + 1))
+        if dname not in ("apply", "call"):
+            raise _JSExprFail("F897 not apply/call")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        return dname, j
+    j = _js_expect(text, j, ".")
+    j = _js_skip_ws(text, j)
+    for dname in ("apply", "call"):
+        m = _js_match_kw(text, j, dname)
+        if m is not None:
+            return dname, m
+    raise _JSExprFail("F897 not apply/call")
+
+
+def _js_parse_f897_fcc_dispatch_iife(text, i, depth, state):
+    """Parse the F897 fromCharCode apply/call var-bound twins (F897).
+
+    F897 (LOW, wave-387 attack round 55): F434/F486/F643 model
+    integer-literal fromCharCode args and the direct
+    `.apply(thisArg, [codes])` / `.apply(thisArg, new
+    IntTypedArray([...]))` dispatch forms, but two var-bound
+    indirections miss while node resolves them exactly
+    (v24.20.0):
+      `(function(){var t=new Uint8Array([...]);return
+        String.fromCharCode.apply(null,Array.from(t));})()`
+      `(function(){var cs=[...];return
+        String.fromCharCode.call(null,...cs)+'f2';})()`
+
+    Node-exact desugar: twin 1 -- `Array.from(t)` over the
+    var-bound integer typed array is the element list
+    (F643 typed-element semantics), and
+    `String.fromCharCode.apply(null, <int-list>)` spreads it as
+    codepoints, so the value is exactly the typed array's decoded
+    string; twin 2 -- `...cs` spreads the var-bound int-array
+    literal as codepoints (F500/F643 spread semantics). The
+    thisArg is parsed but ignored (F486 discipline: fromCharCode
+    ignores `this`, node-verified).
+
+    Disjoint from every earlier route: twin 1 requires the
+    `Array.from(<ident>)` argsArray -- F486's apply form requires
+    a `[` literal or `new` typed-array head, and F508's
+    Array.from requires a literal/Set/Map source (an ident fails
+    closed); twin 2 requires `.call(thisArg, ...<ident>)` -- the
+    F486 call form parses literal codepoints only (`...` fails
+    closed there). No earlier route accepts a `new
+    <IntTypedArray>` IIFE decl head (red-first verified: 2 BREAK
+    on the open tree), so no previously-decoded input changes
+    behavior. None falls through to the parenthesized-additive
+    path.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-typed-array / non-int-array decl, an `Array.from` over
+    anything but the bound name, a spread of anything but the
+    bound name, extra dispatch args, a non-literal tail, extra
+    statements, call args on the IIFE. On miss the F452 budgets
+    are restored (wave-383 lesson). Returns (value, next_index),
+    or None. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j + 1)  # the head returns the `{` index
+    n = len(text)
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        tname, tkind, tval, j = _js_f897_parse_decl(text, j, state)
+        rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if rk is None:
+            raise _JSExprFail("F897 body not return")
+        j = _js_skip_ws(text, rk)
+        dname, j = _js_f897_parse_fcc_head(text, j)
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        _vm = _js_match_kw(text, _js_skip_ws(text, j), "void")
+        if _vm is not None:
+            # `void 0` -- the operand is discarded by `void`
+            # (always undefined); fromCharCode ignores the thisArg
+            # anyway, so this is node-exact (v24.20.0). Only the
+            # canonical `void 0` operand is modeled.
+            _vo = _js_skip_ws(text, _vm)
+            if _vo >= n or text[_vo] != "0" or \
+                    (_vo + 1 < n and text[_vo + 1] in _JS_IDENT_CONT):
+                raise _JSExprFail("F897 void operand not modeled")
+            j = _vo + 1
+        else:
+            _, j = _js_parse_dispatch_thisarg(text, j, depth, state)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_skip_ws(text, j)
+        if dname == "apply":
+            # `Array.from(<tname>)` -- the var-bound typed array
+            # desugared to its element list.
+            if _js_match_kw(text, j, "Array") is None:
+                raise _JSExprFail("F897 apply not Array.from")
+            j = _js_skip_ws(text, j + len("Array"))
+            j = _js_expect(text, j, ".")
+            j = _js_skip_ws(text, j)
+            if _js_match_kw(text, j, "from") is None:
+                raise _JSExprFail("F897 apply not Array.from")
+            j = _js_skip_ws(text, j + len("from"))
+            j = _js_expect(text, j, "(")
+            aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if aname != tname:
+                raise _JSExprFail("F897 Array.from not the bound array")
+            if tkind != "typedarray":
+                # `Array.from` of a plain int array is the identity
+                # list -- but the filed twin binds a typed array;
+                # anything else fails closed (documented).
+                raise _JSExprFail("F897 Array.from needs typed array")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+        else:
+            # `...<tname>` -- spread of the var-bound int array.
+            if j >= len(text) or not text.startswith("...", j):
+                raise _JSExprFail("F897 call not a spread")
+            sname, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+            if sname != tname:
+                raise _JSExprFail("F897 spread not the bound array")
+            if tkind != "intarray":
+                raise _JSExprFail("F897 spread needs int array")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        state["ops"] += 1  # the dispatch is obfuscation-shaped
+        # ToUint16 wrap (spec review HARD-2/3): String.fromCharCode
+        # applies ToUint16 to each argument -- astral codepoints
+        # wrap (node '\x00' for 0x10000), while the shared int
+        # decoders keep the full codepoint (their documented
+        # residual). Applied here so the F897 value is node-exact
+        # (v24.20.0); BMP chars are unaffected by the mask.
+        tval = "".join(chr(ord(c) & 0xFFFF) for c in tval)
+        val, j = _js_f897_parse_tail(text, j, tval, state)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_f898_parse_error_new(text, j):
+    """Parse `[new] CTOR('LIT' | )` at text[j] (F898).
+
+    Like _js_f750_parse_error_new but also returns the
+    constructor name: the V8 stack's deterministic first line is
+    `CTOR: <message>` (`CTOR` alone when the message is empty),
+    node v24.20.0 verified. Returns (ctor, message, next_index).
+    Never evals."""
+    n = len(text)
+    k = _js_match_kw(text, j, "new")
+    if k is not None:
+        j = _js_skip_ws(text, k)
+    cname, j = _js_parse_ident(text, j)
+    if cname not in _F750_ERROR_CTORS:
+        raise _JSExprFail("F898 not an Error constructor")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ")":
+        return cname, "", j + 1
+    msg, j = _js_parse_string(text, j)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    return cname, msg, j
+
+
+def _js_f898_parse_stack_read(text, j, ename, stack):
+    """Parse `e.stack` / `e['stack']` (plus an optional `||'LIT'`)
+    at text[j] (F898).
+
+    *ename* is the bound error name, *stack* the modeled first
+    line. The `||` fallback never fires in the engine (an Error's
+    stack is always a non-empty string) -- the RHS must still be a
+    string literal, parsed and discarded. Returns next_index.
+    Never evals."""
+    n = len(text)
+    name, j = _js_parse_ident(text, j)
+    if name != ename:
+        raise _JSExprFail("F898 stack not our error")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ".":
+        mname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if mname != "stack":
+            raise _JSExprFail("F898 not .stack")
+    elif j < n and text[j] == "[":
+        ms, j = _js_parse_string(text, _js_skip_ws(text, j + 1))
+        if ms != "stack":
+            raise _JSExprFail("F898 not ['stack']")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+    else:
+        raise _JSExprFail("F898 stack needs a member read")
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j] == "|" and text[j + 1] == "|":
+        # `e.stack||'...'` -- the RHS is dead in the engine; it
+        # must still be a string literal (parsed, discarded).
+        j = _js_skip_ws(text, j + 2)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F898 || rhs not a literal")
+        _, j = _js_parse_string(text, j)
+    return j
+
+
+def _js_f898_parse_match_expr(text, j, ename, stack, state):
+    """Parse the F898 stack-match rvalue at text[j].
+
+    Two forms: `/PAT/.exec(<stack-read>)` and
+    `String(<stack-read>).match(/PAT/)`. The regex uses the F765
+    grammar (F898 extends it with `\\S`); flags must be empty
+    (other flags fail closed -- a documented boundary). Returns
+    (match0_or_None, next_index): the engine's `m[0]` (the full
+    match) or None when the regex finds nothing (the engine's
+    null). Never evals."""
+    n = len(text)
+    if _js_match_kw(text, j, "String") is not None:
+        # `String(<stack-read>).match(/PAT/)`
+        j = _js_skip_ws(text, j + len("String"))
+        j = _js_expect(text, j, "(")
+        j = _js_f898_parse_stack_read(text, _js_skip_ws(text, j),
+                                      ename, stack)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ".")
+        j = _js_skip_ws(text, j)
+        if _js_match_kw(text, j, "match") is None:
+            raise _JSExprFail("F898 not .match")
+        j = _js_expect(text, _js_skip_ws(text, j + len("match")),
+                       "(")
+        j = _js_skip_ws(text, j)
+        atoms, flags, j = _js_parse_f765_regex_literal(text, j)
+        if flags != "":
+            raise _JSExprFail("F898 regex flags not modeled")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+    else:
+        # `/PAT/.exec(<stack-read>)` (`/PAT/['exec']` is engine-identical)
+        atoms, flags, j = _js_parse_f765_regex_literal(text, j)
+        if flags != "":
+            raise _JSExprFail("F898 regex flags not modeled")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "[":
+            mname, j = _js_parse_string(text, _js_skip_ws(text, j + 1))
+            if mname != "exec":
+                raise _JSExprFail("F898 not .exec")
+            j = _js_expect(text, _js_skip_ws(text, j), "]")
+        else:
+            j = _js_expect(text, j, ".")
+            j = _js_skip_ws(text, j)
+            if _js_match_kw(text, j, "exec") is None:
+                raise _JSExprFail("F898 not .exec")
+            j = _js_skip_ws(text, j + len("exec"))
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        j = _js_f898_parse_stack_read(text, _js_skip_ws(text, j),
+                                      ename, stack)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+    state["parts"] += 1  # the regex extraction is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    state["ops"] += 1
+    matches = _f765_all_matches(stack, atoms)
+    m0 = matches[0][2] if matches else None
+    return m0, j
+
+
+def _js_f898_parse_ternary_return(text, j, mname, m0, state):
+    """Parse `return (m?m[0]:'LIT')(+'LIT')*;` at text[j] (F898).
+
+    *mname* is the bound match name, *m0* the engine's `m[0]`
+    (None when the regex missed). The value is `m0` on a hit,
+    else the `:`-branch literal -- exactly the engine's ternary.
+    Returns (value, next_index). Never evals."""
+    rk = _js_match_kw(text, j, "return")
+    if rk is None:
+        raise _JSExprFail("F898 body not return")
+    j = _js_skip_ws(text, rk)
+    j = _js_expect(text, j, "(")
+    cname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if cname != mname:
+        raise _JSExprFail("F898 ternary not the match")
+    j = _js_expect(text, _js_skip_ws(text, j), "?")
+    cname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if cname != mname:
+        raise _JSExprFail("F898 ternary consequent not the match")
+    j = _js_expect(text, _js_skip_ws(text, j), "[")
+    j = _js_skip_ws(text, j)
+    if j >= len(text) or text[j] != "0":
+        raise _JSExprFail("F898 ternary not m[0]")
+    j = _js_expect(text, _js_skip_ws(text, j + 1), "]")
+    j = _js_expect(text, _js_skip_ws(text, j), ":")
+    j = _js_skip_ws(text, j)
+    if j >= len(text) or text[j] not in "'\"":
+        raise _JSExprFail("F898 ternary else not a literal")
+    else_lit, j = _js_parse_string(text, j)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    val = m0 if m0 is not None else else_lit
+    state["ops"] += 1  # the extraction is obfuscation-shaped
+    return _js_f897_parse_tail(text, j, val, state)
+
+
+def _js_parse_f898_error_stack_iife(text, i, depth, state):
+    """Parse the F898 Error-stack extraction twins (F898).
+
+    F898 (LOW, wave-387 attack round 55): F750 models `C.message`
+    reads after `throw [new] Error('LIT')`, but the stack misses
+    while node resolves it exactly (v24.20.0):
+      `(function(){try{throw new Error('f1');}catch(e){var
+        m=/xoxb-[0-9a-z-]+/.exec(e.stack||'');return
+        (m?m[0]:'no')+'f2';}})()`
+      `(function(){var e=new Error('f1');var
+        m=String(e.stack).match(/xoxb-\\S+/);return
+        (m?m[0]:'')+'f2';})()`
+
+    Node-exact desugar: V8 renders an Error's stack with the
+    message embedded in its deterministic first line --
+    `Error: <message>` (`TypeError: <message>` for subclasses,
+    the bare ctor name when the message is empty; node v24.20.0
+    verified) -- followed by call-site-dependent frame lines.
+    The modeled stack value is that first line: the credential
+    the regex extracts can only come from the attacker-controlled
+    message (frame lines carry file/line noise, never payload
+    text in these shapes -- a documented boundary: a regex that
+    matches only inside a frame line is not modeled). The regex
+    runs in the F765 engine (F898 adds the `\\S` shorthand);
+    `m[0]` is the full match, null when nothing matches.
+
+    Disjoint from every earlier route: twin 1's catch body has a
+    `var m=` statement -- F750 requires a bare `return` catch
+    body and F849 requires a non-Error throw; twin 2's
+    `String(e.stack)` / `e.stack` read has no earlier production
+    (red-first verified: 2 BREAK on the open tree), so no
+    previously-decoded input changes behavior. None falls through
+    to the parenthesized-additive path.
+
+    Bounds (all fail closed -- rejected, never mis-decoded): a
+    non-Error throw, a non-literal message, extra constructor
+    args, a non-empty-regex flag, a non-`m[0]` ternary, an `else`
+    branch that is not a literal, extra statements, call args on
+    the IIFE. On miss the F452 budgets are restored (wave-383
+    lesson). Returns (value, next_index), or None. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j + 1)  # the head returns the `{` index
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        n = len(text)
+        j = _js_skip_ws(text, j)
+        if _js_match_kw(text, j, "try") is not None:
+            # Twin 1: try{throw [new] CTOR('LIT');}catch(e){
+            #   var m=<match>;return (m?m[0]:'LIT')...;}
+            j = _js_expect(text, _js_skip_ws(text, j + 3), "{")
+            tkw = _js_match_kw(text, _js_skip_ws(text, j), "throw")
+            if tkw is None:
+                raise _JSExprFail("F898 try body not a throw")
+            ctor, msg, j = _js_f898_parse_error_new(
+                text, _js_skip_ws(text, tkw))
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            j = _js_expect(text, _js_skip_ws(text, j), "}")
+            ckw = _js_match_kw(text, _js_skip_ws(text, j), "catch")
+            if ckw is None:
+                raise _JSExprFail("F898 no catch")
+            j = _js_expect(text, _js_skip_ws(text, ckw), "(")
+            ename, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if ename in ("arguments",) or ename in _F611_RESERVED:
+                raise _JSExprFail("F898 bad catch name")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), "{")
+            dkw, j = _js_match_decl_kw(text, _js_skip_ws(text, j))
+            if dkw is None:
+                raise _JSExprFail("F898 catch not a var decl")
+            j = _js_skip_ws(text, j)
+            mname, j = _js_parse_ident(text, j)
+            if mname in ("arguments",) or mname in _F611_RESERVED:
+                raise _JSExprFail("F898 bad match name")
+            j = _js_expect(text, _js_skip_ws(text, j), "=")
+            stack = ctor + (": " + msg if msg else "")
+            m0, j = _js_f898_parse_match_expr(
+                text, _js_skip_ws(text, j), ename, stack, state)
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            val, j = _js_f898_parse_ternary_return(
+                text, _js_skip_ws(text, j), mname, m0, state)
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            j = _js_expect(text, _js_skip_ws(text, j), "}")
+        else:
+            # Twin 2: var e=[new] CTOR('LIT');var m=<match>;
+            #   return (m?m[0]:'LIT')...;
+            dkw, q = _js_match_decl_kw(text, j)
+            if dkw is None:
+                raise _JSExprFail("F898 not a var decl")
+            q = _js_skip_ws(text, q)
+            ename, q = _js_parse_ident(text, q)
+            if ename in ("arguments",) or ename in _F611_RESERVED:
+                raise _JSExprFail("F898 bad error name")
+            q = _js_expect(text, _js_skip_ws(text, q), "=")
+            ctor, msg, q = _js_f898_parse_error_new(
+                text, _js_skip_ws(text, q))
+            q = _js_expect(text, _js_skip_ws(text, q), ";")
+            dkw2, q = _js_match_decl_kw(text, _js_skip_ws(text, q))
+            if dkw2 is None:
+                raise _JSExprFail("F898 second decl missing")
+            q = _js_skip_ws(text, q)
+            mname, q = _js_parse_ident(text, q)
+            if mname in ("arguments",) or mname in _F611_RESERVED:
+                raise _JSExprFail("F898 bad match name")
+            q = _js_expect(text, _js_skip_ws(text, q), "=")
+            stack = ctor + (": " + msg if msg else "")
+            m0, q = _js_f898_parse_match_expr(
+                text, _js_skip_ws(text, q), ename, stack, state)
+            q = _js_expect(text, _js_skip_ws(text, q), ";")
+            val, j = _js_f898_parse_ternary_return(
+                text, _js_skip_ws(text, q), mname, m0, state)
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F898 concat too long")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+def _js_f899_parse_fn_body(text, j):
+    """Parse `function(){return 'LIT';}` / `()=>'LIT'` at text[j] (F899).
+
+    The forwarding-apply target: a zero-parameter function whose
+    body is a single string-literal return (function-expression
+    form, optional name) or a string-literal arrow body. Returns
+    (literal, next_index). Anything else fails closed. Never
+    evals."""
+    n = len(text)
+    fk = _js_match_kw(text, j, "function")
+    if fk is not None:
+        j = _js_skip_ws(text, fk)
+        if j < n and (text[j].isalpha() or text[j] in "_$"):
+            try:
+                _fname, q2 = _js_parse_ident(text, j)
+                q2 = _js_skip_ws(text, q2)
+                if q2 < n and text[q2] == "(":
+                    j = q2
+            except _JSExprFail:
+                pass
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if rk is None:
+            raise _JSExprFail("F899 fn body not a return")
+        j = _js_skip_ws(text, rk)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F899 fn return not a string")
+        lit, j = _js_parse_string(text, j)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        return lit, j
+    # Arrow: `()=>'LIT'`
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_skip_ws(text, j)
+    if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+        raise _JSExprFail("F899 not an arrow")
+    j = _js_skip_ws(text, j + 2)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F899 arrow body not a string")
+    return _js_parse_string(text, j)
+
+
+def _js_f899_parse_forward_trap(text, j, kind):
+    """Parse the forwarding trap body for *kind* at text[j] (F899).
+
+    *kind* in ("get", "apply", "has", "gopd"). Two forms:
+    `function(P1[,P2[,P3]]){return FORWARD;}` (optional function
+    name) and `(P1[,P2[,P3]])=>FORWARD`, where FORWARD is
+    `o[k]` (get), `t.apply(a,r)` (apply), `k in o` (has), or
+    `Object.getOwnPropertyDescriptor(o,k)` (gopd), with the
+    param names bound positionally. Method-shorthand traps and
+    any other body fail closed (documented boundary). Returns
+    next_index. Never evals."""
+    n = len(text)
+    arity = {"get": 2, "apply": 3, "has": 2, "gopd": 2}[kind]
+    is_arrow = False
+    fk = _js_match_kw(text, j, "function")
+    if fk is not None:
+        j = _js_skip_ws(text, fk)
+        if j < n and (text[j].isalpha() or text[j] in "_$"):
+            try:
+                _fname, q2 = _js_parse_ident(text, j)
+                q2 = _js_skip_ws(text, q2)
+                if q2 < n and text[q2] == "(":
+                    j = q2
+            except _JSExprFail:
+                pass
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+    else:
+        j = _js_expect(text, j, "(")
+        is_arrow = None  # decided by what follows the params
+    params = []
+    j = _js_skip_ws(text, j)
+    for _ in range(arity):
+        pname, j = _js_parse_ident(text, j)
+        params.append(pname)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if is_arrow is None:
+        if j + 1 < n and text[j] == "=" and text[j + 1] == ">":
+            is_arrow = True
+            j = _js_skip_ws(text, j + 2)
+        else:
+            is_arrow = False
+    if not is_arrow:
+        j = _js_expect(text, j, "{")
+        rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if rk is None:
+            raise _JSExprFail("F899 trap body not a return")
+        j = _js_skip_ws(text, rk)
+    if kind == "get":
+        o, k = params
+        p0, j = _js_parse_ident(text, j)
+        if p0 != o:
+            raise _JSExprFail("F899 get not forwarding")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if p1 != k:
+            raise _JSExprFail("F899 get not forwarding")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+    elif kind == "apply":
+        t, a, r = params
+        p0, j = _js_parse_ident(text, j)
+        if p0 != t:
+            raise _JSExprFail("F899 apply not forwarding")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        j = _js_skip_ws(text, j)
+        if _js_match_kw(text, j, "apply") is None:
+            raise _JSExprFail("F899 apply not forwarding")
+        j = _js_expect(text, _js_skip_ws(text, j + 5), "(")
+        p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if p1 != a:
+            raise _JSExprFail("F899 apply not forwarding")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if p2 != r:
+            raise _JSExprFail("F899 apply not forwarding")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+    elif kind == "has":
+        o, k = params
+        p1, j = _js_parse_ident(text, j)
+        if p1 != k:
+            raise _JSExprFail("F899 has not forwarding")
+        _inm = _js_match_kw(text, _js_skip_ws(text, j), "in")
+        if _inm is None:
+            raise _JSExprFail("F899 has not forwarding")
+        j = _js_skip_ws(text, _inm)
+        p0, j = _js_parse_ident(text, j)
+        if p0 != o:
+            raise _JSExprFail("F899 has not forwarding")
+    else:  # gopd
+        o, k = params
+        if _js_match_kw(text, j, "Object") is None:
+            raise _JSExprFail("F899 gopd not forwarding")
+        j = _js_expect(text, _js_skip_ws(text, j + 6), ".")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("getOwnPropertyDescriptor", j):
+            raise _JSExprFail("F899 gopd not forwarding")
+        j = _js_expect(text, _js_skip_ws(
+            text, j + len("getOwnPropertyDescriptor")), "(")
+        p0, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if p0 != o:
+            raise _JSExprFail("F899 gopd not forwarding")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if p1 != k:
+            raise _JSExprFail("F899 gopd not forwarding")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+    if not is_arrow:
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return j
+
+
+def _js_f899_parse_handler(text, j, state):
+    """Parse the F899 Proxy handler at text[j] (`{`...`}`).
+
+    Returns ("empty" | "get" | "apply" | "has" | "gopd",
+    next_index): the empty handler (every trap forwards to the
+    target, engine-exact) or exactly one forwarding trap. Extra
+    keys, method-shorthand traps, and non-forwarding bodies fail
+    closed. Never evals."""
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        return "empty", j + 1
+    key, j = _js_parse_ident(text, j)
+    if key not in ("get", "apply", "has", "getOwnPropertyDescriptor"):
+        raise _JSExprFail("F899 handler key not modeled")
+    j = _js_expect(text, _js_skip_ws(text, j), ":")
+    j = _js_f899_parse_forward_trap(text, _js_skip_ws(text, j),
+                                    "gopd" if key ==
+                                    "getOwnPropertyDescriptor"
+                                    else key)
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    state["parts"] += 1  # the trap is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return ("gopd" if key == "getOwnPropertyDescriptor" else key), j
+
+
+def _js_f899_parse_member(text, j):
+    """Parse `.NAME` or `['NAME']` at text[j] (F899)."""
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ".":
+        return _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if j < n and text[j] == "[":
+        name, j = _js_parse_string(text, _js_skip_ws(text, j + 1))
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        return name, j
+    raise _JSExprFail("F899 not a member read")
+
+
+def _js_f899_target_value(props, name):
+    """Resolve a get-trap target read (F899).
+
+    The forwarding get returns the target's data property
+    node-exactly; a missing key is `undefined` in the engine --
+    the decoder has no undefined value, so it fails closed
+    (never mis-decoded). The F535 object grammar stringifies
+    non-string values (`{k:42}` -> `'42'`, engine-exact under the
+    `+` tail), so by the time a value arrives here it is a str;
+    a genuinely non-str value (defensive) fails closed. Never
+    evals."""
+    if name not in props:
+        raise _JSExprFail("F899 missing target key")
+    val = props[name]
+    if not isinstance(val, str):
+        raise _JSExprFail("F899 target value not a string")
+    return val
+
+
+def _js_f899_parse_new_proxy(text, j, xname, tname, depth, state):
+    """Parse `new Proxy(TARGET,H);` at text[j] (F899).
+
+    TARGET is `{...}` (inline object -- parsed here, returned) or
+    the bound target name *tname* (None when no target is bound,
+    i.e. the single-decl inline shape). Returns (next_index,
+    trap, inline_props_or_None). Never evals."""
+    n = len(text)
+    if _js_match_kw(text, j, "new") is None:
+        raise _JSExprFail("F899 proxy needs new")
+    j = _js_skip_ws(text, j + 3)
+    cname, j = _js_parse_ident(text, j)
+    if cname != "Proxy":
+        raise _JSExprFail("F899 not a Proxy construction")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    j = _js_skip_ws(text, j)
+    inline_props = None
+    if j < n and text[j] == "{":
+        inline_props, j = _js_parse_f535_object(text, j, depth,
+                                               state)
+    else:
+        pname, j = _js_parse_ident(text, j)
+        if tname is None or pname != tname:
+            raise _JSExprFail("F899 proxy target not bound")
+    j = _js_expect(text, _js_skip_ws(text, j), ",")
+    trap, j = _js_f899_parse_handler(text, _js_skip_ws(text, j),
+                                     state)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    state["parts"] += 1  # the construction is obfuscation-shaped
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail("too many parts")
+    return j, trap, inline_props
+
+
+def _js_parse_f899_proxy_forward_iife(text, i, depth, state):
+    """Parse the F899 Proxy forwarding-trap twins (F899).
+
+    F899 (LOW, wave-387 attack round 55): F800 models
+    constant-return get traps and `Proxy.revocable` empty
+    handlers, but forwarding traps miss while node resolves
+    them exactly (v24.20.0):
+      `(function(){var t={k:'f1'};var x=new Proxy(t,
+        {get:function(o,k){return o[k];}});return x.k+'f2';})()`
+      `(function(){var t={k:'f1'};var x=new Proxy(t,{});
+        return x.k+'f2';})()`
+    Same-class: forwarding apply traps on function proxies,
+    forwarding has-trap guards, and forwarding
+    getOwnPropertyDescriptor traps:
+      `(function(){var f=function(){return 'f1';};var x=new
+        Proxy(f,{apply:function(t,a,r){return
+        t.apply(a,r);}});return x()+'f2';})()`
+      `(function(){var t={k:'f1'};var x=new Proxy(t,
+        {has:function(o,k){return k in o;}});return (('k' in
+        x)?t.k:'no')+'f2';})()`
+      `(function(){var t={k:'f1'};var x=new Proxy(t,
+        {getOwnPropertyDescriptor:function(o,k){return
+        Object.getOwnPropertyDescriptor(o,k);}});return
+        Object.getOwnPropertyDescriptor(x,'k').value+'f2';})()`
+
+    Node-exact desugar: the empty handler forwards every trap to
+    the target; a forwarding trap delegates the operation to the
+    target identically. Reads resolve against the target's parsed
+    properties (F535 grammar); the return additive appends plain
+    string literals (the F746 tail discipline).
+
+    Disjoint from every earlier route: the forwarding get body
+    (`return o[k]`) is not F800's constant-return body and not
+    F642's modeled class; the empty-handler twin needs a
+    var-bound/inline object target (F800 twin 2 needs the
+    `Proxy.revocable` head); F850 needs a `set` key; F851 needs
+    nested `new Proxy(new Proxy`; F489/F666/F670/F675/F686/F689/
+    F707 need their own binding families (red-first verified: 5
+    BREAK on the open tree), so no previously-decoded input
+    changes behavior. None falls through to the
+    parenthesized-additive path.
+
+    Bounds (all fail closed -- rejected, never mis-decoded):
+    method-shorthand or non-forwarding trap bodies, extra handler
+    keys, a `revoke()` call, a missing target key (engine
+    `undefined`), `x()` on a non-function target, member reads on
+    a function target, a has-ternary without parens, non-literal
+    ternary branches (other than target member reads), non-`.value`
+    descriptor fields, extra statements, call args on the IIFE.
+    (Non-string target values are stringified by the F535 grammar,
+    engine-exact under the `+` tail -- not a bound.)
+    On miss the F452 budgets are restored (wave-383
+    lesson). Returns (value, next_index), or None. Never evals.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j + 1)  # the head returns the `{` index
+    saved_parts, saved_ops = state["parts"], state["ops"]
+    try:
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        n = len(text)
+        # Decl 1: either the target (`var|let|const T = {...};`
+        # object, or `var|let|const F = function(){return 'LIT';};`
+        # / arrow for the apply twin) or the proxy itself with an
+        # inline object target (`var|let|const X = new
+        # Proxy({...},H);`).
+        dkw, q = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if dkw is None:
+            raise _JSExprFail("F899 not a decl")
+        q = _js_skip_ws(text, q)
+        dname, q = _js_parse_ident(text, q)
+        if dname in ("arguments", "Proxy") or \
+                dname in _F611_RESERVED:
+            raise _JSExprFail("F899 bad decl name")
+        q = _js_expect(text, _js_skip_ws(text, q), "=")
+        q = _js_skip_ws(text, q)
+        tname = None
+        xname = None
+        tprops = None
+        tfn = None
+        if _js_match_kw(text, q, "new") is not None:
+            # Proxy decl with an inline object target; the single
+            # decl names the proxy.
+            xname = dname
+            q, trap, _inline = _js_f899_parse_new_proxy(
+                text, q, xname, None, depth, state)
+            tprops = _inline
+        else:
+            # Target decl; a second decl (the proxy) follows.
+            tname = dname
+            if q < n and text[q] == "{":
+                tprops, q = _js_parse_f535_object(text, q, depth,
+                                                 state)
+            else:
+                tfn, q = _js_f899_parse_fn_body(text, q)
+            q = _js_expect(text, _js_skip_ws(text, q), ";")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            dkw2, q = _js_match_decl_kw(text, _js_skip_ws(text, q))
+            if dkw2 is None:
+                raise _JSExprFail("F899 proxy not a decl")
+            q = _js_skip_ws(text, q)
+            xname, q = _js_parse_ident(text, q)
+            if xname in ("arguments", "Proxy") or \
+                    xname in _F611_RESERVED:
+                raise _JSExprFail("F899 bad proxy name")
+            q = _js_expect(text, _js_skip_ws(text, q), "=")
+            q = _js_skip_ws(text, q)
+            q, trap, _inline = _js_f899_parse_new_proxy(
+                text, q, xname, tname, depth, state)
+            if _inline is not None:
+                tprops = _inline
+        # Return reads. The empty handler forwards every trap, so
+        # the read SHAPE selects the operation; a single-key
+        # handler must match the read kind (engine-exact: a get
+        # trap never fields `x()`).
+        rk = _js_match_kw(text, _js_skip_ws(text, q), "return")
+        if rk is None:
+            raise _JSExprFail("F899 body not return")
+        q = _js_skip_ws(text, rk)
+        if text.startswith("Object", q) and \
+                (q + 6 >= n or text[q + 6] not in _JS_IDENT_CONT):
+            read_kind = "gopd"
+        elif q < n and text[q] == "(":
+            read_kind = "has"
+        else:
+            rname, _rq = _js_parse_ident(text, q)
+            if rname != xname:
+                raise _JSExprFail("F899 return not the proxy")
+            _rq = _js_skip_ws(text, _rq)
+            if _rq < n and text[_rq] == "(":
+                read_kind = "apply"
+            else:
+                read_kind = "get"
+        if read_kind == "get" and trap not in ("get", "empty"):
+            raise _JSExprFail("F899 get read needs get trap")
+        if read_kind == "apply" and trap not in ("apply", "empty"):
+            raise _JSExprFail("F899 apply read needs apply trap")
+        if read_kind == "has" and trap not in ("has", "empty"):
+            raise _JSExprFail("F899 has read needs has trap")
+        if read_kind == "gopd" and trap not in ("gopd", "empty"):
+            raise _JSExprFail("F899 gopd read needs gopd trap")
+        if read_kind == "get":
+            if tprops is None:
+                raise _JSExprFail("F899 get needs object target")
+            rname, q = _js_parse_ident(text, q)
+            mname, q = _js_f899_parse_member(text, q)
+            val = _js_f899_target_value(tprops, mname)
+            state["ops"] += 1  # the read is obfuscation-shaped
+        elif read_kind == "apply":
+            if tfn is None:
+                raise _JSExprFail("F899 apply needs fn target")
+            rname, q = _js_parse_ident(text, q)
+            q = _js_expect(text, _js_skip_ws(text, q), "(")
+            q = _js_expect(text, _js_skip_ws(text, q), ")")
+            val = tfn
+            state["ops"] += 1
+        elif read_kind == "has":
+            if tprops is None:
+                raise _JSExprFail("F899 has needs object target")
+            q = _js_expect(text, q, "(")
+            q = _js_skip_ws(text, q)
+            _inner = False
+            if q < n and text[q] == "(":
+                _inner = True
+                q = _js_skip_ws(text, q + 1)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F899 in-test not a literal")
+            test_key, q = _js_parse_string(text, q)
+            _inm = _js_match_kw(text, _js_skip_ws(text, q), "in")
+            if _inm is None:
+                raise _JSExprFail("F899 not an in-test")
+            q = _js_skip_ws(text, _inm)
+            rname, q = _js_parse_ident(text, q)
+            if rname != xname:
+                raise _JSExprFail("F899 in-test not the proxy")
+            if _inner:
+                q = _js_expect(text, _js_skip_ws(text, q), ")")
+            q = _js_expect(text, _js_skip_ws(text, q), "?")
+            then_v, q = _js_f899_parse_has_branch(
+                text, _js_skip_ws(text, q), tname, tprops)
+            q = _js_expect(text, _js_skip_ws(text, q), ":")
+            else_v, q = _js_f899_parse_has_branch(
+                text, _js_skip_ws(text, q), tname, tprops)
+            q = _js_expect(text, _js_skip_ws(text, q), ")")
+            # The forwarding has trap delegates to the target:
+            # `'k' in x` === `k in target` (engine-exact), and `in`
+            # walks the prototype chain -- the parsed targets are
+            # plain object literals whose chain is exactly
+            # Object.prototype (spec review HARD-5).
+            val = then_v if (test_key in tprops or
+                             test_key in _F899_OBJECT_PROTO_KEYS) \
+                else else_v
+            state["ops"] += 1
+        elif read_kind == "gopd":
+            if tprops is None:
+                raise _JSExprFail("F899 gopd needs object target")
+            if _js_match_kw(text, q, "Object") is None:
+                raise _JSExprFail("F899 not Object.gopd")
+            q = _js_expect(text, _js_skip_ws(text, q + 6), ".")
+            q = _js_skip_ws(text, q)
+            if not text.startswith("getOwnPropertyDescriptor", q):
+                raise _JSExprFail("F899 not gopd")
+            q = _js_expect(text, _js_skip_ws(
+                text, q + len("getOwnPropertyDescriptor")), "(")
+            rname, q = _js_parse_ident(text, _js_skip_ws(text, q))
+            if rname != xname:
+                raise _JSExprFail("F899 gopd not the proxy")
+            q = _js_expect(text, _js_skip_ws(text, q), ",")
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] not in "'\"":
+                raise _JSExprFail("F899 gopd key not a literal")
+            gkey, q = _js_parse_string(text, q)
+            q = _js_expect(text, _js_skip_ws(text, q), ")")
+            q = _js_skip_ws(text, q)
+            if q < n and text[q] == ".":
+                fname, q = _js_parse_ident(text,
+                                           _js_skip_ws(text, q + 1))
+                if fname != "value":
+                    raise _JSExprFail("F899 gopd field not value")
+            elif q < n and text[q] == "[":
+                fname, q = _js_parse_string(text,
+                                            _js_skip_ws(text, q + 1))
+                if fname != "value":
+                    raise _JSExprFail("F899 gopd field not value")
+                q = _js_expect(text, _js_skip_ws(text, q), "]")
+            else:
+                raise _JSExprFail("F899 gopd without .value")
+            val = _js_f899_target_value(tprops, gkey)
+            state["ops"] += 1
+        val, q = _js_f897_parse_tail(text, q, val, state)
+        q = _js_expect(text, _js_skip_ws(text, q), ";")
+        q = _js_expect(text, _js_skip_ws(text, q), "}")
+        return _js_parse_f6xx_iife_tail(text, q, depth, state, val)
+    except _JSExprFail:
+        state["parts"], state["ops"] = saved_parts, saved_ops
+        return None
+
+
+# F899: Object.prototype's own property names (node v24.20.0,
+# Object.getOwnPropertyNames(Object.prototype), sorted). The
+# forwarding `has` trap delegates `'K' in x` to `K in <target>`,
+# and `in` walks the prototype chain -- for the plain object
+# literals this parser accepts, the chain is exactly
+# Object.prototype, so a test key not in the parsed props still
+# selects the then-branch when it names a proto member
+# (spec review HARD-5; e.g. 'toString' in t === true).
+_F899_OBJECT_PROTO_KEYS = frozenset((
+    "__defineGetter__", "__defineSetter__", "__lookupGetter__",
+    "__lookupSetter__", "__proto__", "constructor",
+    "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable",
+    "toLocaleString", "toString", "valueOf",
+))
+
+
+def _js_f899_parse_has_branch(text, j, tname, tprops):
+    """Parse one has-ternary branch at text[j] (F899).
+
+    A string literal or a `<tname>.MEM` / `<tname>['MEM']`
+    target member read (the target must be var-bound -- inline
+    targets have no name to read through). Returns (value,
+    next_index). Never evals."""
+    n = len(text)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    rname, j = _js_parse_ident(text, j)
+    if tname is None or rname != tname:
+        raise _JSExprFail("F899 branch not the target")
+    mname, j = _js_f899_parse_member(text, j)
+    return _js_f899_target_value(tprops, mname), j
+
+
 def _js_parse_primary(text, i, depth, state, _forbid_template=False):
     """Parse one primary (literal / fromCharCode / parens / number / array /
     Array constructor / Reflect.construct).
@@ -91666,13 +92885,15 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
         #   {BODY}return ADD;})() with continue/break (labeled or
         #   unlabeled, optionally `if(BOOL)`-guarded) in BODY.
         #   Tried after F757: F757 requires a new.target condition
-        #   head; F655's inner grammar has no `if` production and
-        #   no loop/continue production, so it fails closed on
-        #   every shape this accepts; F709's for/while twins
-        #   require the loop keyword where this requires a `LBL:`
-        #   head (red-first verified: 2 BREAK on the open tree), so
-        #   no previously-decoded input changes behavior. The F757
-        #   hook and its trailing `return` are untouched
+        #   head; F655's inner grammar has no UNBRACED-`if`
+        #   production (F900 added only the braced `if(CONST){...}`
+        #   form, which F784's `if(BOOL)break LBL;` shapes never
+        #   match) and no loop/continue production, so it fails
+        #   closed on every shape this accepts; F709's for/while
+        #   twins require the loop keyword where this requires a
+        #   `LBL:` head (red-first verified: 2 BREAK on the open
+        #   tree), so no previously-decoded input changes behavior.
+        #   The F757 hook and its trailing `return` are untouched
         #   (wave-379 lesson).
         _f784_saved_parts = state['parts']; _f784_saved_ops = state['ops']
         _f784 = _js_parse_f784_labeled_block_iife(text, i, depth, state)
@@ -92326,6 +93547,91 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f875_saved_parts; state['ops'] = _f875_saved_ops
         if _f875 is not None:
             val, i = _f875
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F897: (function(){var|let|const t=new
+        #   <IntTypedArray>([...]);return
+        #   String.fromCharCode.apply(null,Array.from(t))(+'LIT')*;})()
+        #   and (function(){var|let|const cs=[...];return
+        #   String.fromCharCode.call(null,...cs)(+'LIT')*;})() --
+        #   var-bound fromCharCode apply/call indirections. Tried
+        #   after F875: twin 1 requires the `Array.from(<ident>)`
+        #   argsArray (F486's apply needs a `[`/typed-array head;
+        #   F508's Array.from needs a literal/Set/Map source); twin
+        #   2 requires `.call(thisArg, ...<ident>)` (F486's call
+        #   parses literal codepoints only); no earlier route
+        #   accepts a typed-array/int-array IIFE decl head
+        #   (red-first verified: 2 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the parenthesized-additive path. The F875
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f897_saved_parts = state['parts']; _f897_saved_ops = state['ops']
+        _f897 = _js_parse_f897_fcc_dispatch_iife(text, i, depth,
+                                                 state)
+        if _f897 is None:
+            state['parts'] = _f897_saved_parts; state['ops'] = _f897_saved_ops
+        if _f897 is not None:
+            val, i = _f897
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F898: (function(){try{throw [new] CTOR('LIT');}catch(C){
+        #   var|let|const m=/PAT/.exec(C.stack||'LIT');return
+        #   (m?m[0]:'LIT')(+'LIT')*;}})() and
+        #   (function(){var|let|const e=[new] CTOR('LIT');
+        #   var|let|const m=String(e.stack).match(/PAT/);return
+        #   (m?m[0]:'LIT')(+'LIT')*;})() -- Error stack reads. The
+        #   V8 stack embeds the message in its deterministic first
+        #   line (`CTOR: <message>`), which is what the regex
+        #   extracts. Tried after F897: F750 requires a bare
+        #   `return` catch body (this has a `var m=` statement);
+        #   F849 requires a non-Error throw; no earlier route
+        #   models `.stack` (red-first verified: 2 BREAK on the
+        #   open tree), so no previously-decoded input changes
+        #   behavior. None falls through to the
+        #   parenthesized-additive path. The F897 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        #   Budget snapshot/restore on miss (wave-383 lesson).
+        _f898_saved_parts = state['parts']; _f898_saved_ops = state['ops']
+        _f898 = _js_parse_f898_error_stack_iife(text, i, depth,
+                                                state)
+        if _f898 is None:
+            state['parts'] = _f898_saved_parts; state['ops'] = _f898_saved_ops
+        if _f898 is not None:
+            val, i = _f898
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F899: (function(){var|let|const t={...};var|let|const x=
+        #   new Proxy(t|{...},H);return READ(+'LIT')*;})() -- Proxy
+        #   forwarding traps: H = `{}` (empty -- every trap
+        #   forwards), `{get:function(o,k){return o[k];}}` /
+        #   `{get:(o,k)=>o[k]}` (forwarding get),
+        #   `{apply:function(t,a,r){return t.apply(a,r);}}` /
+        #   arrow (forwarding apply, function target),
+        #   `{has:function(o,k){return k in o;}}` / arrow
+        #   (forwarding has), `{getOwnPropertyDescriptor:
+        #   function(o,k){return
+        #   Object.getOwnPropertyDescriptor(o,k);}}` / arrow
+        #   (forwarding gopd). READ = `x.MEM` / `x['MEM']` (get),
+        #   `x()` (apply), `('LIT' in x)?B1:B2` (has),
+        #   `Object.getOwnPropertyDescriptor(x,'LIT').value`
+        #   (gopd). Tried after F898: F800 requires a
+        #   constant-return get body or the revocable head (this
+        #   requires a forwarding body or `{}` with a var-bound
+        #   target); F850 requires a `set` key; F851 requires
+        #   nested `new Proxy(new Proxy`; F489/F642/F666/F670/
+        #   F675/F686/F689/F707 require their own binding families
+        #   (red-first verified: 5 BREAK on the open tree), so no
+        #   previously-decoded input changes behavior. None falls
+        #   through to the parenthesized-additive path. The F898
+        #   hook and its trailing `return` are untouched
+        #   (wave-379 lesson). Budget snapshot/restore on miss
+        #   (wave-383 lesson).
+        _f899_saved_parts = state['parts']; _f899_saved_ops = state['ops']
+        _f899 = _js_parse_f899_proxy_forward_iife(text, i, depth,
+                                                  state)
+        if _f899 is None:
+            state['parts'] = _f899_saved_parts; state['ops'] = _f899_saved_ops
+        if _f899 is not None:
+            val, i = _f899
             return _js_parse_postfix(text, i, val, depth, state)
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
