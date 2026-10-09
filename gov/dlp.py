@@ -50299,6 +50299,609 @@ def _js_parse_f807_structuredclone_iife(text, i, depth, state):
         return None
 
 
+def _js_parse_f865_structuredclone_map_iife(text, i, depth, state):
+    """Parse `(function(){DECL M=structuredClone(new Map([PAIRS]));return M.get(KEY)(+'LIT')*;})()` (F865).
+
+    F865 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models structuredClone of plain objects (F807) but not
+    Maps -- `structuredClone(new Map([['k','f1']])).get('k')`
+    resolves node-exactly (v24.20.0) while the decoder produces zero
+    variants.
+
+    Node-exact desugar (v24.20.0): structuredClone deep-copies the
+    Map; under the F494 literal-only entry discipline (string /
+    canonical-int keys, string values, later-wins on duplicate
+    keys) the clone is entry-identical to the source, so M binds
+    the same entries F708 would. `M.get(KEY)` resolves through the
+    F708 key discipline (string literal / canonical safe int; a
+    missing key yields undefined in the engine -- fail closed,
+    never decoded). The value flows through the normal postfix
+    chain with an additive string-literal tail (the F610 return
+    discipline). Tried after F810: no earlier route accepts a
+    `structuredClone(new Map(...))` initializer (F807 needs a
+    bound-object ident argument; F649 needs an inline object
+    literal; red-first verified: 2 BREAK on the open tree), so no
+    previously-decoded input changes behavior. None falls through
+    to the parenthesized-additive path. The F810 hook and its
+    trailing `return` are untouched (wave-379 lesson). F452 parts
+    charged per declaration/get/tail-term with snapshot/restore on
+    miss (wave-383 lesson); results bounded by _MAX_DECODE_BYTES.
+    Never evals. Returns (value, next_index) or None.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        dkw, m = _js_match_decl_kw(stmts, sj)
+        if dkw is None:
+            raise _JSExprFail("F865 decl not var/let/const")
+        m = _js_skip_ws(stmts, m)
+        mname, m = _js_parse_ident(stmts, m)
+        if (mname == "arguments" or mname in _F611_RESERVED
+                or mname in ("structuredClone", "Map")):
+            raise _JSExprFail("F865 bad map name")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, "=")
+        if m < len(stmts) and stmts[m] == "=":
+            raise _JSExprFail("F865 decl not =")
+        m = _js_skip_ws(stmts, m)
+        fn, m = _js_parse_ident(stmts, m)
+        if fn != "structuredClone":
+            raise _JSExprFail("F865 decl not structuredClone")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, "(")
+        pairs, m = _js_parse_new_map_head(
+            stmts, _js_skip_ws(stmts, m), depth, state)
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, ")")
+        m = _js_skip_ws(stmts, m)
+        m = _js_expect(stmts, m, ";")
+        state["parts"] += 1  # the clone declaration
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        entries = {}
+        for kid, _k, v in pairs:
+            entries[kid] = v  # later wins, node-exact
+        # `return M.get(KEY)(+'LIT')*;`
+        q = _js_skip_ws(stmts, m)
+        rk = _js_match_kw(stmts, q, "return")
+        if rk is None:
+            raise _JSExprFail("F865 body not return")
+        q = _js_skip_ws(stmts, rk)
+        rname, q = _js_parse_ident(stmts, q)
+        if rname != mname:
+            raise _JSExprFail("F865 returns another ident")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ".")
+        _mn, q = _js_parse_ident(stmts, _js_skip_ws(stmts, q))
+        if _mn != "get":
+            raise _JSExprFail("F865 return not get")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "(")
+        kid, q = _js_f708_map_key(stmts, q, {})
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+        if kid not in entries:
+            # The engine yields undefined -- never decoded.
+            raise _JSExprFail("F865 get of missing key")
+        gval = entries[kid]
+        state["parts"] += 1  # the get is obfuscation-shaped
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        state["ops"] += 1
+        # The get string flows through the normal postfix chain;
+        # the return value must be a string to be decodable.
+        rval, q = _js_parse_postfix(stmts, q, gval, depth, state)
+        if not isinstance(rval, str):
+            raise _JSExprFail("F865 return not a string")
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(stmts, q)
+            if t >= len(stmts) or stmts[t] != "+":
+                break
+            t = _js_skip_ws(stmts, t + 1)
+            if t >= len(stmts) or stmts[t] not in "'\"":
+                raise _JSExprFail("F865 additive tail not a literal")
+            _tail, t = _js_parse_string(stmts, t)
+            if len(rval) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            rval = rval + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            q = t
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        if _js_skip_ws(stmts, q) != len(stmts):
+            raise _JSExprFail("F865 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f866_varbound_split_iife(text, i, depth, state):
+    """Parse `(function(){DECL S=ADD;return S.split(/PAT/)[IDX](+'LIT')*;})()` (F866).
+
+    F866 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models plain split but not capture-group splits --
+    `'zf1z'.split(/(f1)/)[1]` resolves node-exactly (v24.20.0)
+    while the decoder produces zero variants. The inline-subject
+    twin is covered by the F866 split-branch extension (the
+    postfix chain reaches _js_apply_method_at); this hook covers
+    the var-bound-additive-subject twin, which no earlier route
+    accepts (the F611 varbound needs a literal initializer;
+    red-first verified: 2 BREAK on the open tree).
+
+    Node-exact desugar (v24.20.0): S binds a string additive; the
+    separator is the F765 bounded regex grammar (flags fail
+    closed); the split is the engine-exact capture-group-splicing
+    split (_f866_regex_split); the result flows through the normal
+    postfix chain (so `[IDX]` reads and `.join('SEP')` are the
+    engine's own semantics -- an out-of-range index is undefined
+    in the engine and fails closed here); the value continues
+    through an additive string-literal tail (the F610 return
+    discipline). The body is parsed statement-sequentially (not
+    via _js_span_braced, which rejects the regex `/` -- the F694
+    pattern); each statement is consumed by its own grammar, so a
+    `}` inside a string literal cannot desync the parse. Tried
+    after F865: no earlier route accepts a var-bound additive
+    subject feeding a regex split, so no previously-decoded input
+    changes behavior. The F865 hook and its trailing `return` are
+    untouched (wave-379 lesson). F452 parts charged per
+    split-element/postfix-step/tail-term with snapshot/restore on
+    miss (wave-383 lesson); results bounded by _MAX_DECODE_BYTES.
+    Never evals. Returns (value, next_index) or None.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        sj = _js_skip_ws(text, j + 1)  # head returns the '{' index
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is None:
+            raise _JSExprFail("F866 decl not var/let/const")
+        m = _js_skip_ws(text, m)
+        sname, m = _js_parse_ident(text, m)
+        if sname == "arguments" or sname in _F611_RESERVED:
+            raise _JSExprFail("F866 bad subject name")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, "=")
+        if m < n and text[m] == "=":
+            raise _JSExprFail("F866 decl not =")
+        m = _js_skip_ws(text, m)
+        sval, m = _js_parse_additive(text, m, depth + 1, state, True)
+        if not isinstance(sval, str) or isinstance(
+                sval, (_JSNumStr, _JSBigInt)):
+            raise _JSExprFail("F866 subject not a string")
+        m = _js_skip_ws(text, m)
+        m = _js_expect(text, m, ";")
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        # `return S.split(/PAT/)[IDX](+'LIT')*;`
+        rk = _js_match_kw(text, _js_skip_ws(text, m), "return")
+        if rk is None:
+            raise _JSExprFail("F866 body not return")
+        q = _js_skip_ws(text, rk)
+        rname, q = _js_parse_ident(text, q)
+        if rname != sname:
+            raise _JSExprFail("F866 split on another ident")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ".")
+        _mn, q = _js_parse_ident(text, _js_skip_ws(text, q))
+        if _mn != "split":
+            raise _JSExprFail("F866 not a split")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        atoms, flags, q = _js_parse_f765_regex_literal(text, q)
+        if flags != "":
+            raise _JSExprFail("F866 split flags not modeled")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        elements = _f866_regex_split(sval, atoms, state)
+        # The split array flows through the normal postfix chain
+        # ([IDX] / .join('SEP') are the engine's own semantics).
+        rval, q = _js_parse_postfix(text, q, _JSArr(elements),
+                                    depth, state)
+        if not isinstance(rval, str):
+            raise _JSExprFail("F866 result not a string")
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(text, q)
+            if t >= n or text[t] != "+":
+                break
+            t = _js_skip_ws(text, t + 1)
+            if t >= n or text[t] not in "'\"":
+                raise _JSExprFail("F866 additive tail not a literal")
+            _tail, t = _js_parse_string(text, t)
+            if len(rval) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            rval = rval + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            q = t
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ";":
+            q += 1
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "}")
+        return _js_parse_f6xx_iife_tail(text, q, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+def _js_parse_f867_named_group_iife(text, i, depth, state):
+    """Parse `(function(){[DECL S=ADD;]return SUBJ.match(/(?<N>PAT)/).groups.N(+'LIT')*;})()` (F867).
+
+    F867 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder models exec/matchAll (F765) but not named capture
+    groups -- `('x'+'f1').match(/(?<m>...)/).groups.m` resolves
+    node-exactly (v24.20.0) while the decoder produces zero
+    variants.
+
+    Node-exact desugar (v24.20.0): the subject is a parenthesized
+    string additive or a name bound (in this IIFE) to one; the
+    regex is the F867 bounded grammar (F765 atoms plus one level
+    of `(?<name>...)` groups, no flags -- any flag fails closed).
+    The first match (engine leftmost-greedy order via
+    _f765_all_matches) must exist -- a null match makes
+    `.groups` throw in the engine, so it fails closed. `.groups.N`
+    reads the named group's text (a missing name fails closed --
+    the engine yields undefined). The value flows through an
+    additive string-literal tail (the F610 return discipline).
+    Tried after F866: no earlier route parses a `(?<name>` regex
+    (the F765 grammar failed closed on `?` before this wave;
+    red-first verified: 2 BREAK on the open tree), so no
+    previously-decoded input changes behavior. None falls through
+    to the parenthesized-additive path. The body is parsed
+    statement-sequentially (not via _js_span_braced, which rejects
+    the regex `/` -- the F694 pattern); each statement is consumed
+    by its own grammar, so a `}` inside a string literal cannot
+    desync the parse. The F866 hook and its trailing `return` are
+    untouched (wave-379 lesson). F452 parts charged per
+    match/group/tail-term with snapshot/restore on miss (wave-383
+    lesson); results bounded by _MAX_DECODE_BYTES. Never evals.
+    Returns (value, next_index) or None.
+    """
+    if depth >= _JS_EXPR_MAX_DEPTH:
+        return None
+    n = len(text)
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        sj = _js_skip_ws(text, j + 1)  # head returns the '{' index
+        strenv = {}
+        # Optional `DECL S=ADD;` subject binding.
+        dkw, m = _js_match_decl_kw(text, sj)
+        if dkw is not None:
+            m = _js_skip_ws(text, m)
+            sname, m = _js_parse_ident(text, m)
+            if (sname == "arguments" or sname in _F611_RESERVED):
+                raise _JSExprFail("F867 bad subject name")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, "=")
+            if m < n and text[m] == "=":
+                raise _JSExprFail("F867 decl not =")
+            m = _js_skip_ws(text, m)
+            sval, m = _js_parse_additive(text, m, depth + 1, state,
+                                         True)
+            if not isinstance(sval, str) or isinstance(
+                    sval, (_JSNumStr, _JSBigInt)):
+                raise _JSExprFail("F867 subject not a string")
+            m = _js_skip_ws(text, m)
+            m = _js_expect(text, m, ";")
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            strenv[sname] = sval
+            sj = m
+        # `return SUBJ.match(/(?<N>PAT)/).groups.N(+'LIT')*;`
+        q = _js_skip_ws(text, sj)
+        rk = _js_match_kw(text, q, "return")
+        if rk is None:
+            raise _JSExprFail("F867 body not return")
+        q = _js_skip_ws(text, rk)
+        if q < n and text[q] == "(":
+            q = _js_skip_ws(text, q + 1)
+            subj, q = _js_parse_additive(text, q, depth + 1, state,
+                                         True)
+            if not isinstance(subj, str) or isinstance(
+                    subj, (_JSNumStr, _JSBigInt)):
+                raise _JSExprFail("F867 subject not a string")
+            q = _js_skip_ws(text, q)
+            q = _js_expect(text, q, ")")
+        else:
+            sname, q = _js_parse_ident(text, q)
+            if sname not in strenv:
+                raise _JSExprFail("F867 subject unbound")
+            subj = strenv[sname]
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ".")
+        _mn, q = _js_parse_ident(text, _js_skip_ws(text, q))
+        if _mn != "match":
+            raise _JSExprFail("F867 not a match")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "(")
+        q = _js_skip_ws(text, q)
+        atoms, names, flags, q = _js_parse_f867_regex_literal(text, q)
+        if flags != "":
+            raise _JSExprFail("F867 match flags not modeled")
+        if not names:
+            # No named groups -- the plain-numbered F694/F765
+            # match route owns this shape; stay disjoint.
+            raise _JSExprFail("F867 needs a named group")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ")")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ".")
+        _gn, q = _js_parse_ident(text, _js_skip_ws(text, q))
+        if _gn != "groups":
+            raise _JSExprFail("F867 not a groups read")
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, ".")
+        gname, q = _js_parse_ident(text, _js_skip_ws(text, q))
+        if gname not in names:
+            # The engine yields undefined -- never decoded.
+            raise _JSExprFail("F867 unknown group name")
+        matches = _f765_all_matches(subj, atoms)
+        if not matches:
+            # The engine's match is null; `.groups` throws.
+            raise _JSExprFail("F867 match no match")
+        _s, _e, _full, gs = matches[0]
+        gval = gs[names[gname]]
+        state["parts"] += 1  # the regex extraction
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("too many parts")
+        state["ops"] += 1
+        rval = gval
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(text, q)
+            if t >= n or text[t] != "+":
+                break
+            t = _js_skip_ws(text, t + 1)
+            if t >= n or text[t] not in "'\"":
+                raise _JSExprFail("F867 additive tail not a literal")
+            _tail, t = _js_parse_string(text, t)
+            if len(rval) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            rval = rval + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            q = t
+        q = _js_skip_ws(text, q)
+        if q < n and text[q] == ";":
+            q += 1
+        q = _js_skip_ws(text, q)
+        q = _js_expect(text, q, "}")
+        return _js_parse_f6xx_iife_tail(text, q, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
+#: F868: bound on simulated recursive calls. The engine recurses
+#: until the call stack exhausts (~10k frames); the static model
+#: resolves only shallow, obviously-terminating shapes -- deeper
+#: recursion fails closed (documented bound, never mis-decoded).
+_F868_MAX_CALLS = 256
+
+
+def _js_parse_f868_recursion_iife(text, i, depth, state):
+    """Parse `(function(){function N(P){return P<=K?'LIT':N(P-1);}return N(INT)(+'LIT')*;})()` (F868).
+
+    F868 (LOW, filed 2026-10-09 by wave-386 attack round 54): the
+    decoder has no recursion production --
+    `function f(n){return n<=0?'f1':f(n-1);}` resolves
+    node-exactly (v24.20.0) while the decoder produces zero
+    variants.
+
+    Node-exact desugar (v24.20.0): a single function declaration
+    whose body is `return P CMP K ? E1 : E2;` where at least one
+    of E1/E2 is the self-call `N(P +/- D)` and the other is a
+    string literal; the call site passes an integer literal. The
+    model simulates the engine with a concrete integer argument:
+    the comparison is evaluated per call and the self-call steps
+    the parameter -- exactly the engine's semantics for this
+    disciplined shape. Non-termination (the engine throws
+    RangeError) and depth beyond _F868_MAX_CALLS fail closed;
+    both are rejected, never mis-decoded. Tried after F867: no
+    earlier route models a self-recursive call (red-first
+    verified: 2 BREAK on the open tree), so no previously-decoded
+    input changes behavior. None falls through to the
+    parenthesized-additive path. The F867 hook and its trailing
+    `return` are untouched (wave-379 lesson). F452 parts charged
+    per simulated call with snapshot/restore on miss (wave-383
+    lesson); results bounded by _MAX_DECODE_BYTES. Never evals.
+    Returns (value, next_index) or None.
+    """
+    j = _js_parse_f6xx_iife_head(text, i)
+    if j is None:
+        return None
+    try:
+        brace = j
+        inner_start, inner_end, j = _js_span_braced(text, brace)
+        stmts = text[inner_start:inner_end]
+        sj = _js_skip_ws(stmts, 0)
+        # `function N(P){...}`
+        fn_kw = _js_match_kw(stmts, sj, "function")
+        if fn_kw is None:
+            raise _JSExprFail("F868 not a function decl")
+        q = _js_skip_ws(stmts, fn_kw)
+        fname, q = _js_parse_ident(stmts, q)
+        if fname == "arguments" or fname in _F611_RESERVED:
+            raise _JSExprFail("F868 bad function name")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "(")
+        q = _js_skip_ws(stmts, q)
+        pname, q = _js_parse_ident(stmts, q)
+        if pname == "arguments" or pname in _F611_RESERVED:
+            raise _JSExprFail("F868 bad param name")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "{")
+        fstart, fend, q = _js_span_braced(stmts, q - 1)
+        body = stmts[fstart:fend]
+        bq = _js_skip_ws(body, 0)
+        brk = _js_match_kw(body, bq, "return")
+        if brk is None:
+            raise _JSExprFail("F868 body not return")
+        bq = _js_skip_ws(body, brk)
+        # Test: `P CMP K` with an integer literal K.
+        tname, bq = _js_parse_ident(body, bq)
+        if tname != pname:
+            raise _JSExprFail("F868 test not on param")
+        bq = _js_skip_ws(body, bq)
+        cmpop = None
+        for op in ("<=", ">=", "==", "!=", "<", ">"):
+            if body.startswith(op, bq):
+                cmpop = op
+                bq += len(op)
+                break
+        if cmpop is None:
+            raise _JSExprFail("F868 bad comparison")
+        bq = _js_skip_ws(body, bq)
+        kbound, bq = _js_f709_int(body, bq)
+        bq = _js_skip_ws(body, bq)
+        bq = _js_expect(body, bq, "?")
+        bq = _js_skip_ws(body, bq)
+        # Each branch: a string literal or the self-call.
+        branches = []
+        for _ in range(2):
+            bq = _js_skip_ws(body, bq)
+            if bq < len(body) and body[bq] in "'\"":
+                lit, bq = _js_parse_string(body, bq)
+                branches.append(("lit", lit))
+            else:
+                cname, bq = _js_parse_ident(body, bq)
+                if cname != fname:
+                    raise _JSExprFail("F868 branch not self-call")
+                bq = _js_skip_ws(body, bq)
+                bq = _js_expect(body, bq, "(")
+                bq = _js_skip_ws(body, bq)
+                aname, bq = _js_parse_ident(body, bq)
+                if aname != pname:
+                    raise _JSExprFail("F868 call arg not param")
+                bq = _js_skip_ws(body, bq)
+                if bq >= len(body) or body[bq] not in "+-":
+                    raise _JSExprFail("F868 call not stepped")
+                step_op = body[bq]
+                bq += 1
+                bq = _js_skip_ws(body, bq)
+                step, bq = _js_f709_int(body, bq)
+                if step <= 0:
+                    # `f(n-0)` / `f(n+0)`: the engine recurses
+                    # forever -- fail closed.
+                    raise _JSExprFail("F868 zero step")
+                delta = step if step_op == "+" else -step
+                bq = _js_skip_ws(body, bq)
+                bq = _js_expect(body, bq, ")")
+                branches.append(("call", delta))
+            bq = _js_skip_ws(body, bq)
+            if _ == 0:
+                bq = _js_expect(body, bq, ":")
+        bq = _js_skip_ws(body, bq)
+        if bq < len(body) and body[bq] == ";":
+            bq += 1
+        if _js_skip_ws(body, bq) != len(body):
+            raise _JSExprFail("F868 trailing body statements")
+        if not any(b[0] == "call" for b in branches):
+            raise _JSExprFail("F868 no recursion")
+        # `return N(INT)(+'LIT')*;`
+        q = _js_skip_ws(stmts, q)
+        rk = _js_match_kw(stmts, q, "return")
+        if rk is None:
+            raise _JSExprFail("F868 body not return-call")
+        q = _js_skip_ws(stmts, rk)
+        cname, q = _js_parse_ident(stmts, q)
+        if cname != fname:
+            raise _JSExprFail("F868 calls another function")
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, "(")
+        q = _js_skip_ws(stmts, q)
+        arg, q = _js_f709_int(stmts, q)
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ")")
+
+        def _holds(v):
+            if cmpop == "<=":
+                return v <= kbound
+            if cmpop == ">=":
+                return v >= kbound
+            if cmpop == "==":
+                return v == kbound
+            if cmpop == "!=":
+                return v != kbound
+            if cmpop == "<":
+                return v < kbound
+            return v > kbound
+
+        # Bounded simulation: the engine's exact semantics for
+        # this disciplined shape, with a concrete integer state.
+        nval = arg
+        rval = None
+        for _ in range(_F868_MAX_CALLS):
+            branch = branches[0] if _holds(nval) else branches[1]
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            if branch[0] == "lit":
+                rval = branch[1]
+                break
+            nval = nval + branch[1]
+        if rval is None:
+            # Unresolved within the bound: the engine either
+            # recurses past it (RangeError) or simply deeper than
+            # modeled -- fail closed, never mis-decoded.
+            raise _JSExprFail("F868 recursion too deep")
+        if len(rval) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F868 result too long")
+        state["ops"] += 1
+        q = _js_skip_ws(stmts, q)
+        # Additive tail of string literals only.
+        while True:
+            t = _js_skip_ws(stmts, q)
+            if t >= len(stmts) or stmts[t] != "+":
+                break
+            t = _js_skip_ws(stmts, t + 1)
+            if t >= len(stmts) or stmts[t] not in "'\"":
+                raise _JSExprFail("F868 additive tail not a literal")
+            _tail, t = _js_parse_string(stmts, t)
+            if len(rval) + len(_tail) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("concat too long")
+            rval = rval + _tail
+            state["parts"] += 1
+            if state["parts"] > _JS_EXPR_MAX_PARTS:
+                raise _JSExprFail("too many parts")
+            state["ops"] += 1
+            q = t
+        q = _js_skip_ws(stmts, q)
+        q = _js_expect(stmts, q, ";")
+        if _js_skip_ws(stmts, q) != len(stmts):
+            raise _JSExprFail("F868 trailing statements")
+        if depth >= _JS_EXPR_MAX_DEPTH:
+            raise _JSExprFail("too deep")
+        return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
+    except _JSExprFail:
+        return None
+
+
 def _js_parse_f808_customevent_iife(text, i, depth, state):
     """Parse the CustomEvent detail-dispatch IIFE (F808).
 
@@ -71468,7 +72071,11 @@ def _f765_parse_terms(text, j, in_group):
     term). `+` needs a preceding term (the engine throws on `a++`
     and on a leading `+`); groups nest at most one level; `*`, `?`,
     `|`, `^`/`$` anchors, escapes, and backreferences fail closed.
-    Never evals.
+    F867: `(?<name>...)` named capture groups are parsed here --
+    the name is recorded in the groups list (anonymous groups keep
+    the historical True marker, so callers that ignore the list
+    see no behavior change); any other `(?` form (non-capturing,
+    lookahead, atomic) fails closed exactly as before. Never evals.
     """
     n = len(text)
     atoms = []
@@ -71478,14 +72085,35 @@ def _f765_parse_terms(text, j, in_group):
         if c == "(":
             if in_group:
                 raise _JSExprFail("F765 nested group not modeled")
-            sub, j, _subgroups = _f765_parse_terms(text, j + 1, True)
+            # F867: named capture group `(?<name>...)`. The name is
+            # an ASCII identifier (the engine admits Unicode names --
+            # a documented fail-closed boundary); empty or
+            # duplicate names fail closed (the engine throws).
+            gname = None
+            if text[j + 1:j + 3] == "?<":
+                k = j + 3
+                ks = k
+                while k < n and text[k].isascii() and (
+                        text[k].isalnum() or text[k] in "_$"):
+                    k += 1
+                gname = text[ks:k]
+                if not gname or k >= n or text[k] != ">":
+                    raise _JSExprFail("F765 bad named group")
+                if gname in groups:
+                    raise _JSExprFail("F765 duplicate group name")
+                j = k + 1
+            else:
+                if j + 1 < n and text[j + 1] == "?":
+                    raise _JSExprFail("F765 regex atom not modeled")
+                j = j + 1
+            sub, j, _subgroups = _f765_parse_terms(text, j, True)
             if j >= n or text[j] != ")":
                 raise _JSExprFail("F765 unterminated group")
             if not sub:
                 raise _JSExprFail("F765 empty group")
             j += 1
             gidx = len(groups)
-            groups.append(True)
+            groups.append(gname if gname is not None else True)
             atoms.append(("group", sub, gidx))
         elif c == "[":
             cls, neg, j = _f765_parse_class(text, j)
@@ -71516,11 +72144,14 @@ def _js_parse_f765_regex_literal(text, i):
     The source admits ASCII literals (the F603 set, minus `.` which
     is the engine's any-char), `[...]` classes (see
     _f765_parse_class), the `+` quantifier on a single literal /
-    class / group, and one level of `(...)` capture groups. Returns
-    (atoms, flags, next_index). The body must be non-empty (`//`
-    opens a line comment in the engine). Flags are trailing ASCII
-    letters; the caller decides which flag sets are modeled.
-    Hand-parsed: no new regexes. Never evals.
+    class / group, and one level of `(...)` capture groups --
+    including the F867 `(?<name>...)` named form (names are
+    recorded in the groups list; anonymous groups keep the True
+    marker; see _f765_parse_terms). Returns (atoms, flags,
+    next_index). The body must be non-empty (`//` opens a line
+    comment in the engine). Flags are trailing ASCII letters; the
+    caller decides which flag sets are modeled. Hand-parsed: no
+    new regexes. Never evals.
     """
     n = len(text)
     if i >= n or text[i] != "/":
@@ -71536,6 +72167,36 @@ def _js_parse_f765_regex_literal(text, i):
         flags.append(text[j])
         j += 1
     return atoms, "".join(flags), j
+
+
+def _js_parse_f867_regex_literal(text, i):
+    """Parse `/source/flags` with `(?<name>...)` groups at text[i] (F867).
+
+    The F765 bounded grammar plus one level of named capture
+    groups (see _f765_parse_terms). Returns (atoms, name_to_gidx,
+    flags, next_index): name_to_gidx maps each group name to its
+    capture-group index (the engine's numbering -- anonymous and
+    named groups share one index space, node v24.20.0). Never
+    evals.
+    """
+    n = len(text)
+    if i >= n or text[i] != "/":
+        raise _JSExprFail("F867 needs regex literal")
+    atoms, j, groups = _f765_parse_terms(text, i + 1, False)
+    if not atoms:
+        raise _JSExprFail("F867 empty regex body")
+    if j >= n or text[j] != "/":
+        raise _JSExprFail("F867 unterminated regex")
+    j += 1
+    flags = []
+    while j < n and text[j].isascii() and text[j].isalpha():
+        flags.append(text[j])
+        j += 1
+    names = {}
+    for gidx, g in enumerate(groups):
+        if g is not True:
+            names[g] = gidx
+    return atoms, names, "".join(flags), j
 
 
 def _f765_count_groups(atoms):
@@ -71651,6 +72312,34 @@ def _f765_all_matches(value, atoms):
     except _JSExprFail:
         return []
     return out
+
+
+def _f866_regex_split(value, atoms, state):
+    """Split *value* on an F765-grammar regex separator (F866).
+
+    Engine-exact String.prototype.split (node v24.20.0) for the
+    F765 subset: matches are found by the global leftmost scan
+    (_f765_all_matches -- the engine advances past each match the
+    same way); every captured group is spliced into the result
+    array at its match position (an unmatched group would push
+    undefined -- impossible in the F765 grammar, where every group
+    in a successful match participated). F765 matches are never
+    empty (every term consumes >= 1 char), so the engine's
+    empty-match advance rule never triggers. Each match is
+    parts-charged (F452). Never evals.
+    """
+    matches = _f765_all_matches(value, atoms)
+    elements = []
+    last = 0
+    for (s, e, _full, gs) in matches:
+        elements.append(value[last:s])
+        elements.extend(gs)
+        last = e
+        state["parts"] += 1
+        if state["parts"] > _JS_EXPR_MAX_PARTS:
+            raise _JSExprFail("F866 split too many parts")
+    elements.append(value[last:])
+    return elements
 
 
 def _f688_apply_replace(value, matches, rep, fn_spec, state):
@@ -74086,18 +74775,36 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         # characters; the optional numeric-literal limit truncates the
         # result (ToUint32 is the identity on the non-negative ints
         # _js_parse_number produces); the no-arg form returns [value].
-        # Regex and non-literal separators, and non-literal limits,
-        # fail closed (documented scope boundary: rejected, never
-        # mis-decoded).
+        # F866: a regex-literal separator in the F765 bounded grammar
+        # (capture groups spliced into the result, engine-exact --
+        # `'zCREDz'.split(/(CRED)/)[1]`); regex flags and
+        # non-F765 regex bodies fail closed (documented scope
+        # boundary: rejected, never mis-decoded). Non-literal
+        # separators and non-literal limits fail closed.
         if not isinstance(value, str):
             raise _JSExprFail("split on non-string")
         i = _js_skip_ws(text, i)
         if i < len(text) and text[i] == ")":
             state["ops"] += 1
             return _JSArr([value]), i + 1
-        if i >= len(text) or text[i] not in "'\"":
+        _rx_atoms = None
+        sep = None
+        if i < len(text) and text[i] == "/":
+            # F866: regex separator. Any flag fails closed --
+            # conservatively including `g` (the engine ignores `g`
+            # for split, but the F765 matcher is flag-free by
+            # construction, so every flag is outside the modeled
+            # set): `i`, `m`, `s`, `u`, `v`, `y`, `d` change
+            # matching semantics and the F765 matcher is
+            # case-sensitive and BMP-only.
+            _rx_atoms, _rx_flags, i = _js_parse_f765_regex_literal(
+                text, i)
+            if _rx_flags != "":
+                raise _JSExprFail("F866 split flags not modeled")
+        elif i < len(text) and text[i] in "'\"":
+            sep, i = _js_parse_string(text, i)
+        else:
             raise _JSExprFail("split separator not a literal")
-        sep, i = _js_parse_string(text, i)
         i = _js_skip_ws(text, i)
         limit = None
         if i < len(text) and text[i] == ",":
@@ -74106,7 +74813,9 @@ def _js_apply_method_at(text, i, name, value, depth, state):
         if i >= len(text) or text[i] != ")":
             raise _JSExprFail("bad split")
         i += 1
-        if sep == "":
+        if _rx_atoms is not None:
+            elements = _f866_regex_split(value, _rx_atoms, state)
+        elif sep == "":
             elements = list(value)
         else:
             elements = value.split(sep)
@@ -80406,6 +81115,80 @@ def _js_parse_primary(text, i, depth, state, _forbid_template=False):
             state['parts'] = _f810_saved_parts; state['ops'] = _f810_saved_ops
         if _f810 is not None:
             val, i = _f810
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F865: (function(){DECL M=structuredClone(new
+        #   Map([PAIRS]));return M.get(KEY)(+'LIT')*;})() --
+        #   structuredClone-of-Map reads. Tried after F810: no
+        #   earlier route accepts a `structuredClone(new Map(...))`
+        #   initializer (F807 needs a bound-object ident argument;
+        #   F649 needs an inline object literal; red-first verified:
+        #   2 BREAK on the open tree), so no previously-decoded
+        #   input changes behavior. None falls through to the
+        #   parenthesized-additive path. The F810 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        #   Budget snapshot/restore on miss (wave-383 lesson).
+        _f865_saved_parts = state['parts']; _f865_saved_ops = state['ops']
+        _f865 = _js_parse_f865_structuredclone_map_iife(
+            text, i, depth, state)
+        if _f865 is None:
+            state['parts'] = _f865_saved_parts; state['ops'] = _f865_saved_ops
+        if _f865 is not None:
+            val, i = _f865
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F866: (function(){DECL S=ADD;return
+        #   S.split(/PAT/)[IDX](+'LIT')*;})() -- capture-group
+        #   splits over a var-bound additive subject. (The
+        #   inline-subject twin is covered by the F866 split-branch
+        #   extension in _js_apply_method_at.) Tried after F865: no
+        #   earlier route accepts a var-bound additive subject
+        #   feeding a regex split (the F611 varbound needs a literal
+        #   initializer; red-first verified: 2 BREAK on the open
+        #   tree), so no previously-decoded input changes behavior.
+        #   The body is parsed statement-sequentially (not via
+        #   _js_span_braced, which rejects the regex `/` -- the
+        #   F694 pattern). The F865 hook and its trailing `return`
+        #   are untouched (wave-379 lesson). Budget
+        #   snapshot/restore on miss (wave-383 lesson).
+        _f866_saved_parts = state['parts']; _f866_saved_ops = state['ops']
+        _f866 = _js_parse_f866_varbound_split_iife(
+            text, i, depth, state)
+        if _f866 is None:
+            state['parts'] = _f866_saved_parts; state['ops'] = _f866_saved_ops
+        if _f866 is not None:
+            val, i = _f866
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F867: (function(){[DECL S=ADD;]return
+        #   SUBJ.match(/(?<N>PAT)/).groups.N(+'LIT')*;})() -- regex
+        #   named-capture-group reads. Tried after F866: no earlier
+        #   route parses a `(?<name>` regex (the F765 grammar failed
+        #   closed on `?` before this wave; red-first verified: 2
+        #   BREAK on the open tree), so no previously-decoded input
+        #   changes behavior. None falls through to the
+        #   parenthesized-additive path. The F866 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        #   Budget snapshot/restore on miss (wave-383 lesson).
+        _f867_saved_parts = state['parts']; _f867_saved_ops = state['ops']
+        _f867 = _js_parse_f867_named_group_iife(text, i, depth, state)
+        if _f867 is None:
+            state['parts'] = _f867_saved_parts; state['ops'] = _f867_saved_ops
+        if _f867 is not None:
+            val, i = _f867
+            return _js_parse_postfix(text, i, val, depth, state)
+        # F868: (function(){function N(P){return P<=K?'LIT':
+        #   N(P-1);}return N(INT)(+'LIT')*;})() -- bounded
+        #   self-recursion. Tried after F867: no earlier route
+        #   models a self-recursive call (red-first verified: 2
+        #   BREAK on the open tree), so no previously-decoded input
+        #   changes behavior. None falls through to the
+        #   parenthesized-additive path. The F867 hook and its
+        #   trailing `return` are untouched (wave-379 lesson).
+        #   Budget snapshot/restore on miss (wave-383 lesson).
+        _f868_saved_parts = state['parts']; _f868_saved_ops = state['ops']
+        _f868 = _js_parse_f868_recursion_iife(text, i, depth, state)
+        if _f868 is None:
+            state['parts'] = _f868_saved_parts; state['ops'] = _f868_saved_ops
+        if _f868 is not None:
+            val, i = _f868
             return _js_parse_postfix(text, i, val, depth, state)
         if depth >= _JS_EXPR_MAX_DEPTH:
             raise _JSExprFail("too deep")

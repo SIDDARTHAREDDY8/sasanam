@@ -48,6 +48,10 @@ def _misses(payload):
     return dlp.find_credential(payload) is None
 
 
+def _hits(payload):
+    return dlp.find_credential(payload) is not None
+
+
 # ---------------------------------------------------------------- controls
 
 
@@ -449,52 +453,52 @@ def test_r54_f864_s2_open():
     return ("HELD" if miss else "BREAK", "miss=%s" % miss)
 
 @_t
-def test_r54_f865_s1_open():
-    """F865 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m=structuredClone(new Map([['k','%s']]));return m.get('k')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f865_s1_closed():
+    """F865 CLOSED: hit reproduces (wave-387 lane 10)."""
+    hit = _hits("(function(){var m=structuredClone(new Map([['k','%s']]));return m.get('k')+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r54_f865_s2_open():
-    """F865 OPEN: miss reproduces."""
-    miss = _misses("(function(){var m=structuredClone(new Map([['k','%s'],['x','y']]));return m.get('k')+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f865_s2_closed():
+    """F865 CLOSED: hit reproduces (wave-387 lane 10)."""
+    hit = _hits("(function(){var m=structuredClone(new Map([['k','%s'],['x','y']]));return m.get('k')+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r54_f866_s1_open():
-    """F866 OPEN: miss reproduces."""
-    miss = _misses("(function(){var s='z%s'+'z';return s.split(/(xoxb-[0-9a-f]+)/)[1]+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f866_s1_closed():
+    """F866 CLOSED: hit reproduces (wave-387 lane 10)."""
+    hit = _hits("(function(){var s='z%s'+'z';return s.split(/(xoxb-[0-9a-f]+)/)[1]+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r54_f866_s2_open():
-    """F866 OPEN: miss reproduces."""
-    miss = _misses("(function(){return ('%s,'+'%s').split(/,/).join('');})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f866_s2_closed():
+    """F866 CLOSED: hit reproduces (wave-387 lane 10)."""
+    hit = _hits("(function(){return ('%s,'+'%s').split(/,/).join('');})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r54_f867_s1_open():
-    """F867 OPEN: miss reproduces."""
-    miss = _misses("(function(){return ('x'+'%s').match(/(?<m>xoxb-[0-9a-f]+)/).groups.m+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f867_s1_closed():
+    """F867 CLOSED: hit reproduces (wave-387 lane 10)."""
+    hit = _hits("(function(){return ('x'+'%s').match(/(?<m>xoxb-[0-9a-f]+)/).groups.m+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r54_f867_s2_open():
-    """F867 OPEN: miss reproduces."""
-    miss = _misses("(function(){return ('x'+'%s').match(/(?<m>xoxb-[0-9a-f]+)/).groups.m+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f867_s2_closed():
+    """F867 CLOSED: hit reproduces (wave-387 lane 10)."""
+    hit = _hits("(function(){return ('x'+'%s').match(/(?<m>xoxb-[0-9a-f]+)/).groups.m+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r54_f868_s1_open():
-    """F868 OPEN: miss reproduces."""
-    miss = _misses("(function(){function f(n){return n<=0?'%s':f(n-1);}return f(1)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f868_s1_closed():
+    """F868 CLOSED: hit reproduces (wave-387 lane 10)."""
+    hit = _hits("(function(){function f(n){return n<=0?'%s':f(n-1);}return f(1)+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
-def test_r54_f868_s2_open():
-    """F868 OPEN: miss reproduces."""
-    miss = _misses("(function(){function f(n){return n<=0?'%s':f(n-1); }return f(2)+'%s';})()" % (_A, _B))
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+def test_r54_f868_s2_closed():
+    """F868 CLOSED: hit reproduces (wave-387 lane 10)."""
+    hit = _hits("(function(){function f(n){return n<=0?'%s':f(n-1); }return f(2)+'%s';})()" % (_A, _B))
+    return ("HELD" if hit else "BREAK", "hit=%s" % hit)
 
 @_t
 def test_r54_f869_s1_open():

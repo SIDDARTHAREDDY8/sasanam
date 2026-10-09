@@ -257,8 +257,9 @@ def p8_f564_variants():
 
 def p9_f564_bounds():
     shapes = [
-        # regex separator fails closed
-        ("'%(A1)s,%(A2)s'.split(/,/).join('')" % {"A1": _A1,
+        # flag-less F765-grammar regex separators are now modeled
+        # (F866, wave-387 lane 10); regex FLAGS still fail closed
+        ("'%(A1)s,%(A2)s'.split(/,/i).join('')" % {"A1": _A1,
                                                    "A2": _A2}, False),
         # non-literal separator fails closed
         ("'%(A1)s,%(A2)s'.split(x).join('')" % {"A1": _A1,
