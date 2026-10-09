@@ -66594,6 +66594,839 @@ def _js_f963_parse_cb(text, i):
     return xname, iname, kval, then_lit, else_lit, i
 
 
+# ---------------------------------------------------------------------------
+# F967/F968/F969/F970: narrow whole-text statement decoders (wave-392 lane 1)
+#
+# Each decoder matches one filed finding's statement family over the whole
+# text and returns the decoded string, or None. They are registered in
+# _decode_layer after the F961/F962/F964 decoders: every filed shape BREAKs
+# on the open tree, so no earlier production decoded them and the
+# pre-existing variant order (F441) is preserved. Each runs on a fresh
+# attempt-local budget state; misses raise _JSExprFail and escape nothing
+# (wave-383 snapshot/restore holds trivially). Never evals.
+
+_F96X_BOOL_KW = ("true", "false")
+
+
+def _js_f96x_charge(state, what):
+    """Charge one F452 part; fail closed past the budget (F967-F970)."""
+    state["parts"] += 1
+    if state["parts"] > _JS_EXPR_MAX_PARTS:
+        raise _JSExprFail(what)
+
+
+def _js_f96x_decl(text, j):
+    """Parse `var|let|const NAME =` at text[j]; returns (kw, name, j-after-=).
+
+    Fresh, reserved, or `arguments` names fail closed (node SyntaxError
+    for duplicates is the caller's concern -- the callers check RESULT
+    explicitly and keep single-declarator statements).
+    """
+    n = len(text)
+    kw, k = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail("F96x not a declaration")
+    k = _js_skip_ws(text, k)
+    name, k = _js_parse_ident(text, k)
+    if name == "arguments" or name in _F611_RESERVED:
+        raise _JSExprFail("F96x bad decl name")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "=" or text.startswith(("==", "=>"), k):
+        raise _JSExprFail("F96x decl without init")
+    return kw, name, k + 1
+
+
+def _js_f96x_expect_semi_end(text, j):
+    """Expect `;` then end-of-text (ws-tolerant); returns None."""
+    j = _js_skip_ws(text, j)
+    if j >= len(text) or text[j] != ";":
+        raise _JSExprFail("F96x statement not closed")
+    j = _js_skip_ws(text, j + 1)
+    if j != len(text):
+        raise _JSExprFail("F96x trailing input")
+    return None
+
+
+def _js_f96x_dict_read(text, j, env, what):
+    """Parse `OBJ.k` / `OBJ['k']` at text[j] over a dict env binding.
+
+    Returns (value, next_index); the value must be a string. A missing
+    key is a node-undefined -- outside the string-only discipline:
+    fail closed. Never evals.
+    """
+    n = len(text)
+    oname, k = _js_parse_ident(text, j)
+    if oname not in env or not isinstance(env[oname], dict):
+        raise _JSExprFail(what + " member obj not a bound object")
+    oval = env[oname]
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "[":
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail(what + " member key not a literal")
+        key, k = _js_parse_string(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail(what + " member not closed")
+        k += 1
+    elif k < n and text[k] == ".":
+        key, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    else:
+        raise _JSExprFail(what + " not a member read")
+    if key not in oval or not isinstance(oval[key], str):
+        raise _JSExprFail(what + " missing/non-string key")
+    return oval[key], k
+
+
+def _js_f96x_parse_additive(text, j, env, state, what, term):
+    """Parse `T(+T)*` at text[j]; *term* parses one operand to a string.
+
+    Node-exact `+` over the modeled string operands; anything else fails
+    closed. The result is bounded by _MAX_DECODE_BYTES. Never evals.
+    """
+    parts = []
+    while True:
+        val, j = term(text, j, env, state)
+        parts.append(val)
+        _js_f96x_charge(state, what + " additive too long")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == "+" and \
+                not text.startswith("++", j):
+            j = j + 1
+            continue
+        break
+    out = "".join(parts)
+    if len(out) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " additive too long")
+    return out, j
+
+
+# -- F967 ---------------------------------------------------------------
+
+def _js_f967_parse_nested_codes(text, j, state):
+    """Parse `[[INT|[INTS],...]]` at text[j] (F967).
+
+    Elements are F458 integer literals or one-level int lists; deeper
+    nesting fails closed (a miss, never a mis-decode -- the engine's
+    ToNumber-on-array coercion is deliberately not modeled). Returns
+    (elements, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "[":
+        raise _JSExprFail("F967 nested not an array")
+    j += 1
+    elems = []
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "]":
+        return elems, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "[":
+            inner = []
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "]":
+                j += 1
+            else:
+                while True:
+                    cp, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+                    inner.append(cp)
+                    _js_f96x_charge(state, "F967 too many codepoints")
+                    j = _js_skip_ws(text, j)
+                    if j < n and text[j] == ",":
+                        j = _js_skip_ws(text, j + 1)
+                        if j < n and text[j] == "]":
+                            # Trailing comma -- engine-legal
+                            # (node v24.20.0).
+                            j += 1
+                            break
+                        continue
+                    if j < n and text[j] == "]":
+                        j += 1
+                        break
+                    raise _JSExprFail("F967 bad inner array")
+            elems.append(inner)
+        else:
+            cp, j = _js_parse_fcc_number(text, j)
+            elems.append(cp)
+        _js_f96x_charge(state, "F967 too many codepoints")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "]":
+                # Trailing comma -- engine-legal (node v24.20.0).
+                return elems, j + 1
+            continue
+        if j < n and text[j] == "]":
+            return elems, j + 1
+        raise _JSExprFail("F967 bad nested array")
+
+
+def _js_f967_parse_identity_cb(text, j):
+    """Parse an F967 identity callback at text[j].
+
+    `function(x){return x;}` / `x=>x` / `(x)=>x` -- the only lambdas
+    whose flatMap is exactly flat (node v24.20.0). Returns next_index.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    fk = _js_match_kw(text, j, "function")
+    if fk is not None:
+        j = _js_skip_ws(text, fk)
+        j = _js_expect(text, j, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        rk = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if rk is None:
+            raise _JSExprFail("F967 callback no return")
+        rname, j = _js_parse_ident(text, _js_skip_ws(text, rk))
+        if rname != pname:
+            raise _JSExprFail("F967 callback not identity")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        return j
+    if j < n and text[j] == "(":
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+    elif j < n and text[j] in _JS_IDENT_START:
+        pname, j = _js_parse_ident(text, j)
+    else:
+        raise _JSExprFail("F967 callback not modeled")
+    j = _js_skip_ws(text, j)
+    if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+        raise _JSExprFail("F967 callback not an arrow")
+    rname, j = _js_parse_ident(text, _js_skip_ws(text, j + 2))
+    if rname != pname:
+        raise _JSExprFail("F967 callback not identity")
+    return j
+
+
+def _js_f967_parse_thisarg(text, j):
+    """Parse the ignored fromCharCode.apply thisArg at text[j] (F967).
+
+    The engine ignores `this` for String.fromCharCode (node v24.20.0),
+    so any literal thisArg is node-exact; non-literals fail closed
+    (documented boundary). Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        _, j = _js_parse_string(text, j)
+        return j
+    for kw in ("null", "undefined"):
+        m = _js_match_kw(text, j, kw)
+        if m is not None:
+            return m
+    if j + 1 < n and text[j] == "0" and text[j + 1] in "xXoObB":
+        # Radix-prefixed int literal -- delegate to the shared
+        # grammar (the value is ignored like the engine ignores
+        # thisArg).
+        _, j = _js_parse_number(text, j)
+        return j
+    if j < n and (text[j] in _ASCII_DIGITS or
+                  (text[j] in "+-" and j + 1 < n and
+                   text[j + 1] in _ASCII_DIGITS) or
+                  (text[j] == "." and j + 1 < n and
+                   text[j + 1] in _ASCII_DIGITS)):
+        # Any numeric literal (int or float -- the value is ignored
+        # exactly like the engine ignores thisArg). A narrow scan:
+        # optional sign, digits with at most one dot, optional
+        # exponent; anything else fails closed.
+        k = j + (1 if text[j] in "+-" else 0)
+        seen_dot = False
+        seen_digit = False
+        while k < n and (text[k] in _ASCII_DIGITS or
+                         (text[k] == "." and not seen_dot)):
+            if text[k] == ".":
+                seen_dot = True
+            else:
+                seen_digit = True
+            k += 1
+        if k < n and text[k] in "eE" and seen_digit:
+            e = k + 1
+            if e < n and text[e] in "+-":
+                e += 1
+            d = e
+            while d < n and text[d] in _ASCII_DIGITS:
+                d += 1
+            if d > e:
+                k = d
+        if not seen_digit:
+            raise _JSExprFail("F967 thisArg not a literal")
+        return k
+    raise _JSExprFail("F967 thisArg not a literal")
+
+
+def _js_f967_stmt_decode(text):
+    """Decode F967 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const C=[[INTS]|[INTS],...];var|let|const RESULT=`
+    `String.fromCharCode.apply(<lit-thisArg>,C.flat());` or
+    `C.flatMap(<identity>);` -- flat/flatMap over fromCharCode
+    argument arrays (F952 residual).
+
+    Node-exact (v24.20.0): flat()/flatMap(identity) flatten exactly
+    one level; fromCharCode applies ToUint16 per argument (the F943
+    `_safe_chr` + mask discipline -- surrogates fail closed as a
+    miss). Non-identity callbacks, deeper nesting, and non-literal
+    thisArgs fail closed. Returns the decoded string, or None. Never
+    evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        elems, j = _js_f967_parse_nested_codes(text, j, state)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "String")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "fromCharCode")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "apply")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_f967_parse_thisarg(text, j)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if aname != cname:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        tname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if tname == "flat":
+            j = _js_expect(text, _js_skip_ws(text, j), "(")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+        elif tname == "flatMap":
+            j = _js_expect(text, _js_skip_ws(text, j), "(")
+            j = _js_f967_parse_identity_cb(text, j)
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+        else:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_expect_semi_end(text, j)
+        # Flatten one level (engine-exact for the modeled subset),
+        # then fromCharCode's ToUint16 per argument.
+        flat = []
+        for e in elems:
+            if isinstance(e, list):
+                flat.extend(e)
+            else:
+                flat.append(e)
+        out = []
+        for cp in flat:
+            ch = _safe_chr(cp)
+            if ch is None:
+                raise _JSExprFail("F967 bad codepoint")
+            out.append(chr(ord(ch) & 0xFFFF))
+            if len(out) > _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail("F967 too many codepoints")
+        val = "".join(out)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F967 result too long")
+        state["ops"] += 1  # the apply dispatch is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- F968 ---------------------------------------------------------------
+
+def _js_f968_entries_init(text, j, state):
+    """Parse `Object.entries({k:'v',...})` at text[j] (F968).
+
+    Returns the (key, value) pair list in engine order. Integer-like
+    keys fail closed: the engine sorts them numerically ahead of
+    string keys (node v24.20.0), which the insertion-ordered dict
+    model cannot represent -- a documented residual, never a
+    mis-decode. Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "Object")
+    if m is None:
+        raise _JSExprFail("F968 not Object.entries")
+    j = _js_expect(text, _js_skip_ws(text, m), ".")
+    m = _js_match_kw(text, j, "entries")
+    if m is None:
+        raise _JSExprFail("F968 not Object.entries")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    props, j = _js_f95x_parse_obj_lit(text, _js_skip_ws(text, j),
+                                      state)
+    for k in props:
+        if _f943_is_canonical_index(k):
+            raise _JSExprFail("F968 integer-like key not modeled")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    return list(props.items()), j
+
+
+def _js_f968_stmt_decode(text):
+    """Decode F968 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const E=Object.entries({k:'v',...});`
+    `var|let|const O=Object.fromEntries(E);`
+    `var|let|const RESULT=<ADD>;` -- the entries->fromEntries
+    round-trip fragment reassembly (the merge residual: literal-pair
+    fromEntries forms already block via the F949 rewrite + F947
+    composition).
+
+    Node-exact (v24.20.0) for the modeled subset: entries yields
+    [k,v] string pairs in insertion order (integer-like keys fail
+    closed -- see _js_f968_entries_init); fromEntries rebuilds the
+    dict (later-wins duplicates, engine-exact via dict()); RESULT
+    is a `+` additive of string literals, bound strings, and
+    `O.k`/`O['k']` member reads. Returns the decoded string, or
+    None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    env = {}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, ename, j = _js_f96x_decl(text, j)
+        pairs, j = _js_f968_entries_init(text, j, state)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        env[ename] = ("pairs", pairs)
+        _js_f96x_charge(state, "F968 too many parts")
+        _, oname, j = _js_f96x_decl(text, j)
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "Object")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "fromEntries")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        fname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if fname != ename or env[ename][0] != "pairs":
+            return None
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        env[oname] = dict(env[ename][1])
+        _js_f96x_charge(state, "F968 too many parts")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+
+        def _term(t, k, e, s):
+            k = _js_skip_ws(t, k)
+            if k < len(t) and t[k] in "'\"":
+                return _js_parse_string(t, k)
+            if k < len(t) and t[k] in _JS_IDENT_START:
+                nm, k2 = _js_parse_ident(t, k)
+                k3 = _js_skip_ws(t, k2)
+                if k3 < len(t) and t[k3] in ".[":
+                    return _js_f96x_dict_read(t, k, e, "F968")
+                if nm in e and isinstance(e[nm], str):
+                    return e[nm], k2
+                raise _JSExprFail("F968 term ident unbound")
+            raise _JSExprFail("F968 term not modeled")
+
+        val, j = _js_f96x_parse_additive(text, j, env, state, "F968",
+                                         _term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the round-trip is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- F969 ---------------------------------------------------------------
+
+def _js_f969_getall_vals(text, j, env, what):
+    """Parse `F.getAll('k')` at text[j]; returns (values list, next_index).
+
+    F must be bound to a FormData entry list. A missing name is the
+    empty array in the engine (F914 precedent, node-exact). Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    fname, k = _js_parse_ident(text, j)
+    if fname not in env or not isinstance(env[fname], list):
+        raise _JSExprFail(what + " getAll receiver not a FormData")
+    k = _js_expect(text, _js_skip_ws(text, k), ".")
+    m = _js_match_kw(text, k, "getAll")
+    if m is None:
+        raise _JSExprFail(what + " not getAll")
+    k = _js_expect(text, _js_skip_ws(text, m), "(")
+    key, k = _js_parse_string(text, _js_skip_ws(text, k))
+    k = _js_expect(text, _js_skip_ws(text, k), ")")
+    vals = [v for (kn, v) in env[fname] if kn == key]
+    return vals, k
+
+
+def _js_f969_term(text, j, env, state):
+    """One F969 RESULT additive term.
+
+    A string literal, `String(F.getAll('k'))` (node-exact: Array
+    toString joins with ','), or `F.getAll('k').join('sep')` with a
+    string-literal separator. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    m = _js_match_kw(text, j, "String")
+    if m is not None:
+        k = _js_expect(text, _js_skip_ws(text, m), "(")
+        vals, k = _js_f969_getall_vals(text, k, env, "F969")
+        k = _js_expect(text, _js_skip_ws(text, k), ")")
+        _js_f96x_charge(state, "F969 too many parts")
+        return ",".join(vals), k
+    if j < n and text[j] in _JS_IDENT_START:
+        vals, k = _js_f969_getall_vals(text, j, env, "F969")
+        k = _js_expect(text, _js_skip_ws(text, k), ".")
+        m2 = _js_match_kw(text, k, "join")
+        if m2 is None:
+            raise _JSExprFail("F969 term not a join")
+        k = _js_expect(text, _js_skip_ws(text, m2), "(")
+        sep, k = _js_parse_string(text, _js_skip_ws(text, k))
+        k = _js_expect(text, _js_skip_ws(text, k), ")")
+        _js_f96x_charge(state, "F969 too many parts")
+        return sep.join(vals), k
+    raise _JSExprFail("F969 term not modeled")
+
+
+def _js_f969_stmt_decode(text):
+    """Decode F969 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const F=new FormData();[F.append('k','v');]*`
+    `var|let|const RESULT=<ADD>;` -- multi-name FormData.getAll
+    assembly (F914 residual: F914 models single-name reads).
+
+    Node-exact (v24.20.0): append-only construction (no-arg
+    constructor; `.set`/`.delete`/`.get` fail closed), per-name
+    getAll in insertion order, `String(arr)` comma-joins,
+    `.join(sep)` with a literal separator. RESULT is a `+`
+    additive of string literals and the two getAll term forms.
+    Returns the decoded string, or None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    env = {}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, fname, j = _js_f96x_decl(text, j)
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "new")
+        if m is None:
+            return None
+        m = _js_match_kw(text, _js_skip_ws(text, m), "FormData")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j += 1
+        env[fname] = []
+        _js_f96x_charge(state, "F969 too many parts")
+        while True:
+            save = _js_skip_ws(text, j)
+            try:
+                aname, k = _js_parse_ident(text, save)
+                if aname != fname:
+                    raise _JSExprFail("F969 not an append")
+                k = _js_expect(text, _js_skip_ws(text, k), ".")
+                am = _js_match_kw(text, k, "append")
+                if am is None:
+                    raise _JSExprFail("F969 not an append")
+                k = _js_expect(text, _js_skip_ws(text, am), "(")
+                key, k = _js_parse_string(text, _js_skip_ws(text, k))
+                k = _js_expect(text, _js_skip_ws(text, k), ",")
+                val, k = _js_parse_string(text, _js_skip_ws(text, k))
+                k = _js_expect(text, _js_skip_ws(text, k), ")")
+                k = _js_expect(text, _js_skip_ws(text, k), ";")
+                env[fname].append((key, val))
+                _js_f96x_charge(state, "F969 too many parts")
+                j = k
+            except _JSExprFail:
+                j = save
+                break
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        val, j = _js_f96x_parse_additive(text, j, env, state, "F969",
+                                         _js_f969_term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the multi-name read is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- F970 ---------------------------------------------------------------
+
+def _js_f970_parse_descriptor(text, j, state):
+    """Parse `{value:'lit'[,writable|enumerable|configurable:bool]*}` (F970).
+
+    Only data descriptors with a string-literal value are modeled;
+    accessor descriptors (`get`/`set`), non-literal values, and
+    unknown attributes fail closed (documented boundary). Duplicate
+    keys: later wins (engine-exact). Returns (value, configurable,
+    next_index) where configurable is None when the descriptor does
+    not mention the flag -- the engine preserves the pre-existing
+    flag on partial-descriptor redefines (node v24.20.0). Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F970 descriptor not an object")
+    j = _js_skip_ws(text, j + 1)
+    value = None
+    seen_value = False
+    configurable = None
+    if j < n and text[j] == "}":
+        raise _JSExprFail("F970 empty descriptor")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F970 descriptor key not modeled")
+        if key not in ("value", "writable", "enumerable",
+                       "configurable"):
+            raise _JSExprFail("F970 descriptor attr not modeled")
+        j = _js_expect(text, _js_skip_ws(text, j), ":")
+        j = _js_skip_ws(text, j)
+        if key == "value":
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F970 descriptor value not a literal")
+            value, j = _js_parse_string(text, j)
+            seen_value = True
+        else:
+            flag = None
+            for bkw in _F96X_BOOL_KW:
+                bm = _js_match_kw(text, j, bkw)
+                if bm is not None:
+                    j = bm
+                    flag = (bkw == "true")
+                    break
+            if flag is None:
+                raise _JSExprFail("F970 descriptor flag not a bool")
+            if key == "configurable":
+                configurable = flag
+        _js_f96x_charge(state, "F970 too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        raise _JSExprFail("F970 bad descriptor")
+    if not seen_value:
+        # Accessor descriptor -- not modeled (a miss, never a
+        # mis-decode).
+        raise _JSExprFail("F970 no value in descriptor")
+    return value, configurable, j
+
+
+def _js_f970_gopd_decode(text):
+    """Decode the F970 getOwnPropertyDescriptor family.
+
+    `var|let|const D=Object.getOwnPropertyDescriptor({k:'v',...},'k');`
+    `var|let|const RESULT=<ADD>;` with `D.value`/`D['value']` reads.
+    Returns the decoded string, or None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    env = {}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, dname, j = _js_f96x_decl(text, j)
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "Object")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "getOwnPropertyDescriptor")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        props, j = _js_f95x_parse_obj_lit(text, _js_skip_ws(text, j),
+                                          state)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        key, j = _js_parse_string(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        if key not in props:
+            # The engine returns undefined -- outside the
+            # string-only discipline: fail closed.
+            raise _JSExprFail("F970 descriptor key missing")
+        env[dname] = {"value": props[key]}
+        _js_f96x_charge(state, "F970 too many parts")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+
+        def _term(t, k, e, s):
+            k = _js_skip_ws(t, k)
+            if k < len(t) and t[k] in "'\"":
+                return _js_parse_string(t, k)
+            if k < len(t) and t[k] in _JS_IDENT_START:
+                nm, k2 = _js_parse_ident(t, k)
+                k3 = _js_skip_ws(t, k2)
+                if k3 < len(t) and t[k3] in ".[":
+                    return _js_f96x_dict_read(t, k, e, "F970")
+                if nm in e and isinstance(e[nm], str):
+                    return e[nm], k2
+                raise _JSExprFail("F970 term ident unbound")
+            raise _JSExprFail("F970 term not modeled")
+
+        val, j = _js_f96x_parse_additive(text, j, env, state, "F970",
+                                         _term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the descriptor read is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f970_defprop_term(text, j, env, state):
+    """One F970 defineProperty RESULT additive term.
+
+    A string literal, a bound-string ident, or an `O.k`/`O['k']`
+    member read over the installed object. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    if j < n and text[j] in _JS_IDENT_START:
+        nm, k2 = _js_parse_ident(text, j)
+        k3 = _js_skip_ws(text, k2)
+        if k3 < n and text[k3] in ".[":
+            return _js_f96x_dict_read(text, j, env, "F970")
+        if nm in env and isinstance(env[nm], str):
+            return env[nm], k2
+        raise _JSExprFail("F970 term ident unbound")
+    raise _JSExprFail("F970 term not modeled")
+
+
+def _js_f970_defprop_decode(text):
+    """Decode the F970 defineProperty family.
+
+    `var|let|const O={}|{k:'v',...};`
+    `Object.defineProperty(O,'k',{value:'lit'[,flags]});` (1+)
+    `var|let|const RESULT=<ADD>;` with `O.k`/`O['k']` reads.
+    defineProperty returns O in the engine; the modeled subset
+    installs data-descriptor values node-exactly, including the
+    configurable flag: redefining a non-configurable property
+    throws in the engine (node v24.20.0) and fails closed here.
+    Returns the decoded string, or None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    env = {}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, oname, j = _js_f96x_decl(text, j)
+        props, j = _js_f95x_parse_obj_lit(text, _js_skip_ws(text, j),
+                                          state)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j += 1
+        env[oname] = props
+        # Object-literal properties are configurable in the engine
+        # (node v24.20.0) -- redefinition is legal for them.
+        conf = {k: True for k in props}
+        _js_f96x_charge(state, "F970 too many parts")
+        installed = 0
+        while True:
+            save = _js_skip_ws(text, j)
+            try:
+                m = _js_match_kw(text, save, "Object")
+                if m is None:
+                    raise _JSExprFail("F970 not defineProperty")
+                k = _js_expect(text, _js_skip_ws(text, m), ".")
+                dm = _js_match_kw(text, k, "defineProperty")
+                if dm is None:
+                    raise _JSExprFail("F970 not defineProperty")
+                k = _js_expect(text, _js_skip_ws(text, dm), "(")
+                tname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+                if tname != oname:
+                    raise _JSExprFail("F970 defineProperty target")
+                k = _js_expect(text, _js_skip_ws(text, k), ",")
+                dkey, k = _js_parse_string(text, _js_skip_ws(text, k))
+                k = _js_expect(text, _js_skip_ws(text, k), ",")
+                dval, dconf, k = _js_f970_parse_descriptor(
+                    text, _js_skip_ws(text, k), state)
+                k = _js_expect(text, _js_skip_ws(text, k), ")")
+                k = _js_expect(text, _js_skip_ws(text, k), ";")
+                if dkey in env[oname] and not conf.get(dkey, False):
+                    # The engine throws TypeError redefining a
+                    # non-configurable property (node v24.20.0) --
+                    # fail closed, never mis-decode.
+                    raise _JSExprFail("F970 redefine non-configurable")
+                env[oname][dkey] = dval
+                if dconf is not None:
+                    # A partial descriptor without the flag preserves
+                    # the pre-existing configurability (node v24.20.0).
+                    conf[dkey] = dconf
+                _js_f96x_charge(state, "F970 too many parts")
+                installed += 1
+                j = k
+            except _JSExprFail:
+                j = save
+                break
+        if installed == 0:
+            return None
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        val, j = _js_f96x_parse_additive(
+            text, j, env, state, "F970", _js_f970_defprop_term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the defineProperty read is
+                           # obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f970_stmt_decode(text):
+    """Decode F970 statement sequences (whole-text, _decode_layer hook).
+
+    Property-descriptor assembly: `Object.getOwnPropertyDescriptor`
+    `.value` reads and `Object.defineProperty`-installed values
+    (filed 2026-10-09 by wave-391 attack round 59). Tries the two
+    families in order; both return None on miss. Never evals.
+    """
+    val = _js_f970_gopd_decode(text)
+    if val is not None:
+        return val
+    return _js_f970_defprop_decode(text)
+
+
 def _js_f963_apply_cb(elements, cb, state):
     """Apply an F963 parsed callback to *elements* (F963).
 
@@ -108732,13 +109565,16 @@ def _decode_layer(text):
                 _add(decoded)
                 if len(variants) >= _MAX_CANDIDATES:
                     return variants
-    # F961/F962/F964: narrow whole-text statement-sequence decoders.
-    # Each returns the decoded string or None; all filed shapes BREAK
-    # on the open tree, so no earlier production decoded them and the
-    # pre-existing variant order (F441) is preserved. Ordered after
-    # the F501 rewrite for the same reason.
+    # F961/F962/F964/F967/F968/F969/F970: narrow whole-text
+    # statement-sequence decoders. Each returns the decoded string
+    # or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Ordered after the F501 rewrite for
+    # the same reason.
     for _stmtdec in (_js_f961_stmt_decode, _js_f962_stmt_decode,
-                     _js_f964_stmt_decode):
+                     _js_f964_stmt_decode, _js_f967_stmt_decode,
+                     _js_f968_stmt_decode, _js_f969_stmt_decode,
+                     _js_f970_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
