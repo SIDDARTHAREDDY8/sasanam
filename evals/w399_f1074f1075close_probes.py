@@ -39,7 +39,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 22  # wave-398 merge: 21 + this lane's F1074/F1075 loop (real code-count change)
+N_STMTDEC_LOOPS_PIN = 24  # wave-399 merge: 21 + lanes 1+2+3 loops (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -119,10 +119,10 @@ def test_p0_stmtdec_loops():
 def test_p0_footer():
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         src = f.read()
-    ok = ("# Wave-399 lane 1: F1074-F1075 CLOSED (2); F1076-F1080 OPEN (5); next free F1081" in src
-          and "F988-F1075 CLOSED (88" in src
-          and "F1076-F1080 OPEN (5" in src
-          and "Next free finding: **F1081**" in src)
+    ok = ("# Wave-399: F1074-F1082 CLOSED (9); F1083-F1089 OPEN (7); next free F1090" in src
+          and "F988-F1082 CLOSED (95" in src
+          and "F1083-F1089 OPEN (7" in src
+          and "Next free finding: **F1090**" in src)
     # entry-count check: F1074/F1075 stamped CLOSED exactly once each;
     # F1080 filed exactly once (Spec-review residual, 2026-10-10 11:41 UTC)
     ok = ok and src.count("(F1074 filed") == 1 and src.count("(F1075 filed") == 1
@@ -297,17 +297,13 @@ def test_p4_sibling_loops():
 
 @_t
 def test_p4_still_open():
-    # F1076-F1079 (still OPEN from round 66) must still MISS -- no
-    # incidental closure. F1080 (filed OPEN by this lane, 11:41 UTC)
-    # must still BREAK too.
+    # F1089 (lane 1's renumbered F1080, filed OPEN 11:41 UTC) must still
+    # MISS -- no incidental closure. F1076-F1079 are CLOSED on the merged
+    # tree (pinned blocked by the closure tests above).
     bad = []
-    for n in (1076, 1077, 1078, 1079):
-        for sname, shape in _redfirst_shapes(n, prefix="w398"):
-            if _blocked(shape):
-                bad.append("f%d/%s" % (n, sname))
-    for sname, shape in _redfirst_shapes(1080):
+    for sname, shape in _redfirst_shapes(1089):
         if _blocked(shape):
-            bad.append("f1080/%s" % sname)
+            bad.append("f1089/%s" % sname)
     return (not bad, "still-open miss, incidental=%d" % len(bad))
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Red-first for F1080 (wave-399 lane 1): member-expression spread receivers.
+"""Red-first for F1089 (wave-399 lane 1): member-expression spread receivers.
 
 F1069 (CLOSED) models non-identifier fromCharCode spread receivers for
 the WeakRef-deref / globalThis / rest-param / plain-identifier forms;

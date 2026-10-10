@@ -36,7 +36,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 22  # wave-398 merge's 21 + this lane's F1076/F1077 loop
+N_STMTDEC_LOOPS_PIN = 24  # wave-399 merge: 21 + lanes 1+2+3 loops (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -101,17 +101,17 @@ def test_b0_pins():
     n = len(re.findall(r"re\.compile\(", src))
     ok = (n == RECOMPILE_PIN) and ok
     foot = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    # Pre-stamp base footer: F1074-F1079 still OPEN (merge reconciles).
-    ok = ("F988-F1073 CLOSED (86" in foot
-          and "F1074-F1079 OPEN (6" in foot
-          and "Next free finding: **F1080**" in foot) and ok
+    # Wave-399 merge footer (merge reconciled).
+    ok = ("F988-F1082 CLOSED (95" in foot
+          and "F1083-F1089 OPEN (7" in foot
+          and "Next free finding: **F1090**" in foot) and ok
     return ("HELD" if ok else "BREAK",
             "pins 2143/33/28 footer=%s" % ok)
 
 
 @_t
 def test_b0_stmtdec_loop_count():
-    """N_STMTDEC_LOOPS 22 (21 + this lane's F1076/F1077 loop)."""
+    """N_STMTDEC_LOOPS 24 (21 + wave-399 lanes 1+2+3 loops)."""
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     m = re.search(r"def _decode_layer\(text\):", src)
     body = src[m.end():src.find("\ndef ", m.end())]
@@ -336,7 +336,7 @@ def test_p6_f1077_fail_closed():
 
 @_t
 def test_p7_siblings():
-    """Sibling pins: F964/F959d block; F1074/F1075/F1078 still MISS; F1079 evades."""
+    """Sibling pins: F964/F959d block; F1074/F1075/F1078/F1079 CLOSED (must block/route)."""
     ok = True
     # F964 twin blocks coded (credential-shaped argument)
     ok = _blocked(
@@ -346,16 +346,20 @@ def test_p7_siblings():
         "var m=await import('data:text/javascript,export default \"%s\";');"
         "var RESULT=m.default+'%s';"
         % ("xoxb-0123456789abcdef", "0123456789abcdef012")) and ok
-    # still-OPEN siblings still miss
-    for n in (1074, 1075, 1078):
+    # closed siblings now block
+    for n in (1074, 1075, 1076, 1077):
         shapes = _redfirst_shapes(n, prefix="w398")
         for name, payload in shapes:
-            if not _misses(payload):
+            if _misses(payload):
                 ok = False
-    # F1079 carriers still evade routing (OPEN)
+    # F1078 (+twins) now block
+    for name, payload in _redfirst_shapes(1078, prefix="w399"):
+        if _misses(payload):
+            ok = False
+    # F1079 carriers now route to approval (CLOSED)
     shapes = _redfirst_shapes(1079, prefix="w398")
     for name, body in shapes:
-        if _wired(body):
+        if not _wired(body):
             ok = False
     return ("HELD" if ok else "BREAK", "siblings=%s" % ok)
 
