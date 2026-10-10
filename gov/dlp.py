@@ -121448,6 +121448,460 @@ def _js_f1046_stmt_decode(text):
 # -- end F1044/F1045/F1046 ----------------------------------------------
 
 
+# -- F1061/F1062/F1063 (wave-397 lane 4) --------------------------------
+
+_MAX_F1061_PAIRS = 64  # bound on staged Map entries (F1061)
+_MAX_F1062_FRAGS = 64  # bound on staged Set fragments (F1062)
+_MAX_F1063_ELEMS = 64  # bound on staged WeakMap array elements (F1063)
+
+
+def _js_f1061_parse_pairs(text, j, what):
+    """Parse `[[K1,S1],[K2,S2],...]` at text[j] (F1061 Map entries).
+
+    Keys/values must be string literals (node-exact via
+    _js_f99x_parse_str); non-string entries fail closed. Duplicate keys
+    are later-wins (engine-exact SameValueZero on strings, node
+    v24.20.0). Returns (pairs_dict, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "[")
+    pairs = {}
+    count = 0
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "]":
+        raise _JSExprFail(what + " empty staging")
+    while True:
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        key, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        val, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        pairs[key] = val
+        count += 1
+        if count > _MAX_F1061_PAIRS:
+            raise _JSExprFail(what + " too many pairs")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        j = _js_expect(text, j, "]")
+        return pairs, j
+
+
+def _js_f1061_term(text, j, env, state):
+    """Parse one `M.get("key")` operand at text[j] (F1061).
+
+    The key must be staged in the Map (a missing key reads `undefined`
+    in node -- fail closed). Never evals.
+    """
+    m_name, pairs = env
+    j = _js_skip_ws(text, j)
+    nm, j = _js_parse_ident(text, j)
+    if nm != m_name:
+        raise _JSExprFail("F1061 get recv mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+    if m is None:
+        raise _JSExprFail("F1061 no get")
+    j = _js_expect(text, m, "(")
+    key, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    if key not in pairs:
+        raise _JSExprFail("F1061 key not staged")
+    return pairs[key], j
+
+
+def _js_f1061_stmt_decode(text):
+    """Decode F1061 Map.get dual-staged fragment reads (whole-text,
+    _decode_layer hook).
+
+    `var|let|const M=new Map([[K1,S1],[K2,S2],...]);`
+    `var|let|const RESULT=<additive of M.get("Ki") terms>;`
+    then end-of-text.
+
+    F971 residual: the F971 hook models key-enumeration reads
+    (`Reflect.ownKeys` / `Object.getOwnPropertyNames`); the
+    single-get+literal twin (`m.get("a")+"frag"`) is decoded by an
+    earlier production (AA control). Staging BOTH fragments in the
+    Map and reading them back assembles node-exactly but misses both
+    grammars. Disjoint from every other _stmtdec hook: the only
+    other Map-anchored production is F971's key-enumeration grammar.
+
+    Node-exact (v24.20.0): Map entries are [key, value] pairs;
+    duplicate keys are later-wins. Non-fresh/shadowed names
+    (`String`, `Map`), a non-Map receiver, non-string entries, an
+    empty staging, an unstaged key, or a non-RESULT result fail
+    closed -- a miss, never a mis-decode. Returns the assembled
+    string (bounded by _MAX_DECODE_BYTES), or None. Never evals.
+    """
+    if "new Map" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "Map"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, m_name, j = _js_f96x_decl(text, j)
+        bound = set()
+        _js_f1028f1029_check_fresh_name(m_name, bound, shadow, "F1061")
+        bound.add(m_name)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail("F1061 no new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Map")
+        if m is None:
+            raise _JSExprFail("F1061 no Map")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        pairs, j = _js_f1061_parse_pairs(text, _js_skip_ws(text, j),
+                                         "F1061")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1061 not RESULT")
+
+        def _term(t, k, _env, _st):
+            return _js_f1061_term(t, k, _env, _st)
+
+        val, j = _js_f96x_parse_additive(text, _js_skip_ws(text, j),
+                                         (m_name, pairs), state,
+                                         "F1061", _term)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1062_parse_frags(text, j, what, cap):
+    """Parse `["F1","F2",...]` at text[j] (F1062 Set fragments).
+
+    String literals only (node-exact via _js_f99x_parse_str).
+    Insertion-ordered with SameValueZero dedup (engine-exact, node
+    v24.20.0 -- see _js_parse_new_set). F1063 uses its own parser
+    (_js_f1063_parse_elems): arrays do not dedup. Returns (frags,
+    next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "[")
+    frags = []
+    seen = set()
+    count = 0
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "]":
+        raise _JSExprFail(what + " empty staging")
+    while True:
+        val, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if val not in seen:
+            seen.add(val)
+            frags.append(val)
+        count += 1
+        if count > cap:
+            raise _JSExprFail(what + " too many fragments")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        j = _js_expect(text, j, "]")
+        return frags, j
+
+
+def _js_f1062_parse_accum_body(text, j, acc, param, what, need_semi=True):
+    """Parse `ACC+=v[;]` or `ACC=ACC+v[;]` at text[j] (F1062).
+
+    The body must accumulate the callback param verbatim -- anything
+    else fails closed. The trailing `;` is required inside braces;
+    a braceless arrow body is an expression (`v=>r+=v`) and has none.
+    Returns next index. Never evals.
+    """
+    n = len(text)
+    nm, k = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != acc:
+        raise _JSExprFail(what + " accum target mismatch")
+    k = _js_skip_ws(text, k)
+    if k + 1 < n and text[k] == "+" and text[k + 1] == "=":
+        k += 2
+    elif k < n and text[k] == "=":
+        k += 1
+        nm2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        if nm2 != acc:
+            raise _JSExprFail(what + " accum rhs mismatch")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "+":
+            raise _JSExprFail(what + " no plus")
+        k += 1
+    else:
+        raise _JSExprFail(what + " not accumulation")
+    nm3, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if nm3 != param:
+        raise _JSExprFail(what + " accum source mismatch")
+    if need_semi:
+        k = _js_expect(text, _js_skip_ws(text, k), ";")
+    return k
+
+
+def _js_f1062_parse_callback(text, j, acc, bound, shadow, what):
+    """Parse the forEach callback at text[j] (F1062).
+
+    `function(v){ACC+=v;}` / `function(v){ACC=ACC+v;}` and the arrow
+    twins `(v)=>{ACC+=v;}`, `(v)=>ACC+=v;`, `v=>{ACC+=v;}`,
+    `v=>ACC+=v;` (braced and braceless). The param must be fresh.
+    Returns (param, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        param, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+    else:
+        if j < n and text[j] == "(":
+            param, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+        else:
+            param, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        # `=>` is matched literally: _js_match_kw's trailing ident
+        # boundary check would wrongly reject `v=>r` (the char after
+        # `=>` is an identifier start, which is fine for `=>`).
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " no arrow")
+        j += 2
+    if (param in bound or param in shadow or param in _F611_RESERVED
+            or param in ("RESULT", "arguments")):
+        raise _JSExprFail(what + " bad param")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "{":
+        j = _js_f1062_parse_accum_body(text, j + 1, acc, param, what)
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    else:
+        # Braceless arrow body is an expression, not a statement:
+        # no trailing `;` (node-exact).
+        j = _js_f1062_parse_accum_body(text, j, acc, param, what,
+                                       need_semi=False)
+    return param, j
+
+
+def _js_f1062_stmt_decode(text):
+    """Decode F1062 Set.forEach fragment accumulation (whole-text,
+    _decode_layer hook).
+
+    `var|let|const S=new Set([F1,F2,...]);`
+    `var|let|const ACC="";`
+    `S.forEach(function(v){ACC+=v;});` (arrow/braced twins modeled)
+    `var|let|const RESULT=ACC;`
+    then end-of-text.
+
+    The F1038 hook models spread-union of code-int pairs; string
+    fragments accumulated via forEach assemble node-exactly but miss
+    that grammar. Disjoint: this requires the `.forEach(` anchor.
+
+    Node-exact (v24.20.0): Set iteration is insertion-ordered;
+    duplicate values visit once (SameValueZero). The callback must
+    accumulate the param verbatim; RESULT must be the bare
+    accumulator. Non-fresh/shadowed names (`String`, `Set`), a
+    non-empty accumulator init, or any deviation fails closed -- a
+    miss, never a mis-decode. Returns the assembled string (bounded
+    by _MAX_DECODE_BYTES), or None. Never evals.
+    """
+    if "new Set" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "Set"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, s_name, j = _js_f96x_decl(text, j)
+        bound = set()
+        _js_f1028f1029_check_fresh_name(s_name, bound, shadow, "F1062")
+        bound.add(s_name)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail("F1062 no new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Set")
+        if m is None:
+            raise _JSExprFail("F1062 no Set")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        frags, j = _js_f1062_parse_frags(text, _js_skip_ws(text, j),
+                                         "F1062", _MAX_F1062_FRAGS)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, acc, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(acc, bound, shadow, "F1062")
+        bound.add(acc)
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1062 acc not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != s_name:
+            raise _JSExprFail("F1062 forEach recv mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "forEach")
+        if m is None:
+            raise _JSExprFail("F1062 no forEach")
+        j = _js_expect(text, m, "(")
+        _param, j = _js_f1062_parse_callback(text, _js_skip_ws(text, j),
+                                             acc, bound, shadow, "F1062")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1062 not RESULT")
+        nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm2 != acc:
+            raise _JSExprFail("F1062 result not acc")
+        _js_f96x_expect_semi_end(text, j)
+        val = "".join(frags)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1062 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1063_parse_elems(text, j, what):
+    """Parse `["F1","F2",...]` at text[j] (F1063 staged array).
+
+    String literals only (node-exact via _js_f99x_parse_str). Unlike
+    the F1062 Set fragments, an ARRAY does not dedup -- duplicate
+    elements keep their indices (engine-exact: `["a","a","b"][1]` is
+    `"a"`). Returns (elems, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "[")
+    elems = []
+    count = 0
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "]":
+        raise _JSExprFail(what + " empty staging")
+    while True:
+        val, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        elems.append(val)
+        count += 1
+        if count > _MAX_F1063_ELEMS:
+            raise _JSExprFail(what + " too many elements")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        j = _js_expect(text, j, "]")
+        return elems, j
+
+
+def _js_f1063_term(text, j, env, state):
+    """Parse one `WM.get(K)[N]` operand at text[j] (F1063).
+
+    The index must be in range (node reads `undefined` out of range --
+    fail closed). Never evals.
+    """
+    wm_name, k_name, frags = env
+    j = _js_skip_ws(text, j)
+    nm, j = _js_parse_ident(text, j)
+    if nm != wm_name:
+        raise _JSExprFail("F1063 get recv mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+    if m is None:
+        raise _JSExprFail("F1063 no get")
+    j = _js_expect(text, m, "(")
+    knm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if knm != k_name:
+        raise _JSExprFail("F1063 get key mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "[")
+    idx, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+    if idx < 0 or idx >= len(frags):
+        raise _JSExprFail("F1063 index out of range")
+    j = _js_expect(text, _js_skip_ws(text, j), "]")
+    return frags[idx], j
+
+
+def _js_f1063_stmt_decode(text):
+    """Decode F1063 WeakMap staged-array indexed reads (whole-text,
+    _decode_layer hook).
+
+    `var|let|const WM=new WeakMap[()];`
+    `var|let|const K={};`
+    `WM.set(K,[F1,F2,...]);`
+    `var|let|const RESULT=<additive of WM.get(K)[N] terms>;`
+    then end-of-text.
+
+    F1028 residual: F1028 models a code-int-assembled string staged
+    via `WM.set(K,S)`; staging a FRAGMENT ARRAY and reading indexed
+    elements assembles node-exactly but misses that grammar. Disjoint:
+    F1028 requires the fromCharCode accumulation loop and a string
+    set-argument; this requires an array-literal set-argument and
+    indexed get-reads.
+
+    Node-exact (v24.20.0): `wm.get(k)` returns the staged array
+    verbatim; indexing follows array semantics. Non-fresh/shadowed
+    names (`String`, `WeakMap`), a non-`{}` key, a non-array staging,
+    an out-of-range index, or a non-RESULT result fail closed -- a
+    miss, never a mis-decode. Returns the assembled string (bounded
+    by _MAX_DECODE_BYTES), or None. Never evals.
+    """
+    if "new WeakMap" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "WeakMap"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, wm_name, j = _js_f96x_decl(text, j)
+        bound = set()
+        _js_f1028f1029_check_fresh_name(wm_name, bound, shadow, "F1063")
+        bound.add(wm_name)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail("F1063 no new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "WeakMap")
+        if m is None:
+            raise _JSExprFail("F1063 no WeakMap")
+        j = _js_skip_ws(text, m)
+        # `new WeakMap` without parens is node-valid (no-arg ctor).
+        if j < n and text[j] == "(":
+            j = _js_expect(text, _js_skip_ws(text, j + 1), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, k_name, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(k_name, bound, shadow, "F1063")
+        bound.add(k_name)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        wname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if wname != wm_name:
+            raise _JSExprFail("F1063 set recv mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "set")
+        if m is None:
+            raise _JSExprFail("F1063 no set")
+        j = _js_expect(text, m, "(")
+        knm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if knm2 != k_name:
+            raise _JSExprFail("F1063 set key mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        frags, j = _js_f1063_parse_elems(text, _js_skip_ws(text, j),
+                                         "F1063")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1063 not RESULT")
+
+        def _term(t, k, _env, _st):
+            return _js_f1063_term(t, k, _env, _st)
+
+        val, j = _js_f96x_parse_additive(text, _js_skip_ws(text, j),
+                                         (wm_name, k_name, frags),
+                                         state, "F1063", _term)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1061/F1062/F1063 ----------------------------------------------
+
+
 
 # -- F1017/F1018/F1019/F1020 (wave-394 lane 4) ----------------------------
 
@@ -122850,6 +123304,21 @@ def _decode_layer(text):
     # order (F441) is preserved. Additive, in F-number order.
     for _stmtdec in (_js_f1044_stmt_decode, _js_f1045_stmt_decode,
                      _js_f1046_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1061/F1062/F1063: narrow whole-text statement-sequence decoders
+    # (wave-397 lane 4) -- Map.get dual-staged reads (F971 residual),
+    # Set.forEach fragment accumulation, WeakMap staged-array indexed
+    # reads (F1028 residual). Each returns the decoded string or None;
+    # all filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint from the F971/F1028/F1038 hooks by anchor
+    # and grammar (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1061_stmt_decode, _js_f1062_stmt_decode,
+                     _js_f1063_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
