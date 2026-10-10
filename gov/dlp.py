@@ -132473,6 +132473,374 @@ def _js_f1110_stmt_decode(text):
 # -- end F1110 -------------------------------------------------------------
 
 
+# -- F1117/F1118/F1119 (wave-403 lane 3) -----------------------------------
+# Narrow whole-text statement-sequence decoders, hooked in the
+# _decode_layer _stmtdec loop alongside F961-F1110. Each parses a strict
+# whole-text grammar; anything outside the grammar fails closed
+# (returns None -- a miss, never a mis-decode). All shapes
+# node-verified (v24.20.0). Pure text-to-string scans: charge no F452
+# scan budget; staged items are charged to a per-attempt local state
+# via _js_f96x_charge and results bounded by _MAX_DECODE_BYTES, so
+# there is nothing to snapshot/restore on miss (wave-383 rule). No new
+# decision codes, no new re.compile (pin tests unchanged). Never evals.
+
+
+def _js_f1117_parse_with(text, j, cname, sname, what):
+    """Parse the F1117 with-scope staged spread at text[j].
+
+    `with({})` or `with({C:C})` `{` `S=String.fromCharCode(...C);` `}`.
+
+    The object expression is exactly the empty object or a single
+    `C:C` property aliasing the staged array; the body is exactly the
+    accumulator assignment with the spread call. Returns next_index.
+    Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "with")
+    if m is None:
+        raise _JSExprFail(what + " not with")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_skip_ws(text, j)
+    n = len(text)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail(what + " with obj not modeled")
+    j = _js_skip_ws(text, j + 1)
+    if j < n and text[j] == "}":
+        # `with({})` -- the empty object contributes no bindings; C
+        # and S resolve to the outer declarations (node-exact).
+        j = j + 1
+    else:
+        # `with({C:C})` -- the object aliases the staged array under
+        # the same name, so `C` inside is the same array (node-exact).
+        kname, j = _js_parse_ident(text, j)
+        if kname != cname:
+            raise _JSExprFail(what + " with key mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ":")
+        vname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if vname != cname:
+            raise _JSExprFail(what + " with value mismatch")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "}":
+            raise _JSExprFail(what + " with obj not closed")
+        j = j + 1
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    # `S=String.fromCharCode(...C);` -- plain assignment (the sloppy
+    # `with` scope lets the assignment reach the outer S).
+    aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if aname != sname:
+        raise _JSExprFail(what + " with accum target mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "=")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail(what + " not String")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, j, "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("...", j):
+        raise _JSExprFail(what + " not a spread call")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+    if nm != cname:
+        raise _JSExprFail(what + " spread arr mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return j
+
+
+def _js_f1117_stmt_decode(text):
+    """Decode F1117 with-scope staged spread reads (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S='';`
+    `with({})` or `with({C:C})` `{` `S=String.fromCharCode(...C);` `}`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0, sloppy mode): `with({})` contributes no
+    bindings, so `C`/`S` resolve to the outer declarations; with
+    `with({C:C})` the object aliases the same array under the same
+    name. Spreading the staged int array applies fromCharCode's
+    ToUint16 per element (F967 discipline). Distinct from F1089
+    (member-expression spread receivers): F1089 requires the
+    `O={v:[...]}` object declarator and a `RESULT=` spread call --
+    the array declarator plus `with` statement fail it closed, and
+    F1089's shapes (no `with` keyword) fail this hook closed
+    (verified both directions). Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None. Never
+    evals.
+    """
+    if "fromCharCode(" not in text or ("with(" not in text
+            and "with (" not in text):
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail("F1117 bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail("F1117 empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, "F1117")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname):
+            raise _JSExprFail("F1117 bad acc name")
+        jj = _js_skip_ws(text, j)
+        init, j = _js_f99x_parse_str(text, jj)
+        if init != "":
+            raise _JSExprFail("F1117 acc not empty")
+        j = _js_expect(text, j, ";")
+        j = _js_f1117_parse_with(text, j, cname, sname, "F1117")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1117 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname, state,
+                                           "F1117")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1118_parse_fn(text, j, what):
+    """Parse the F1118 arguments-spread function at text[j].
+
+    `function NAME(){var|let|const S=String.fromCharCode(...arguments);return S;}`
+
+    Returns (fname, next_index). The function takes no parameters
+    (an arrow or param-bearing form would change `arguments`
+    binding and fails closed). Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+    if m is None:
+        raise _JSExprFail(what + " not function")
+    fname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if sname == "RESULT":
+        raise _JSExprFail(what + " bad acc name")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail(what + " not String")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, j, "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("...", j):
+        raise _JSExprFail(what + " not a spread call")
+    aname, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+    if aname != "arguments":
+        raise _JSExprFail(what + " not arguments spread")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail(what + " not return")
+    rname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+    if rname != sname:
+        raise _JSExprFail(what + " return mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return fname, j
+
+
+def _js_f1118_stmt_decode(text):
+    """Decode F1118 arguments-object staged spread reads (whole-text).
+
+    `function NAME(){var|let|const S=String.fromCharCode(...arguments);return S;}`
+    `var|let|const C=[INT,...];`
+    `var|let|const RESULT=NAME(...C);`
+    then end-of-text.
+
+    Node-exact (v24.20.0): calling `NAME(...C)` passes the staged
+    ints as the function's arguments; inside, `arguments` is the
+    array-like of exactly those values, and spreading it into
+    fromCharCode applies ToUint16 per element (F967 discipline) --
+    identical to `String.fromCharCode(...C)`. The grammar stays
+    narrow: exactly the spread-arguments production, no parameters,
+    the accumulator returned directly. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "fromCharCode(" not in text or "arguments" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        fname, j = _js_f1118_parse_fn(text, j, "F1118")
+        _, cname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if cname in ("RESULT", fname):
+            raise _JSExprFail("F1118 bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail("F1118 empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, "F1118")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1118 not RESULT")
+        cname2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if cname2 != fname:
+            raise _JSExprFail("F1118 call target mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail("F1118 not a spread call")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        if nm != cname:
+            raise _JSExprFail("F1118 spread arr mismatch")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1119_parse_forof(text, j, cname, sname, what, in_iife):
+    """Parse the F1119 Symbol.iterator for(-await)-of loop at text[j].
+
+    `for [await] (var|let|const X of C[Symbol.iterator]()){S+=String.fromCharCode(X);}`
+
+    The of-source is exactly the explicit `C[Symbol.iterator]()`
+    call -- not the plain `C`, `.values()`, `.entries()`, or a
+    bound-iterator identifier (those are F1091/F1110's productions
+    and fail this hook closed). `await` is admitted with or without
+    the async-IIFE wrapper: node v24.20.0 accepts top-level `await`
+    in scripts (F1110 precedent, verified). Returns next_index.
+    Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+    if m is None:
+        raise _JSExprFail(what + " not for")
+    j = _js_skip_ws(text, m)
+    m2 = _js_match_kw(text, j, "await")
+    if m2 is not None:
+        j = _js_skip_ws(text, m2)
+    j = _js_expect(text, j, "(")
+    kw, k2 = _js_match_decl_kw(text, _js_skip_ws(text, j))
+    if kw is None:
+        raise _JSExprFail(what + " loop var not declared")
+    j = _js_skip_ws(text, k2)
+    if j < len(text) and text[j] == "[":
+        # Destructuring is the F1091 entries() production -- this
+        # hook models only the plain explicit-iterator loop.
+        raise _JSExprFail(what + " no destructure")
+    vname, j = _js_parse_ident(text, j)
+    m = _js_match_kw(text, _js_skip_ws(text, j), "of")
+    if m is None:
+        raise _JSExprFail(what + " not of")
+    j = _js_skip_ws(text, m)
+    nm, j = _js_parse_ident(text, j)
+    if nm != cname:
+        raise _JSExprFail(what + " not staged arr")
+    j = _js_expect(text, _js_skip_ws(text, j), "[")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "Symbol")
+    if m is None:
+        raise _JSExprFail(what + " not Symbol")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, j, "iterator")
+    if m is None:
+        raise _JSExprFail(what + " not iterator")
+    j = _js_expect(text, m, "]")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    j = _js_f1091_parse_accum(text, j, sname, vname, what)
+    j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_f1119_stmt_decode(text):
+    """Decode F1119 Symbol.iterator explicit-iteration staged reads
+    (whole-text hook).
+
+    `[(async function(){ | (async()=>{]`
+    `var|let|const C=[INT,...];`
+    `var|let|const S='';for [await] (var X of C[Symbol.iterator]()){S+=String.fromCharCode(X);}`
+    tail: `globalThis.RESULT=S;})();` (inside the async IIFE) or
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): calling `C[Symbol.iterator]()` yields the
+    array's values iterator, so the loop assembles
+    fromCharCode(c0)+fromCharCode(c1)+.... Disjoint from F1091 by
+    construction: F1091's for-of parser requires the bare `C`, the
+    `.entries()` method, or a bound iterator identifier -- the
+    explicit `C[Symbol.iterator]()` call fails it closed (its
+    "bad C method" branch); F1091's plain `for(var X of C)` twin,
+    `.values()`, `.entries()`, and bound-iterator forms all fail
+    this hook closed (no `Symbol.iterator` call). F1091 stays
+    CLOSED -- this hook closes only the F1119 residual, filed as its
+    own finding. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "fromCharCode(" not in text or "Symbol" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        in_iife = False
+        n = len(text)
+        if j < n and text[j] == "(":
+            k = _js_skip_ws(text, j + 1)
+            m = _js_match_kw(text, k, "async")
+            if m is not None:
+                k2 = _js_skip_ws(text, m)
+                m2 = _js_match_kw(text, k2, "function")
+                if m2 is not None:
+                    k3 = _js_expect(text, m2, "(")
+                    k3 = _js_expect(text, k3, ")")
+                    k3 = _js_expect(text, k3, "{")
+                    j = k3
+                    in_iife = True
+                elif text[k2:k2 + 2] == "()":
+                    # `(async()=>{...})();` arrow form (F1110 precedent).
+                    k3 = _js_skip_ws(text, k2 + 2)
+                    if (k3 + 1 < n and text[k3] == "="
+                            and text[k3 + 1] == ">"):
+                        k4 = _js_expect(text,
+                                        _js_skip_ws(text, k3 + 2), "{")
+                        j = k4
+                        in_iife = True
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail("F1119 bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail("F1119 empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, "F1119")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname):
+            raise _JSExprFail("F1119 bad acc name")
+        jj = _js_skip_ws(text, j)
+        init, j = _js_f99x_parse_str(text, jj)
+        if init != "":
+            raise _JSExprFail("F1119 acc not empty")
+        j = _js_expect(text, j, ";")
+        j = _js_f1119_parse_forof(text, j, cname, sname, "F1119",
+                                  in_iife)
+        return _js_f1091_parse_tail(text, j, sname, dstr, state,
+                                    "F1119", in_iife)
+    except _JSExprFail:
+        return None
+
+
+# -- end F1117/F1118/F1119 -------------------------------------------------
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -133262,6 +133630,25 @@ def _decode_layer(text):
     # production decoded them and the pre-existing variant order
     # (F441) is preserved. Additive.
     for _stmtdec in (_js_f1110_stmt_decode,):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1117/F1118/F1119 (wave-403 lane 3): with-scope staged spread
+    # reads (`with({})` / `with({C:C})` around the spread call),
+    # arguments-object staged spread reads (`...arguments` inside a
+    # plain function), and Symbol.iterator explicit-iteration staged
+    # reads (`C[Symbol.iterator]()` of-source). Each returns the
+    # decoded string or None; all filed shapes BREAK on the open
+    # tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1089 (member-expression spread receivers), F1091 (bare C /
+    # .entries() / bound-iterator of-sources), and F1110 (inline
+    # .values()) by grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1117_stmt_decode, _js_f1118_stmt_decode,
+                     _js_f1119_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
