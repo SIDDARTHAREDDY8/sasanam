@@ -1626,6 +1626,41 @@ def _has_hidden_table_summary(text):
     return False
 
 
+def _has_hidden_ruby_annotation(text):
+    """True when prose hides in ruby annotation text (`<rt>`, `<rtc>`)
+    (F1109).
+
+    F1109: ruby annotation text is small-print annotation alongside
+    the base text, not rendered inline at reading size in the
+    harness view (the F1024 rationale). No other detector scans
+    `<rt>`/`<rtc>` regions (documented: no existing `ruby` / `rt` /
+    `rtc` references). Machine tokens and short annotations stay
+    quiet. Never evals.
+    """
+    for tag in ("rt", "rtc"):
+        for region in _scan_element_regions(text, tag):
+            if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+                return True
+    return False
+
+
+def _has_hidden_mphantom(text):
+    """True when prose hides in a MathML `<mphantom>` region (F1109).
+
+    F1109: `<mphantom>` reserves layout space but renders nothing
+    visible, so prose there is hidden from the human reader (the
+    F1024 rationale). Disjoint from F1073's `<annotation>` (different
+    element: `<annotation\\b` cannot match `<mphantom>`) and F1079's
+    `<maction actiontype="toggle">` non-first `<mtext>` (different
+    element: `<mtext\\b` cannot match `<mphantom>`). Machine tokens
+    and short labels stay quiet. Never evals.
+    """
+    for region in _scan_element_regions(text, "mphantom"):
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+            return True
+    return False
+
+
 def instruction_shaped(text):
     """Deterministic heuristic: does this unit read like an instruction
     to the agent? A stand-in for the plan-trace / intent-slicing
@@ -1735,11 +1770,20 @@ def instruction_shaped(text):
     # Disjoint from F1047's aria-label / data-* / <input
     # type="hidden">, F1064's <img alt>, and F1073's <option value>
     # (documented per detector).
-    return (_has_hidden_aria_roledescription(norm)
+    if (_has_hidden_aria_roledescription(norm)
             or _has_hidden_aria_description(norm)
             or _has_hidden_optgroup_label(norm)
             or _has_hidden_input_image_alt(norm)
-            or _has_hidden_table_summary(norm))
+            or _has_hidden_table_summary(norm)):
+        return True
+    # F1109: the same construction for three further hidden-from-human
+    # carriers -- ruby <rt>/<rtc> annotation text and MathML
+    # <mphantom>. Annotation / space-reserving regions, never
+    # rendered inline in the consuming view. Disjoint from F1073's
+    # <annotation> and F1079's <maction> toggle <mtext> (different
+    # elements, documented per detector).
+    return (_has_hidden_ruby_annotation(norm)
+            or _has_hidden_mphantom(norm))
 
 
 class ActionRequest(object):
