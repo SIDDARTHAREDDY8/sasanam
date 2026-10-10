@@ -33666,6 +33666,326 @@ def _js_f978_parse_int(text, j):
     return (-val if neg else val), j
 
 
+def _js_f1003_parse_assign(text, k, bound):
+    """Parse `NAME = RHS | NAME += RHS` at text[k] (F1003).
+
+    NAME is a declared (var/let) name; RHS is a string literal or a
+    read of a string-bound declared name. `=` binds; `+=` requires the
+    current value to be a bound string. Returns (name, new_value,
+    next_index). Raises _JSExprFail on mismatch. Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, k)
+    name, k = _js_parse_ident(text, k)
+    if name not in bound:
+        raise _JSExprFail("F1003 assign undeclared")
+    k = _js_skip_ws(text, k)
+    is_plus = False
+    if k + 1 < n and text.startswith("+=", k):
+        is_plus = True
+        k += 2
+    elif k < n and text[k] == "=" and not text.startswith(("==", "=>"), k):
+        k += 1
+    else:
+        raise _JSExprFail("F1003 bad assign op")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] in "'\"":
+        rhs, k = _js_parse_string(text, k)
+    else:
+        rname, k = _js_parse_ident(text, k)
+        if rname not in bound or not isinstance(bound[rname], str):
+            raise _JSExprFail("F1003 rhs unbound")
+        rhs = bound[rname]
+    if is_plus:
+        if not isinstance(bound[name], str):
+            raise _JSExprFail("F1003 plus-eq unbound")
+        newval = bound[name] + rhs
+    else:
+        newval = rhs
+    if len(newval) > _MAX_DECODE_BYTES:
+        raise _JSExprFail("F1003 concat too long")
+    return name, newval, k
+
+
+def _js_f1003_sim_assign(text, s, e, bound):
+    """Simulate one comma-sequence assignment operand over text[s:e] (F1003).
+
+    `NAME = RHS | NAME += RHS` where NAME is a declared (var/let) name
+    and RHS is a string literal or a read of a string-bound declared
+    name. `=` binds; `+=` requires the current value to be a bound
+    string (node v24.20.0: `+=` on an unbound name yields
+    "undefined"+... -- kept narrow, fails closed). Returns True on
+    success; raises _JSExprFail on mismatch. Never evals.
+    """
+    name, newval, k = _js_f1003_parse_assign(text, s, bound)
+    k = _js_skip_ws(text, k)
+    if k != e:
+        raise _JSExprFail("F1003 operand not consumed")
+    bound[name] = newval
+    return True
+
+
+def _js_f1003_stmt_decode(text):
+    """Decode a statement-position comma-sequence of assignments (F1003).
+
+    `var s;` (var/let, uninitialized declarators -- `const` without an
+    initializer is a SyntaxError in the engine, fails closed) followed by
+    `E(,E)*;` where each E is `NAME = RHS | NAME += RHS` (RHS: string
+    literal or string-bound name read), optionally followed by further
+    simple assignment statements `NAME = RHS; | NAME += RHS;` (no comma),
+    ending in `var RESULT=<additive>;` (string literals / bound-name
+    reads joined by `+`).
+
+    Node-exact for the modeled subset (v24.20.0): comma operands evaluate
+    left-to-right; `=` binds, `+=` appends to the current string value.
+    Disjoint from F982 (which handles only accumulation/`++`/`--`
+    operands on initialized declarators) and from F1000 (assignment
+    operators with no comma sequence): this hook requires >= 2
+    comma-separated operands in the leading statement. Returns the
+    assembled RESULT string, or None. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None or kw == "const":
+            return None
+        bound = {}
+        while True:
+            j = _js_skip_ws(text, j)
+            name, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "=":
+                return None  # initialized declarator -- not our domain
+            bound[name] = None
+            if j < n and text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                continue
+            break
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        parts, j = _js_f982_split_seq(text, j)
+        if len(parts) < 2:
+            return None
+        for (s, e) in parts:
+            _js_f1003_sim_assign(text, s, e, bound)
+        # Optional trailing simple assignment statements (no comma):
+        # `NAME = RHS; | NAME += RHS;` -- same operand grammar as the
+        # comma operands, simulated sequentially (node v24.20.0).
+        while True:
+            k = _js_skip_ws(text, j)
+            kw2, _ = _js_match_decl_kw(text, k)
+            if kw2 is not None:
+                break  # `var RESULT=...;` follows
+            name, newval, k = _js_f1003_parse_assign(text, k, bound)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ";":
+                return None
+            bound[name] = newval
+            j = k + 1
+        j = _js_skip_ws(text, j)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        rname, j = _js_parse_ident(text, j)
+        if rname != "RESULT":
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=" or \
+                (j + 1 < n and text[j + 1] in "=>"):
+            return None
+        j = _js_skip_ws(text, j + 1)
+        out = []
+        while True:
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] in "'\"":
+                v, j = _js_parse_string(text, j)
+                out.append(v)
+            else:
+                rname, j = _js_parse_ident(text, j)
+                if rname not in bound or not isinstance(bound[rname], str):
+                    return None
+                out.append(bound[rname])
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "+":
+                j += 1
+                continue
+            break
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j != n:
+            return None
+        res = "".join(out)
+        if len(res) > _MAX_DECODE_BYTES:
+            return None
+        return res
+    except _JSExprFail:
+        return None
+    except RecursionError:
+        return None
+
+
+def _js_f1004_stmt_decode(text):
+    """Decode a property-copy re-add lifecycle sequence (F1004).
+
+    `var o={<string-literal props>};` + lifecycle statements --
+    `o.p=o.q;` (member-to-member copy), `o.p='v';` (literal re-add),
+    `delete o.p;` -- with at least one copy statement, ending in
+    `var RESULT=<additive>;` (member reads of o / string literals
+    joined by `+`).
+
+    F977 (CLOSED) models delete/re-add and literal re-add but not the
+    copy form; this hook requires at least one `o.p=o.q` statement, so
+    F977's shapes return None here (disjoint).
+
+    Node-exact for plain data properties (v24.20.0): the copy assigns
+    the source prop's current value (strings are immutable -- no
+    aliasing, verified: later reassignment of the source does not
+    change the copy); reading a missing prop yields `undefined`
+    (fails closed here, never mis-decoded); `__proto__` in any position
+    fails closed (prototype semantics). Returns the assembled RESULT
+    string, or None. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        oname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "{":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        props = {}
+        if j < n and text[j] != "}":
+            while True:
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] in "'\"":
+                    pname, j = _js_parse_string(text, j)
+                else:
+                    pname, j = _js_parse_ident(text, j)
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] != ":":
+                    return None
+                j = _js_skip_ws(text, j + 1)
+                if j >= n or text[j] not in "'\"":
+                    return None
+                pval, j = _js_parse_string(text, j)
+                if pname == "__proto__":
+                    # node gives __proto__ prototype semantics, not a
+                    # data property -- fail closed, never mis-decode.
+                    return None
+                props[pname] = pval
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    continue
+                break
+        if j >= n or text[j] != "}":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        saw_copy = False
+        while True:
+            j = _js_skip_ws(text, j)
+            kd = _js_match_kw(text, j, "delete")
+            if kd is not None:
+                k = _js_skip_ws(text, kd)
+                pname, k = _js_f97x_member_read(text, k, oname)
+                if pname is None or pname == "__proto__":
+                    return None
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != ";":
+                    return None
+                props.pop(pname, None)
+                j = _js_skip_ws(text, k + 1)
+                continue
+            pname, k = _js_f97x_member_read(text, j, oname)
+            if pname is None:
+                break
+            if pname == "__proto__":
+                return None
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "=" or \
+                    (k + 1 < n and text[k + 1] in "=>"):
+                return None
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] in "'\"":
+                pval, k = _js_parse_string(text, k)
+                props[pname] = pval
+            else:
+                # Member-copy form: o.p = o.q (F977 residual).
+                qname, k = _js_f97x_member_read(text, k, oname)
+                if qname is None or qname == "__proto__" or \
+                        qname not in props:
+                    return None
+                props[pname] = props[qname]
+                saw_copy = True
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ";":
+                return None
+            j = _js_skip_ws(text, k + 1)
+        if not saw_copy:
+            # No copy statement: F977's domain (delete/re-add and
+            # literal re-add) -- disjoint, return None.
+            return None
+        # RESULT additive (same discipline as F977).
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        rname, k = _js_parse_ident(text, k)
+        if rname != "RESULT":
+            return None
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=" or \
+                (k + 1 < n and text[k + 1] in "=>"):
+            return None
+        k = _js_skip_ws(text, k + 1)
+        out = []
+        while True:
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] in "'\"":
+                v, k = _js_parse_string(text, k)
+                out.append(v)
+            else:
+                pname, k2 = _js_f97x_member_read(text, k, oname)
+                if pname is None or pname == "__proto__" or \
+                        pname not in props:
+                    # node reads undefined -- not a string: fail closed.
+                    return None
+                out.append(props[pname])
+                k = k2
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == "+":
+                k += 1
+                continue
+            break
+        if k >= n or text[k] != ";":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k != n:
+            return None
+        res = "".join(out)
+        if len(res) > _MAX_DECODE_BYTES:
+            return None
+        return res
+    except _JSExprFail:
+        return None
+    except RecursionError:
+        return None
+
+
 def _js_f978_stmt_decode(text):
     """Decode an Array.prototype.splice reassembly sequence (F978).
 
@@ -113276,6 +113596,21 @@ def _decode_layer(text):
     # requires a pop-accumulation loop. Additive, in F-number order.
     for _stmtdec in (_js_f977_stmt_decode, _js_f978_stmt_decode,
                      _js_f980_stmt_decode, _js_f981_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1003/F1004: narrow whole-text statement-sequence decoders
+    # (wave-393 lane 5). F1003: statement-position comma-sequence of
+    # assignment operands -- disjoint from F982 (accumulation/`++`/`--`
+    # operands on initialized declarators) by requiring >= 2
+    # comma-separated assignment operands, and from F1000 (assignment
+    # operators) by the comma-sequence requirement. F1004:
+    # property-copy re-add lifecycle -- disjoint from F977 by
+    # requiring at least one `o.p=o.q` copy statement. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1003_stmt_decode, _js_f1004_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
