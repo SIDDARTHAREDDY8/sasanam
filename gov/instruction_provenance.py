@@ -1346,6 +1346,180 @@ def _has_hidden_iframe_srcdoc(text):
     return False
 
 
+# F1085: eight further hidden-instruction carriers beyond
+# F1024/F1034/F1047/F1064/F1073/F1079. Same construction:
+# substantive PROSE-SHAPED text in a carrier never rendered to the
+# human reader is instruction-shaped by construction (the F1024
+# rationale); machine tokens, short labels, and empty carriers are
+# honest text, quiet. No new compiled regexes here (module-level
+# compiled-regex count stays as audited); patterns ride the re
+# module's cache. All detectors run on the zero-width-stripped norm
+# (F1024) so ZWSP mangling of the carrier markup cannot evade them.
+# Never evals.
+
+
+def _has_hidden_progress_fallback(text):
+    """True when *text* carries prose-shaped text as `<progress>`
+    fallback content.
+
+    F1085: fallback content renders only when the progress
+    element is unsupported, so on any modern agent/host it is
+    hidden from the human reader (the F1024 rationale). Short
+    labels ("20%") are honest text, quiet -- `_is_prose_shaped`
+    keeps only whitespace-bearing prose. Markup-only fallbacks
+    are quiet. Never evals.
+    """
+    for region in _scan_element_regions(text, "progress"):
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+            return True
+    return False
+
+
+def _has_hidden_meter_fallback(text):
+    """True when *text* carries prose-shaped text as `<meter>`
+    fallback content.
+
+    F1085: same construction as `<progress>` fallback above --
+    hidden from the human reader on any modern agent/host (the
+    F1024 rationale). Short labels and markup-only fallbacks are
+    honest text, quiet. Never evals.
+    """
+    for region in _scan_element_regions(text, "meter"):
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+            return True
+    return False
+
+
+def _has_hidden_data_value(text):
+    """True when *text* carries prose-shaped text in a `<data>`
+    element's `value` attribute.
+
+    F1085: the value attribute is machine metadata never rendered;
+    the element's text content renders inline and is out of scope.
+    Distinct from F1047's `data-*` attributes (that regex requires
+    the `data-` prefix; the attribute name `value` cannot match it)
+    and from F1079's `<datalist>` option text (the `<data\b`
+    pattern cannot match `<datalist>` -- no word boundary).
+    Machine tokens (`value="ABC-123"`) are honest text, quiet.
+    Never evals.
+    """
+    for m in re.finditer(r"<data\b[^>]*>", text, re.I):
+        value, has_value = _f1047_attr_value(m.group(0), "value")
+        if has_value and _is_prose_shaped(value):
+            return True
+    return False
+
+
+def _has_hidden_svg_metadata(text):
+    """True when *text* carries prose-shaped text in an SVG
+    `<metadata>` element.
+
+    F1085: metadata is never rendered. Distinct from F1034's SVG
+    `<foreignObject>` and F1047's SVG `<title>`/`<desc>`
+    (different elements), and from F1064's XMP `dc:description`
+    (different tag). Machine tokens stay quiet. Never evals.
+    """
+    for region in _scan_element_regions(text, "metadata"):
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+            return True
+    return False
+
+
+def _has_hidden_script_xtemplate(text):
+    """True when *text* carries prose-shaped text in a
+    `<script type="text/x-template">` block.
+
+    F1085: x-template blocks are client-side templates -- never
+    rendered and never executed as script, so prose there is
+    hidden from the human reader (the F1024 rationale). Scoped to
+    `text/x-template`; ordinary scripts are out of scope. Distinct
+    from F1073's `text/plain` and F1047's `application/ld+json`
+    by the type value (case-insensitive). Empty blocks and
+    machine tokens are honest text, quiet. Like F1073's text/plain
+    detector the region is not markup-stripped first (script blocks
+    are code regions, not rendered markup). Never evals.
+    """
+    for m in re.finditer(r"<script\b[^>]*>", text, re.I):
+        itype, has_type = _f1047_attr_value(m.group(0), "type")
+        if not has_type or itype.lower() != "text/x-template":
+            continue
+        start = m.end()
+        close = re.search(r"</script\s*>", text[start:], re.I)
+        region = text[start:start + close.start()] if close \
+            else text[start:]
+        if _is_prose_shaped(region):
+            return True
+    return False
+
+
+_VTT_CUE_TS = r"(?:\d{2}:)?\d{2}:\d{2}\.\d{3}"
+
+
+def _has_hidden_vtt_cue_text(text):
+    """True when *text* carries prose-shaped text in a WebVTT cue
+    payload (F1085).
+
+    In the harness view cues are not rendered as captions, so cue
+    payload prose is hidden from the human reader (the F1024
+    rationale). Disjoint from F1064's NOTE blocks (this matches
+    only timestamp-headed cues; NOTE blocks are comments, never
+    cues). The WEBVTT header, cue identifiers, and cue settings
+    tokens (`align:start`) are not payload prose. Payload without
+    whitespace is honest text, quiet. Both `MM:SS.mmm` and
+    `HH:MM:SS.mmm` timestamps are modeled (WebVTT spec). Never evals.
+    """
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        m = re.match(r"^%s\s+-->\s+%s" % (_VTT_CUE_TS, _VTT_CUE_TS),
+                     line)
+        if not m:
+            i += 1
+            continue
+        buf = []
+        j = i + 1
+        while j < len(lines) and lines[j].strip():
+            buf.append(lines[j].strip())
+            j += 1
+        if _is_prose_shaped(" ".join(buf)):
+            return True
+        i = j
+    return False
+
+
+def _has_hidden_img_longdesc(text):
+    """True when prose hides in an `<img longdesc>` (F1085).
+
+    longdesc is a URI reference never rendered as text; prose
+    there is hidden from the human reader (the F1024 rationale).
+    Distinct from F1064's `<img alt>` (different attribute).
+    Machine tokens (a plain URL, a single token) are honest text,
+    quiet. Never evals.
+    """
+    for m in re.finditer(r"<img\b[^>]*>", text, re.I):
+        desc, has_desc = _f1047_attr_value(m.group(0), "longdesc")
+        if has_desc and _is_prose_shaped(desc):
+            return True
+    return False
+
+
+def _has_hidden_area_alt(text):
+    """True when prose hides in an `<area alt>` (F1085).
+
+    Area elements are never rendered; their alt text is exposed
+    only to assistive technology, hidden from the human reader in
+    the harness view (the F1024 rationale). Distinct from F1064's
+    `<img alt>` (different element). Short labels stay quiet.
+    Never evals.
+    """
+    for m in re.finditer(r"<area\b[^>]*>", text, re.I):
+        alt, has_alt = _f1047_attr_value(m.group(0), "alt")
+        if has_alt and _is_prose_shaped(alt):
+            return True
+    return False
+
+
 def instruction_shaped(text):
     """Deterministic heuristic: does this unit read like an instruction
     to the agent? A stand-in for the plan-trace / intent-slicing
@@ -1419,6 +1593,22 @@ def instruction_shaped(text):
             or _has_hidden_style_comment(norm)
             or _has_hidden_object_param(norm)
             or _has_hidden_xml_pi(norm)):
+        return True
+    # F1085: the same construction for eight further hidden-from-human
+    # carriers -- <progress>/<meter> fallback content, <data value>,
+    # SVG <metadata>, <script type="text/x-template">, WebVTT cue
+    # payload text, <img longdesc>, and <area alt>. Disjoint from
+    # F1064's <img alt> and VTT NOTE blocks, F1073's text/plain and
+    # <canvas> fallback, and F1047's data-* attributes (documented
+    # per detector).
+    if (_has_hidden_progress_fallback(norm)
+            or _has_hidden_meter_fallback(norm)
+            or _has_hidden_data_value(norm)
+            or _has_hidden_svg_metadata(norm)
+            or _has_hidden_script_xtemplate(norm)
+            or _has_hidden_vtt_cue_text(norm)
+            or _has_hidden_img_longdesc(norm)
+            or _has_hidden_area_alt(norm)):
         return True
     # F1079: the same construction for six further hidden-from-human
     # carriers -- collapsed <details> (no `open`), <datalist> option
