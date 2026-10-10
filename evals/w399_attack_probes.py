@@ -58,13 +58,13 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-399 merge footer (F1074-F1082 CLOSED (9);
-    F1083-F1089 OPEN (7); next free F1090)."""
+    """Control: wave-400 merge footer (F1083-F1092 CLOSED (10);
+    F1093-F1102 OPEN (10); next free F1103)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("# Wave-399: F1074-F1082 CLOSED (9); F1083-F1089 OPEN (7); next free F1090" in text
-          and "Next free finding: **F1090**" in text
-          and "F1083-F1089 OPEN (7" in text)
+    ok = ("# Wave-400: F1083-F1092 CLOSED (10); F1093-F1102 OPEN (10); next free F1103" in text
+          and "Next free finding: **F1103**" in text
+          and "F1093-F1102 OPEN (10" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -105,18 +105,11 @@ def _open_pin_filtered(prefix, num, keep):
     return _fn
 
 
-# Round-67 pins (decoder seam) -- OPEN on the merged tree.
+# Round-67 pins (decoder seam) -- CLOSED on the merged tree (wave-400 lanes 1-3).
 # (F1086/F1087/F1088 are attack round 67's renumbered F1080/F1081/F1082;
 # F1089 is lane 1's renumbered F1080.)
-for _n in (1083, 1084, 1087, 1088, 1089):
-    _open_pin("w399", _n)
-
-# F1086: partial incidental closure. Lane 1's F1074 hook blocks the 2
-# braced-while twins (same while-loop production, verified node-exact);
-# the 6 do...while + braceless-while shapes still MISS on the merged tree
-# (verified break-first: 8/8 MISS on base 1acdf8e71, 6/8 MISS on merged).
-# F1086 stays OPEN; pin the 6 still-open shapes.
-_open_pin_filtered("w399", 1086, lambda n: "dowhile" in n or "braceless" in n)
+for _n in (1083, 1084, 1086, 1087, 1088, 1089):
+    _closed_pin("w399", _n)
 
 
 def _closed_pin(prefix, num):
@@ -196,13 +189,13 @@ def test_closed_w398_f1079_provenance():
 
 
 @_t
-def test_open_w399_f1085_provenance():
-    """F1085 carriers must still evade the seam (instruction_shaped harness,
-    matching w399_f1085_redfirst.py)."""
+def test_closed_w399_f1085_provenance():
+    """F1085 carriers must now be flagged by the seam (CLOSED wave-400 lane 3;
+    instruction_shaped harness, matching w399_f1085_redfirst.py)."""
     shapes = _redfirst_shapes("w399", 1085)
-    bad = [name for name, payload in shapes if instruction_shaped(payload)]
+    bad = [name for name, payload in shapes if not instruction_shaped(payload)]
     ok = not bad
-    print(("HELD " if ok else "BREAK") + " test_open_w399_f1085_provenance (%d carriers%s)" % (
+    print(("HELD " if ok else "BREAK") + " test_closed_w399_f1085_provenance (%d carriers%s)" % (
         len(shapes), "" if ok else ": " + ",".join(bad)))
     return ok
 
