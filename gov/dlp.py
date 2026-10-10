@@ -33986,6 +33986,869 @@ def _js_f1004_stmt_decode(text):
         return None
 
 
+# ---------------------------------------------------------------------------
+# F1005/F1006/F1007/F1008: narrow whole-text statement decoders (wave-394
+# lane 1)
+#
+# Each decoder matches one filed finding's statement family over the whole
+# text and returns the decoded string, or None. They are registered in
+# _decode_layer after the F1003/F1004 decoders: every filed shape BREAKs
+# on the open tree, so no earlier production decoded them and the
+# pre-existing variant order (F441) is preserved. Each runs on a fresh
+# attempt-local budget state; misses raise _JSExprFail and escape nothing
+# (wave-383 snapshot/restore holds trivially). All string literals go
+# through _js_f99x_parse_str (Annex-B octal escapes fail closed -- the
+# wave-393 Spec H-1 lesson). Never evals.
+
+
+def _js_f1005_parse_obj_lit(text, k, state):
+    """Parse `{k1:'v1', ...}` at text[k] (F1005).
+
+    Keys: identifiers or string literals (`__proto__` fails closed --
+    the engine sets the prototype rather than an own property, node
+    v24.20.0); values: string literals only (octal escapes fail
+    closed). Duplicate keys: later wins (engine-exact). Returns
+    (dict, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_expect(text, k, "{")
+    props = {}
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "}":
+        return props, k + 1
+    while True:
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in "'\"":
+            key, k = _js_f99x_parse_str(text, k)
+        elif k < n and text[k] in _JS_IDENT_START:
+            key, k = _js_parse_ident(text, k)
+        else:
+            raise _JSExprFail("F1005 obj key not modeled")
+        if key == "__proto__":
+            raise _JSExprFail("F1005 __proto__ not modeled")
+        k = _js_skip_ws(text, k)
+        k = _js_expect(text, k, ":")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F1005 obj value not a string literal")
+        val, k = _js_f99x_parse_str(text, k)
+        props[key] = val
+        _js_f96x_charge(state, "F1005 too many props")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] == "}":
+                # Trailing comma -- engine-legal (node v24.20.0).
+                return props, k + 1
+            continue
+        if k < n and text[k] == "}":
+            return props, k + 1
+        raise _JSExprFail("F1005 bad object literal")
+
+
+def _js_f1005_parse_own_assigns(text, j, oname, own, state):
+    """Parse 0+ `O.k='lit';` / `O['k']='lit';` at text[j] (F1005).
+
+    `__proto__` keys fail closed (the engine re-points the prototype
+    instead of creating an own property -- node v24.20.0); values are
+    string literals only (a copy statement like `o.p=o.q` is F1004's
+    domain and ends this loop). Later assignments win (engine-exact).
+    Returns the index after the last assignment. Never evals.
+    """
+    n = len(text)
+    while True:
+        save = _js_skip_ws(text, j)
+        try:
+            tname, k = _js_parse_ident(text, save)
+            if tname != oname:
+                raise _JSExprFail("F1005 assign target")
+            k = _js_skip_ws(text, k)
+            if k < n and text[k] == ".":
+                key, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+            elif k < n and text[k] == "[":
+                k = _js_skip_ws(text, k + 1)
+                if k >= n or text[k] not in "'\"":
+                    raise _JSExprFail("F1005 assign key not literal")
+                key, k = _js_f99x_parse_str(text, k)
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "]":
+                    raise _JSExprFail("F1005 assign not closed")
+                k += 1
+            else:
+                raise _JSExprFail("F1005 assign not a member")
+            if key == "__proto__":
+                raise _JSExprFail("F1005 __proto__ not modeled")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "=" or text.startswith(("==", "=>"), k):
+                raise _JSExprFail("F1005 assign not plain")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F1005 assign value not literal")
+            val, k = _js_f99x_parse_str(text, k)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ";":
+                raise _JSExprFail("F1005 assign not closed")
+            # O is fresh from Object.create: its own props are
+            # writable+configurable (node v24.20.0).
+            own[key] = val
+            _js_f96x_charge(state, "F1005 too many parts")
+            j = k + 1
+        except _JSExprFail:
+            j = save
+            break
+    return j
+
+
+def _js_f1005_term(text, j, env, state):
+    """One F1005 RESULT additive term.
+
+    A string literal, or an `O.k` / `O['k']` / `P.k` / `P['k']`
+    member read resolved over O's own props then its one-level
+    prototype (node-exact, v24.20.0). Bare identifiers fail closed:
+    the env holds only decoder-internal keys (the H1 lesson -- a
+    bare `o` would mis-decode the engine's "[object Object]").
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_f99x_parse_str(text, j)
+    if j < n and text[j] in _JS_IDENT_START:
+        nm, k2 = _js_parse_ident(text, j)
+        k3 = _js_skip_ws(text, k2)
+        if k3 >= n or text[k3] not in ".[":
+            raise _JSExprFail("F1005 term ident not a member read")
+        if text[k3] == "[":
+            kk = _js_skip_ws(text, k3 + 1)
+            if kk >= n or text[kk] not in "'\"":
+                raise _JSExprFail("F1005 member key not a literal")
+            key, kk = _js_f99x_parse_str(text, kk)
+            kk = _js_skip_ws(text, kk)
+            if kk >= n or text[kk] != "]":
+                raise _JSExprFail("F1005 member not closed")
+            kk += 1
+        else:
+            key, kk = _js_parse_ident(text, _js_skip_ws(text, k3 + 1))
+        if key == "__proto__":
+            raise _JSExprFail("F1005 __proto__ read not modeled")
+        if nm == env["_oname"]:
+            if key in env["_own"]:
+                return env["_own"][key], kk
+            if key in env["_proto"]:
+                return env["_proto"][key], kk
+            raise _JSExprFail("F1005 member unbound")
+        if nm == env["_pname"]:
+            if key in env["_proto"]:
+                return env["_proto"][key], kk
+            raise _JSExprFail("F1005 member unbound")
+        raise _JSExprFail("F1005 member target unbound")
+    raise _JSExprFail("F1005 term not modeled")
+
+
+def _js_f1005_stmt_decode(text):
+    """Decode F1005 proto-chain member reads, no gopd line (whole-text).
+
+    Grammar: [`var|let|const P={<obj-lit>};`]
+    `var|let|const O=Object.create(P|{<obj-lit>});`
+    [`O.k='lit';` / `O['k']='lit';` (0+)]
+    `var|let|const RESULT=<ADD>;` then end-of-text, where <ADD> terms
+    are string literals or `O.k`/`O['k']`/`P.k`/`P['k']` member reads
+    resolved own-first then one-level proto (node-exact, v24.20.0;
+    missing keys are engine-undefined and fail closed).
+
+    Disjoint from F1002 (which requires the
+    `D=(Object|Reflect).getOwnPropertyDescriptor(Object.getPrototypeOf(O),...)`
+    line -- its presence makes this hook miss at the RESULT decl),
+    from F1004 (copy statements `o.p=o.q` are not literal assigns),
+    and from F977 (no `delete` statement). `Object.create(null)`
+    fails closed. Returns the decoded string, or None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        # The leading proto declaration is optional: when
+        # Object.create takes an inline literal the attacker may
+        # skip the named proto entirely (node-exact generalization
+        # of the filed shape).
+        pname = None
+        proto = None
+        _save = j
+        try:
+            _, pname, j = _js_f96x_decl(text, j)
+            proto, j = _js_f1005_parse_obj_lit(text, _js_skip_ws(text, j),
+                                               state)
+            j = _js_expect(text, j, ";")
+        except _JSExprFail:
+            j = _save
+            pname = None
+            proto = None
+        _js_f96x_charge(state, "F1005 too many parts")
+        _, oname, j = _js_f96x_decl(text, j)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Object")
+        if m is None:
+            raise _JSExprFail("F1005 not Object.create")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "create")
+        if m is None:
+            raise _JSExprFail("F1005 not Object.create")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "{":
+            proto, j = _js_f1005_parse_obj_lit(text, j, state)
+        elif j < n and text[j] in _JS_IDENT_START:
+            if pname is None:
+                raise _JSExprFail("F1005 proto name with no decl")
+            qname, j = _js_parse_ident(text, j)
+            if qname != pname:
+                raise _JSExprFail("F1005 proto not the bound object")
+            proto = dict(proto)
+        else:
+            # Object.create(null) -- member reads on a null-proto
+            # object hit engine-undefined for missing keys; fail
+            # closed here (documented narrowness).
+            raise _JSExprFail("F1005 proto not modeled")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        own = {}
+        _js_f96x_charge(state, "F1005 too many parts")
+        j = _js_f1005_parse_own_assigns(text, j, oname, own, state)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            raise _JSExprFail("F1005 not RESULT")
+        names = {oname, rname} if pname is None else {pname, oname, rname}
+        if len(names) < (2 if pname is None else 3):
+            # Redeclared names fail closed uniformly (H2, wave-393
+            # spec review -- the hook does not track decl kinds).
+            raise _JSExprFail("F1005 redeclared name")
+        env = {"_pname": pname, "_oname": oname, "_proto": proto,
+               "_own": own}
+        val, j = _js_f96x_parse_additive(text, j, env, state, "F1005",
+                                         _js_f1005_term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the proto-chain read is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1006_parse_params(text, i):
+    """Parse `(P1,P2,P3)` at text[i] (F1006).
+
+    Exactly three declared params, all distinct idents (node
+    sloppy-mode duplicate params would shadow -- conservative
+    fail-closed, the F542 precedent). Returns ((p1,p2,p3), next).
+    Never evals.
+    """
+    k = _js_expect(text, i, "(")
+    ps = []
+    for t in range(3):
+        q, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        ps.append(q)
+        k = _js_expect(text, k, "," if t < 2 else ")")
+    if len(set(ps)) != 3:
+        raise _JSExprFail("F1006 trap params not distinct")
+    return tuple(ps), k
+
+
+def _js_f1006_parse_dot_apply(text, i, params):
+    """Parse `P1.apply(P2,P3)` at text[i] with the trap's own params.
+
+    The dot-apply passthrough: the exact delegation the F1006 trap
+    body must be. `Reflect.apply(...)` bodies are F542's domain;
+    shuffled args or a different receiver fail closed. Returns next.
+    Never evals.
+    """
+    p1, p2, p3 = params
+    q, k = _js_parse_ident(text, i)
+    if q != p1:
+        raise _JSExprFail("F1006 trap receiver not param1")
+    k = _js_expect(text, k, ".")
+    m = _js_match_kw(text, k, "apply")
+    if m is None:
+        raise _JSExprFail("F1006 trap not dot-apply")
+    k = _js_expect(text, m, "(")
+    for want, sep in ((p2, ","), (p3, ")")):
+        q, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        if q != want:
+            raise _JSExprFail("F1006 trap args not params")
+        k = _js_expect(text, k, sep)
+    return k
+
+
+def _js_f1006_parse_trap(text, i):
+    """Parse the F1006 apply-trap function at text[i]; returns next.
+
+    Recognized (all engine-identical to a direct fromCharCode call,
+    node v24.20.0):
+    `function(P1,P2,P3){return P1.apply(P2,P3);}` (optional function
+    name, optional trailing `;`),
+    `(P1,P2,P3)=>P1.apply(P2,P3)`, and
+    `(P1,P2,P3)=>{return P1.apply(P2,P3);}`.
+    Exactly three distinct params, all used in order. Anything else
+    -- non-delegating bodies, Reflect.apply bodies (F542), wrong arg
+    order, free variables, extra statements -- fails closed. Never
+    evals.
+    """
+    n = len(text)
+    if _js_match_kw(text, i, "function") is not None:
+        k = _js_skip_ws(text, i + len("function"))
+        if k < n and text[k] in _JS_IDENT_START:
+            # Optional name (engine-exact; ignored).
+            _, k = _js_parse_ident(text, k)
+            k = _js_skip_ws(text, k)
+        params, k = _js_f1006_parse_params(text, k)
+        k = _js_expect(text, k, "{")
+        m = _js_match_kw(text, _js_skip_ws(text, k), "return")
+        if m is None:
+            raise _JSExprFail("F1006 trap without return")
+        k = _js_f1006_parse_dot_apply(text, _js_skip_ws(text, m), params)
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k += 1
+        return _js_expect(text, k, "}")
+    params, k = _js_f1006_parse_params(text, i)
+    k = _js_skip_ws(text, k)
+    if k + 1 >= n or text[k] != "=" or text[k + 1] != ">":
+        raise _JSExprFail("F1006 trap not an arrow")
+    k = _js_skip_ws(text, k + 2)
+    if k < n and text[k] == "{":
+        k += 1
+        m = _js_match_kw(text, _js_skip_ws(text, k), "return")
+        if m is None:
+            raise _JSExprFail("F1006 trap without return")
+        k = _js_f1006_parse_dot_apply(text, _js_skip_ws(text, m), params)
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k += 1
+        return _js_expect(text, k, "}")
+    return _js_f1006_parse_dot_apply(text, k, params)
+
+
+def _js_f1006_parse_codes(text, j, state, closer):
+    """Parse `n (, n)* <closer>` -- F458 int-literal codepoints (F1006).
+
+    Each argument goes through the F458 integer-literal grammar and
+    the engine's ToUint16 wrap (`_safe_chr(cp & 0xFFFF)` -- node-exact
+    for non-surrogates, v24.20.0; surrogates fail closed, the F458
+    documented narrowness). Returns (string, idx-past-closer). Never
+    evals.
+    """
+    n = len(text)
+    out = []
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == closer:
+        return "", j + 1
+    while True:
+        cp, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        ch = _safe_chr(cp & 0xFFFF)  # ToUint16 wrap, engine-exact
+        if ch is None:
+            raise _JSExprFail("F1006 surrogate codepoint")
+        out.append(ch)
+        _js_f96x_charge(state, "F1006 too many codepoints")
+        if len(out) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail("F1006 too many codepoints")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == closer:
+                # Trailing comma -- engine-legal (node v24.20.0).
+                return "".join(out), j + 1
+            continue
+        if j < n and text[j] == closer:
+            return "".join(out), j + 1
+        raise _JSExprFail("F1006 bad code list")
+
+
+def _js_f1006_parse_result_call(text, j, fname, state):
+    """Parse the F1006 RESULT call at text[j]; returns (string, next).
+
+    `F(<codes>)` or `F.apply(<simple-thisArg>, [<codes>])`. The
+    apply-dispatch thisArg is parsed but ignored --
+    String.fromCharCode is not generic (node v24.20.0). Never evals.
+    """
+    n = len(text)
+    nm, k = _js_parse_ident(text, j)
+    if nm != fname:
+        raise _JSExprFail("F1006 not the proxy call")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ".":
+        m = _js_match_kw(text, _js_skip_ws(text, k + 1), "apply")
+        if m is None:
+            raise _JSExprFail("F1006 not apply dispatch")
+        k = _js_expect(text, m, "(")
+        k = _js_skip_ws(text, k)
+        # thisArg: value-ignored, but must be a simple literal/ident
+        # so the comma boundary is unambiguous (documented
+        # narrowness -- a complex thisArg fails closed, never
+        # mis-decoded).
+        mk = _js_match_kw(text, k, "null")
+        if mk is not None:
+            k = mk
+        elif _js_match_kw(text, k, "undefined") is not None:
+            k = _js_match_kw(text, k, "undefined")
+        elif k < n and text[k] in "'\"":
+            _, k = _js_f99x_parse_str(text, k)
+        elif k < n and text[k] in _ASCII_DIGITS:
+            _, k = _js_parse_fcc_number(text, k)
+        else:
+            # Bare idents fail closed: an unbound thisArg is a node
+            # ReferenceError, and the hook cannot tell bound from
+            # unbound statically (spec review -- safe miss).
+            raise _JSExprFail("F1006 thisArg not simple")
+        k = _js_expect(text, k, ",")
+        k = _js_expect(text, k, "[")
+        val, k = _js_f1006_parse_codes(text, k, state, "]")
+        k = _js_expect(text, k, ")")
+        return val, k
+    k = _js_expect(text, k, "(")
+    return _js_f1006_parse_codes(text, k, state, ")")
+
+
+def _js_f1006_stmt_decode(text):
+    """Decode F1006 Proxy apply-trap reads on String.fromCharCode.
+
+    Grammar: `var|let|const F=new Proxy(String.fromCharCode|`
+    `String['fromCharCode'],{apply:<trap>});`
+    `var|let|const RESULT=F(<codes>);` or
+    `var|let|const RESULT=F.apply(<simple>,[<codes>]);` then
+    end-of-text. <trap> is the exact dot-apply passthrough
+    (`function(T,TH,A){return T.apply(TH,A);}` / arrow forms).
+    The handler must be apply-only; the target must be
+    String.fromCharCode exactly.
+
+    Disjoint from F990 (get-trap on an object-literal target) and
+    from F542 (whose delegation is `Reflect.apply(P1,P2,P3)` --
+    dot-apply bodies miss there and vice versa). Node-exact for the
+    modeled subset (v24.20.0); everything else fails closed.
+    Returns the decoded string, or None. Never evals.
+    """
+    n = len(text)
+    if "new Proxy(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is None:
+            raise _JSExprFail("F1006 not a declaration")
+        k = _js_skip_ws(text, k)
+        fname, k = _js_parse_ident(text, k)
+        if fname == "Proxy":
+            raise _JSExprFail("F1006 proxy named Proxy")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=" or text.startswith(("==", "=>"), k):
+            raise _JSExprFail("F1006 decl without init")
+        k = _js_skip_ws(text, k + 1)
+        m = _js_match_kw(text, k, "new")
+        if m is None:
+            raise _JSExprFail("F1006 not new Proxy")
+        m2 = _js_match_kw(text, _js_skip_ws(text, m), "Proxy")
+        if m2 is None:
+            raise _JSExprFail("F1006 not new Proxy")
+        k = _js_expect(text, m2, "(")
+        k = _js_skip_ws(text, k)
+        m = _js_match_kw(text, k, "String")
+        if m is None:
+            raise _JSExprFail("F1006 target not String.fromCharCode")
+        k = _js_skip_ws(text, m)
+        if k < n and text[k] == ".":
+            m = _js_match_kw(text, _js_skip_ws(text, k + 1),
+                             "fromCharCode")
+            if m is None:
+                raise _JSExprFail("F1006 target not fromCharCode")
+            k = m
+        elif k < n and text[k] == "[":
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F1006 target member not a literal")
+            key, k = _js_f99x_parse_str(text, k)
+            if key != "fromCharCode":
+                raise _JSExprFail("F1006 target not fromCharCode")
+            k = _js_expect(text, k, "]")
+        else:
+            raise _JSExprFail("F1006 target not fromCharCode")
+        k = _js_expect(text, k, ",")
+        k = _js_expect(text, k, "{")
+        k = _js_skip_ws(text, k)
+        hk, k = _js_parse_ident(text, k)
+        if hk != "apply":
+            # A get-trap is F990's domain; anything else is
+            # unmodeled. The handler is apply-only.
+            raise _JSExprFail("F1006 handler not apply-only")
+        k = _js_expect(text, k, ":")
+        k = _js_f1006_parse_trap(text, _js_skip_ws(text, k))
+        k = _js_expect(text, k, "}")
+        k = _js_expect(text, k, ")")
+        k = _js_expect(text, k, ";")
+        _js_f96x_charge(state, "F1006 too many parts")
+        _, rname, k = _js_f96x_decl(text, k)
+        if rname != "RESULT" or fname == "RESULT":
+            raise _JSExprFail("F1006 not RESULT")
+        val, k = _js_f1006_parse_result_call(text, _js_skip_ws(text, k),
+                                             fname, state)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1006 result too long")
+        _js_f96x_expect_semi_end(text, k)
+        state["ops"] += 1  # the proxy indirection is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+_F1007_WS = " \t\n\r\v\f\u00a0\ufeff"
+
+
+def _js_f1007_parse_int_value(s, radix):
+    """Node-exact parseInt(s, radix) then ToUint16 (v24.20.0).
+
+    radix is 10 or 16. Leading ASCII whitespace (+ NBSP/ZWNBSP)
+    stripped, optional sign, optional `0x`/`0X` prefix for radix 16,
+    longest valid-digit prefix (trailing junk truncated,
+    engine-exact); other Unicode spaces fail closed (documented
+    narrowness). Returns the ToUint16 code unit, or None for NaN
+    (fail closed). Never evals.
+    """
+    i = 0
+    n = len(s)
+    while i < n and s[i] in _F1007_WS:
+        i += 1
+    neg = False
+    if i < n and s[i] in "+-":
+        neg = s[i] == "-"
+        i += 1
+    if radix == 16 and s[i:i + 2] in ("0x", "0X"):
+        i += 2
+    digits = "0123456789abcdef"[:radix]
+    val = 0
+    count = 0
+    while i < n and s[i].lower() in digits:
+        # Masked accumulator: the engine applies ToUint16 to the
+        # final parseInt value; masking incrementally is identical
+        # (modular arithmetic) while the value stays double-exact.
+        # Past 2**53 the engine rounds to a double BEFORE ToUint16,
+        # which changes the value mod 65536 (node-verified:
+        # parseInt('f'*14,16) wraps to 0, not 65535) -- fail closed
+        # there (13 hex / 15 decimal digits max).
+        val = (val * radix + int(s[i], 16)) & 0xFFFF
+        i += 1
+        count += 1
+    if count == 0:
+        return None
+    if count > (13 if radix == 16 else 15):
+        return None
+    if neg:
+        val = (-val) & 0xFFFF
+    return val
+
+
+def _js_f1007_parse_radix(text, i):
+    """Parse the parseInt radix at text[i] (F1007).
+
+    A decimal integer literal, exactly 10 or 16 (other radices are
+    a documented narrowness -- they fail closed, never mis-decoded).
+    Returns (radix, next). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    k = j
+    while k < n and text[k] in _ASCII_DIGITS:
+        k += 1
+    if k == j:
+        raise _JSExprFail("F1007 radix not an int literal")
+    if text[j:k] not in ("10", "16"):
+        raise _JSExprFail("F1007 radix not 10/16")
+    return int(text[j:k]), k
+
+
+def _js_f1007_parse_arg(text, i, state):
+    """Parse `parseInt('<str>', 10|16)` at text[i] (F1007).
+
+    The string argument is cooked first (escapes resolved --
+    engine-exact: parseInt sees the runtime string value), then run
+    through the node-exact parseInt+ToUint16 above. Returns (char,
+    next). Never evals.
+    """
+    m = _js_match_kw(text, i, "parseInt")
+    if m is None:
+        raise _JSExprFail("F1007 not parseInt")
+    k = _js_expect(text, m, "(")
+    k = _js_skip_ws(text, k)
+    n = len(text)
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail("F1007 parseInt arg not a literal")
+    s, k = _js_f99x_parse_str(text, k)
+    k = _js_expect(text, k, ",")
+    radix, k = _js_f1007_parse_radix(text, k)
+    k = _js_expect(text, k, ")")
+    val = _js_f1007_parse_int_value(s, radix)
+    if val is None:
+        raise _JSExprFail("F1007 parseInt NaN")
+    ch = _safe_chr(val)
+    if ch is None:
+        # Surrogates: the F458 documented narrowness (credential
+        # rules are ASCII-only) -- fail closed, never mis-decoded.
+        raise _JSExprFail("F1007 surrogate codepoint")
+    _js_f96x_charge(state, "F1007 too many codepoints")
+    return ch, k
+
+
+def _js_f1007_stmt_decode(text):
+    """Decode F1007 parseInt-radix fromCharCode args (whole-text).
+
+    Grammar: `var|let|const RESULT=String.fromCharCode(`
+    `parseInt('<str>',10|16) (, ...) );` then end-of-text (the
+    `String['fromCharCode']` member form is accepted too -- F480
+    node-identical). Each argument is a node-exact parseInt with an
+    integer-literal radix of 10 or 16 (missing radix, other radices,
+    and non-literal args fail closed).
+
+    Disjoint from the F458 fromCharCode production (whose
+    integer-literal grammar rejects `parseInt(`). Node-exact for
+    the modeled subset (v24.20.0); everything else fails closed.
+    Returns the decoded string, or None. Never evals.
+    """
+    n = len(text)
+    if "parseInt(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            raise _JSExprFail("F1007 not RESULT")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "String")
+        if m is None:
+            raise _JSExprFail("F1007 not String.fromCharCode")
+        j = _js_skip_ws(text, m)
+        if j < n and text[j] == ".":
+            m = _js_match_kw(text, _js_skip_ws(text, j + 1),
+                             "fromCharCode")
+            if m is None:
+                raise _JSExprFail("F1007 not fromCharCode")
+            j = m
+        elif j < n and text[j] == "[":
+            j = _js_skip_ws(text, j + 1)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F1007 member not a literal")
+            key, j = _js_f99x_parse_str(text, j)
+            if key != "fromCharCode":
+                raise _JSExprFail("F1007 not fromCharCode")
+            j = _js_expect(text, j, "]")
+        else:
+            raise _JSExprFail("F1007 not fromCharCode")
+        j = _js_expect(text, j, "(")
+        out = []
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ")":
+            j += 1
+        else:
+            while True:
+                ch, j = _js_f1007_parse_arg(text, _js_skip_ws(text, j),
+                                           state)
+                out.append(ch)
+                if len(out) > _JS_EXPR_MAX_CODEPOINTS:
+                    raise _JSExprFail("F1007 too many codepoints")
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    if j < n and text[j] == ")":
+                        # Trailing comma -- engine-legal.
+                        j += 1
+                        break
+                    continue
+                if j < n and text[j] == ")":
+                    j += 1
+                    break
+                raise _JSExprFail("F1007 bad args")
+        val = "".join(out)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1007 result too long")
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the parseInt indirection is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1008_parse_class(text, i, state):
+    """Parse `class NAME { f="lit"; ... }` at text[i] (F1008).
+
+    Instance fields only: identifier or string-literal keys with
+    string-literal initializers (octal escapes fail closed). `static`
+    as a *modifier* fails closed (F1009's lane -- a field literally
+    named `static` is node-exact and allowed); `extends`,
+    methods, getters/setters, constructors, computed keys, `#`
+    private fields, and non-literal initializers all fail closed.
+    Duplicate fields: later wins (node v24.20.0). Fields are `;`
+    separated (`;` optional immediately before `}` -- newline-only
+    separation fails closed, a documented narrowness). Returns
+    (name, fields, next_index). Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, i, "class")
+    if m is None:
+        raise _JSExprFail("F1008 not a class")
+    k = _js_skip_ws(text, m)
+    name, k = _js_parse_ident(text, k)
+    if name in _F611_RESERVED:
+        raise _JSExprFail("F1008 bad class name")
+    k = _js_skip_ws(text, k)
+    if _js_match_kw(text, k, "extends") is not None:
+        raise _JSExprFail("F1008 extends not modeled")
+    k = _js_expect(text, k, "{")
+    fields = {}
+    while True:
+        k = _js_skip_ws(text, k)
+        if k >= n:
+            raise _JSExprFail("F1008 truncated")
+        if text[k] == "}":
+            return name, fields, k + 1
+        sm = _js_match_kw(text, k, "static")
+        if sm is not None:
+            k2 = _js_skip_ws(text, sm)
+            if k2 < n and text[k2] == "=" and \
+                    not text.startswith("==", k2):
+                # A field literally named `static` (node-exact --
+                # `static` is a modifier only before another
+                # element).
+                key = "static"
+                k = k2
+            else:
+                raise _JSExprFail("F1008 static modifier not modeled")
+        elif text[k] in "'\"":
+            key, k = _js_f99x_parse_str(text, k)
+        elif text[k] in _JS_IDENT_START:
+            key, k = _js_parse_ident(text, k)
+        elif text[k] == "#":
+            raise _JSExprFail("F1008 private field not modeled")
+        elif text[k] == "[":
+            raise _JSExprFail("F1008 computed key not modeled")
+        else:
+            raise _JSExprFail("F1008 bad field")
+        if key == "__proto__":
+            raise _JSExprFail("F1008 __proto__ not modeled")
+        if key == "constructor":
+            # The engine rejects non-static fields named
+            # 'constructor' outright (SyntaxError, node v24.20.0).
+            raise _JSExprFail("F1008 constructor field not modeled")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=" or text.startswith(("==", "=>"), k):
+            # Methods (`m(){}`), getters/setters, constructors, and
+            # uninitialized fields all arrive here -- unmodeled.
+            raise _JSExprFail("F1008 field not initialized")
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F1008 field value not a literal")
+        val, k = _js_f99x_parse_str(text, k)
+        fields[key] = val
+        _js_f96x_charge(state, "F1008 too many fields")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ";":
+            k += 1
+            continue
+        k2 = _js_skip_ws(text, k)
+        if k2 < n and text[k2] == "}":
+            k = k2
+            continue
+        raise _JSExprFail("F1008 field not terminated")
+
+
+def _js_f1008_term(text, j, env, state):
+    """One F1008 RESULT additive term.
+
+    A string literal or a `new C().k` / `new C()['k']` instance
+    field read over a modeled class (node-exact, v24.20.0). Bare
+    identifiers fail closed (H1). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_f99x_parse_str(text, j)
+    m = _js_match_kw(text, j, "new")
+    if m is None:
+        raise _JSExprFail("F1008 term not modeled")
+    k = _js_skip_ws(text, m)
+    cname, k = _js_parse_ident(text, k)
+    fields = env["_classes"].get(cname)
+    if fields is None:
+        raise _JSExprFail("F1008 unknown class")
+    k = _js_expect(text, k, "(")
+    k = _js_expect(text, k, ")")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ".":
+        key, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    elif k < n and text[k] == "[":
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F1008 key not a literal")
+        key, k = _js_f99x_parse_str(text, k)
+        k = _js_expect(text, k, "]")
+    else:
+        raise _JSExprFail("F1008 not a member read")
+    if key == "__proto__":
+        raise _JSExprFail("F1008 __proto__ read not modeled")
+    if key not in fields:
+        # Engine-undefined -- outside the string discipline.
+        raise _JSExprFail("F1008 field unbound")
+    return fields[key], k
+
+
+def _js_f1008_stmt_decode(text):
+    """Decode F1008 class instance field reads (whole-text).
+
+    Grammar: `class NAME { f="lit"; ... }` (1+) then
+    `var|let|const RESULT=<ADD>;` then end-of-text, where <ADD>
+    terms are string literals or `new NAME().f` / `new NAME()['f']`
+    reads. Instance fields only -- `static` modifiers (F1009's
+    lane), methods, getters, constructors, `extends`, computed
+    keys, and `#` private fields all fail closed.
+
+    Disjoint from F746 (`class NAME extends Map` -- `extends`
+    fails closed here). Node-exact for the modeled subset
+    (v24.20.0); everything else fails closed. Returns the decoded
+    string, or None. Never evals.
+    """
+    n = len(text)
+    if "class" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        classes = {}
+        while True:
+            save = _js_skip_ws(text, j)
+            if _js_match_kw(text, save, "class") is None:
+                j = save
+                break
+            cname, fields, j = _js_f1008_parse_class(text, save, state)
+            if cname in classes:
+                # Redeclared class names fail closed uniformly (H2).
+                raise _JSExprFail("F1008 duplicate class")
+            classes[cname] = fields
+            _js_f96x_charge(state, "F1008 too many classes")
+            # An optional `;` after each class declaration is an
+            # empty statement (engine-legal, node v24.20.0); the
+            # declaration needs no terminator.
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ";":
+                j += 1
+        if not classes:
+            raise _JSExprFail("F1008 no class")
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            raise _JSExprFail("F1008 not RESULT")
+        env = {"_classes": classes}
+        val, j = _js_f96x_parse_additive(text, j, env, state, "F1008",
+                                         _js_f1008_term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the class indirection is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
 def _js_f978_stmt_decode(text):
     """Decode an Array.prototype.splice reassembly sequence (F978).
 
@@ -115718,6 +116581,24 @@ def _decode_layer(text):
     # requiring at least one `o.p=o.q` copy statement. Additive, in
     # F-number order.
     for _stmtdec in (_js_f1003_stmt_decode, _js_f1004_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1005/F1006/F1007/F1008: narrow whole-text statement-sequence
+    # decoders (wave-394 lane 1). Each returns the decoded string or
+    # None; all filed shapes BREAK on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint by leading form: F1005 requires
+    # an Object.create proto chain with no getOwnPropertyDescriptor
+    # line (F1002's domain), F1006 a Proxy apply-trap on
+    # String.fromCharCode (F542's Reflect.apply bodies and F990's
+    # get-trap are disjoint), F1007 parseInt-radix fromCharCode args,
+    # F1008 a class declaration with instance fields (static is
+    # F1009's lane). Additive, in F-number order.
+    for _stmtdec in (_js_f1005_stmt_decode, _js_f1006_stmt_decode,
+                     _js_f1007_stmt_decode, _js_f1008_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
