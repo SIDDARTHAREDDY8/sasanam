@@ -125492,6 +125492,1126 @@ def _js_f1060_stmt_decode(text):
 # -- end F1025/F1026/F1027 ---------------------------------------------------
 
 
+# -- F1068/F1069/F1070/F1071 ------------------------------------------------
+
+
+def _js_f1068_parse_set_trap(text, j):
+    """Parse the F1068 set-trap handler at text[j].
+
+    `{set(t,k,v){t[k]=String.fromCharCode(v);return true;}}` or
+    `{set:(t,k,v)=>{t[k]=String.fromCharCode(v);return true;}}`
+    (param names must agree between head and body). Exactly one
+    trap; any other trap fails closed (disjoint from F1059's
+    get-trap). Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    tname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if tname != "set":
+        raise _JSExprFail("F1068 trap not set")
+    j = _js_skip_ws(text, j)
+    arrow = False
+    if j < n and text[j] == ":":
+        arrow = True
+        j = _js_skip_ws(text, j + 1)
+    j = _js_expect(text, j, "(")
+    t1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, ",")
+    k1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, ",")
+    v1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if arrow:
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F1068 trap not arrow")
+        j = _js_skip_ws(text, j + 2)
+    j = _js_expect(text, j, "{")
+    t2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if t2 != t1:
+        raise _JSExprFail("F1068 trap target mismatch")
+    j = _js_expect(text, j, "[")
+    k2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if k2 != k1:
+        raise _JSExprFail("F1068 trap key mismatch")
+    j = _js_expect(text, j, "]")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "=" or text.startswith(("==", "=>"), j):
+        raise _JSExprFail("F1068 trap not assign")
+    j = _js_skip_ws(text, j + 1)
+    m = _js_match_kw(text, j, "String")
+    if m is None:
+        raise _JSExprFail("F1068 trap no String")
+    j = _js_expect(text, _js_skip_ws(text, m), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail("F1068 trap no fromCharCode")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    v2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if v2 != v1:
+        raise _JSExprFail("F1068 trap value mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail("F1068 trap no return")
+    m = _js_match_kw(text, _js_skip_ws(text, m), "true")
+    if m is None:
+        raise _JSExprFail("F1068 trap not return-true")
+    j = _js_expect(text, _js_skip_ws(text, m), ";")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_f1068_parse_foreach_writes(text, j, pname, state):
+    """Parse `[INTS].forEach(CB);` at text[j] (F1068).
+
+    CB is `(v,i)=>{P[i]=v;}` / `(v,i)=>P[i]=v` /
+    `function(v,i){P[i]=v;}` (param names fresh, must agree with the
+    body). The receiver must be an int-array literal (node-exact:
+    forEach visits indices 0..n-1; holes fail closed in the
+    code-array parse). Returns (writes, next_index) with
+    writes=[(index, code)]. Never evals.
+    """
+    n = len(text)
+    codes, j = _js_f1028f1030_parse_code_array(text, j, "F1068")
+    for _c in codes:
+        _js_f96x_charge(state, "F1068 too many codes")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "forEach")
+    if m is None:
+        raise _JSExprFail("F1068 no forEach")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        v1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ",")
+        i1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        braced = True
+    else:
+        j = _js_expect(text, j, "(")
+        v1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ",")
+        i1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F1068 no arrow")
+        j = _js_skip_ws(text, j + 2)
+        braced = j < n and text[j] == "{"
+        if braced:
+            j += 1
+    if v1 == i1 or v1 in _F611_RESERVED or i1 in _F611_RESERVED:
+        raise _JSExprFail("F1068 bad forEach params")
+    p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if p2 != pname:
+        raise _JSExprFail("F1068 write target mismatch")
+    j = _js_expect(text, j, "[")
+    i2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if i2 != i1:
+        raise _JSExprFail("F1068 write index mismatch")
+    j = _js_expect(text, j, "]")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "=" or text.startswith(("==", "=>"), j):
+        raise _JSExprFail("F1068 write not assign")
+    v2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if v2 != v1:
+        raise _JSExprFail("F1068 write value mismatch")
+    if braced:
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    return [(str(i), c) for i, c in enumerate(codes)], j
+
+
+def _js_f1068_parse_seq_writes(text, j, pname, state):
+    """Parse `P[INT]=INT;` runs at text[j] (F1068); one or more.
+
+    The index literal must have no leading zero (sloppy-mode
+    legacy-octal would mis-model the key -- fail closed instead).
+    Returns (writes, next_index) with writes=[(key_string, code)].
+    Never evals.
+    """
+    n = len(text)
+    writes = []
+    while True:
+        k = _js_skip_ws(text, j)
+        if k >= n or text[k] not in _JS_IDENT_START:
+            break
+        nm, k = _js_parse_ident(text, k)
+        if nm != pname:
+            break
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "[":
+            break
+        k = _js_skip_ws(text, k + 1)
+        d0 = k
+        while k < n and text[k] in _ASCII_DIGITS:
+            k += 1
+        raw = text[d0:k]
+        if not raw or (len(raw) > 1 and raw[0] == "0"):
+            raise _JSExprFail("F1068 bad write index")
+        k = _js_expect(text, k, "]")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=" or text.startswith(("==", "=>"), k):
+            raise _JSExprFail("F1068 write not assign")
+        code, k = _js_f997_parse_int(text, k + 1, "F1068")
+        k = _js_expect(text, k, ";")
+        writes.append((raw, code))
+        _js_f96x_charge(state, "F1068 too many writes")
+        j = k
+    if not writes:
+        raise _JSExprFail("F1068 no writes")
+    return writes, j
+
+
+def _js_f1068_assemble(writes, what):
+    """Node-exact Object.values join over the set-trap writes (F1068).
+
+    *writes*: list of (key_string, code). Canonical numeric indices
+    (ToString(ToUint32(k))===k, k!==2**32-1) order ascending
+    numerically; all other keys keep insertion order after them;
+    later writes to the same key win (node v24.20.0). Result via
+    ToUint16 (F967 discipline), bounded by _MAX_DECODE_BYTES.
+    Never evals.
+    """
+    vals = {}
+    order = []
+    for ks, code in writes:
+        if ks not in vals:
+            order.append(ks)
+        vals[ks] = code
+    canon = []
+    other = []
+    for ks in order:
+        if _js_f1015_is_int_key(ks):
+            canon.append(int(ks))
+        else:
+            other.append(ks)
+    canon.sort()
+    seq = [vals[str(k)] for k in canon] + [vals[k] for k in other]
+    return _js_f996f997_fcc_chr(seq, what)
+
+
+def _js_f1068_stmt_decode(text):
+    """Decode F1068 Proxy set-trap accumulation reads (whole-text,
+    _decode_layer hook).
+
+    `var|let|const O={};`
+    `var|let|const P=new Proxy(O,{set(t,k,v){t[k]=String.fromCharCode(v);return true;}});`
+    (or the `set:(t,k,v)=>{...}` arrow twin)
+    `[INTS].forEach((v,i)=>{P[i]=v;});` (function/braced/braceless
+    twins) or `P[INT]=INT;` runs
+    `var|let|const RESULT=Object.values(O).join('');`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the set trap stores fromCharCode(v) under
+    the write key; Object.values orders canonical numeric indices
+    ascending, other keys in insertion order (later writes win).
+    Disjoint from F1059 (which requires the get-trap and fails
+    closed on `set`) and from F990 (inline-target get-trap).
+    Anything outside the strict grammar fails closed -- a miss,
+    never a mis-decode. F452: a local budget only; a miss charges
+    nothing shared (wave-383 lesson). Returns the decoded string
+    (bounded by _MAX_DECODE_BYTES), or None. Never evals.
+    """
+    if "new Proxy(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "Proxy", "Object"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, oname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(oname, set(), shadow, "F1068")
+        j = _js_expect(text, j, "{")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ";")
+        _, pname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, {oname}, shadow, "F1068")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail("F1068 no new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Proxy")
+        if m is None:
+            raise _JSExprFail("F1068 no Proxy")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        t2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if t2 != oname:
+            raise _JSExprFail("F1068 target not bound")
+        j = _js_expect(text, j, ",")
+        j = _js_f1068_parse_set_trap(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == "[":
+            writes, j = _js_f1068_parse_foreach_writes(text, j, pname,
+                                                       state)
+        else:
+            writes, j = _js_f1068_parse_seq_writes(text, j, pname,
+                                                   state)
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1068 not RESULT")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Object")
+        if m is None:
+            raise _JSExprFail("F1068 no Object")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "values")
+        if m is None:
+            raise _JSExprFail("F1068 no values")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        on2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if on2 != oname:
+            raise _JSExprFail("F1068 values obj mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail("F1068 no join")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        js, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if js != "":
+            raise _JSExprFail("F1068 join not empty")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the proxy indirection is obfuscation-shaped
+        return _js_f1068_assemble(writes, "F1068")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1069_parse_member(text, j, what):
+    """Parse `.PROP` / `["PROP"]` at text[j] (F1069); returns
+    (prop, next_index). Never evals."""
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ".":
+        return _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if j < n and text[j] == "[":
+        prop, k = _js_f99x_parse_str(text, _js_skip_ws(text, j + 1))
+        k = _js_expect(text, k, "]")
+        return prop, k
+    raise _JSExprFail(what + " bad member")
+
+
+def _js_f1069_parse_fcc_spread(text, j, what):
+    """Parse `String.fromCharCode(...` at text[j] (F1069); returns the
+    index just past the `...`. The spread receiver is parsed by the
+    caller. Never evals."""
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail(what + " no String")
+    j = _js_expect(text, _js_skip_ws(text, m), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " no fromCharCode")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("...", j):
+        raise _JSExprFail(what + " no spread")
+    return j + 3
+
+
+def _js_f1069_parse_target_props(text, j, state, what):
+    """Parse `{K:"str"|[INTS],...}` at text[j] (F1069 WeakRef target).
+
+    Keys: identifiers or string literals (`__proto__` fails closed --
+    the engine sets the prototype rather than an own property).
+    Values: string literals (via _js_f99x_parse_str) or int-array
+    literals (via _js_f1028f1030_parse_code_array). Disjoint from
+    F991: F991 requires every target prop to be a quoted literal and
+    only models `.deref().v` additive reads -- it fails closed on
+    the int-array prop values required here, and this hook fails
+    closed on F991's quoted-literal shapes. Duplicate keys: later
+    wins (engine-exact). Trailing comma node-exact. Returns (props,
+    next_index); props maps key -> ("str", val) | ("codes", [ints]).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    props = {}
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        raise _JSExprFail(what + " empty target")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            key, j = _js_f99x_parse_str(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail(what + " bad key")
+        if key == "__proto__":
+            raise _JSExprFail(what + " __proto__ not modeled")
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            val, j = _js_f99x_parse_str(text, j)
+            props[key] = ("str", val)
+        elif j < n and text[j] == "[":
+            codes, j = _js_f1028f1030_parse_code_array(text, j, what)
+            for _c in codes:
+                _js_f96x_charge(state, what + " too many codes")
+            props[key] = ("codes", codes)
+        else:
+            raise _JSExprFail(what + " bad value")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return props, j + 1
+            continue
+        if j < n and text[j] == "}":
+            return props, j + 1
+        raise _JSExprFail(what + " target not closed")
+
+
+def _js_f1069_weakref_decode(text):
+    """Decode the F1069 WeakRef sub-production (whole-text).
+
+    `var|let|const R=new WeakRef({P:[INTS],...});`
+    `var|let|const RESULT=String.fromCharCode(...R.deref().P);`
+    (`.deref()["P"]` twin) then end-of-text. Raises _JSExprFail on
+    any deviation. Never evals.
+    """
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "WeakRef"}
+    j = _js_skip_ws(text, 0)
+    _, rname, j = _js_f96x_decl(text, j)
+    _js_f1028f1029_check_fresh_name(rname, set(), shadow, "F1069")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+    if m is None:
+        raise _JSExprFail("F1069 no new")
+    m = _js_match_kw(text, _js_skip_ws(text, m), "WeakRef")
+    if m is None:
+        raise _JSExprFail("F1069 no WeakRef")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    props, j = _js_f1069_parse_target_props(text, _js_skip_ws(text, j),
+                                            state, "F1069")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    _, res, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if res != "RESULT":
+        raise _JSExprFail("F1069 not RESULT")
+    j = _js_f1069_parse_fcc_spread(text, j, "F1069")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != rname:
+        raise _JSExprFail("F1069 recv mismatch")
+    j = _js_expect(text, j, ".")
+    dm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if dm != "deref":
+        raise _JSExprFail("F1069 not deref")
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    prop, j = _js_f1069_parse_member(text, j, "F1069")
+    if prop not in props or props[prop][0] != "codes":
+        raise _JSExprFail("F1069 prop not staged codes")
+    j = _js_expect(text, j, ")")
+    _js_f96x_expect_semi_end(text, j)
+    state["ops"] += 1
+    return _js_f996f997_fcc_chr(props[prop][1], "F1069")
+
+
+def _js_f1069_globalthis_decode(text):
+    """Decode the F1069 globalThis sub-production (whole-text).
+
+    `globalThis.P=[INTS];` (or `globalThis["P"]=`)
+    `var|let|const RESULT=String.fromCharCode(...globalThis.P);`
+    (or `...globalThis["P"]`) then end-of-text. Raises _JSExprFail
+    on any deviation. Never evals.
+    """
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String"}
+    j = _js_skip_ws(text, 0)
+    nm, j = _js_parse_ident(text, j)
+    if nm != "globalThis":
+        raise _JSExprFail("F1069 not globalThis")
+    prop, j = _js_f1069_parse_member(text, j, "F1069")
+    if prop == "__proto__":
+        raise _JSExprFail("F1069 __proto__ not modeled")
+    j = _js_skip_ws(text, j)
+    if j >= len(text) or text[j] != "=" or text.startswith(("==", "=>"), j):
+        raise _JSExprFail("F1069 not assign")
+    codes, j = _js_f1028f1030_parse_code_array(text, j + 1, "F1069")
+    for _c in codes:
+        _js_f96x_charge(state, "F1069 too many codes")
+    j = _js_expect(text, j, ";")
+    _, res, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if res != "RESULT":
+        raise _JSExprFail("F1069 not RESULT")
+    j = _js_f1069_parse_fcc_spread(text, j, "F1069")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != "globalThis":
+        raise _JSExprFail("F1069 recv mismatch")
+    prop2, j = _js_f1069_parse_member(text, j, "F1069")
+    if prop2 != prop:
+        raise _JSExprFail("F1069 prop mismatch")
+    j = _js_expect(text, j, ")")
+    _js_f96x_expect_semi_end(text, j)
+    state["ops"] += 1
+    return _js_f996f997_fcc_chr(codes, "F1069")
+
+
+def _js_f1069_check_param(aname, bound, shadow, what):
+    """Fail closed unless *aname* is a fresh rest param (F1069)."""
+    if (aname == "RESULT" or aname == "arguments"
+            or aname in _F611_RESERVED or aname in bound
+            or aname in shadow):
+        raise _JSExprFail(what + " bad param")
+
+
+def _js_f1069_rest_decode(text):
+    """Decode the F1069 rest-param sub-production (whole-text).
+
+    `[var|let|const C=[INTS];]`
+    `var|let|const F=(...a)=>String.fromCharCode(...a);`
+    (or `function F(...a){return String.fromCharCode(...a);}` or the
+    braced-arrow twin)
+    `var|let|const RESULT=F(...[INTS]);` (or `F(...C)`)
+    then end-of-text. Raises _JSExprFail on any deviation. Never
+    evals.
+    """
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String"}
+    bound = set()
+    j = _js_skip_ws(text, 0)
+    codes_name = None
+    codes_lit = None
+    j2 = j
+    try:
+        _, cname, j2 = _js_f96x_decl(text, j2)
+        j2 = _js_skip_ws(text, j2)
+        codes0, j2 = _js_f1028f1030_parse_code_array(text, j2, "F1069")
+        j2 = _js_expect(text, j2, ";")
+        j3 = _js_skip_ws(text, j2)
+        m = _js_match_kw(text, j3, "function")
+        kw2 = None if m is not None else _js_match_decl_kw(text, j3)[0]
+        if m is None and kw2 is None:
+            raise _JSExprFail("F1069 no fn after codes")
+        _js_f1028f1029_check_fresh_name(cname, bound, shadow, "F1069")
+        bound.add(cname)
+        codes_name, codes_lit, j = cname, codes0, j2
+    except _JSExprFail:
+        pass
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        fname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        _js_f1028f1029_check_fresh_name(fname, bound, shadow, "F1069")
+        bound.add(fname)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail("F1069 no rest param")
+        aname, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        _js_f1069_check_param(aname, bound, shadow, "F1069")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail("F1069 no return")
+        j = _js_f1069_parse_fcc_spread(text, m, "F1069")
+        a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if a2 != aname:
+            raise _JSExprFail("F1069 param mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == ";":
+            j += 1
+    else:
+        _, fname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(fname, bound, shadow, "F1069")
+        bound.add(fname)
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail("F1069 no rest param")
+        aname, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        _js_f1069_check_param(aname, bound, shadow, "F1069")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F1069 no arrow")
+        j = _js_skip_ws(text, j + 2)
+        braced = j < len(text) and text[j] == "{"
+        if braced:
+            j += 1
+            m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+            if m is None:
+                raise _JSExprFail("F1069 no return")
+            j = m
+        j = _js_f1069_parse_fcc_spread(text, j, "F1069")
+        a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if a2 != aname:
+            raise _JSExprFail("F1069 param mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        if braced:
+            j = _js_expect(text, j, "}")
+            j = _js_expect(text, j, ";")
+    _, res, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if res != "RESULT":
+        raise _JSExprFail("F1069 not RESULT")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != fname:
+        raise _JSExprFail("F1069 call target mismatch")
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("...", j):
+        raise _JSExprFail("F1069 call not spread")
+    j = _js_skip_ws(text, j + 3)
+    if j < len(text) and text[j] == "[":
+        call_codes, j = _js_f1028f1030_parse_code_array(text, j, "F1069")
+    else:
+        nm2, j = _js_parse_ident(text, j)
+        if codes_name is None or nm2 != codes_name:
+            raise _JSExprFail("F1069 call arg mismatch")
+        call_codes = codes_lit
+    for _c in call_codes:
+        _js_f96x_charge(state, "F1069 too many codes")
+    j = _js_expect(text, j, ")")
+    _js_f96x_expect_semi_end(text, j)
+    state["ops"] += 1
+    return _js_f996f997_fcc_chr(call_codes, "F1069")
+
+
+def _js_f1069_stmt_decode(text):
+    """Decode F1069 non-identifier fromCharCode spread receivers
+    (whole-text, _decode_layer hook).
+
+    Three disjoint sub-productions:
+    (W) `var|let|const R=new WeakRef({P:[INTS],...});`
+        `var|let|const RESULT=String.fromCharCode(...R.deref().P);`
+        (`.deref()["P"]` twin; other props must be string/int-array
+        literals; `__proto__` fails closed)
+    (G) `globalThis.P=[INTS];` (or `globalThis["P"]=`)
+        `var|let|const RESULT=String.fromCharCode(...globalThis.P);`
+    (R) `[var|let|const C=[INTS];]`
+        `var|let|const F=(...a)=>String.fromCharCode(...a);`
+        (or `function F(...a){return String.fromCharCode(...a);}` or
+        the braced-arrow twin)
+        `var|let|const RESULT=F(...[INTS]);` (or `F(...C)`)
+    then end-of-text.
+
+    Node-exact (v24.20.0): WeakRef deref is synchronous here (no
+    intervening allocation, so no collection); the member spread
+    reads the staged codes; the rest param collects the spread call
+    args; fromCharCode applies ToUint16 per element (F967
+    discipline). Disjoint from F991: F991 requires every WeakRef
+    target prop to be a quoted literal and only models `.deref().v`
+    additive reads -- it fails closed on the int-array prop values
+    required here, and this hook fails closed on F991's
+    quoted-literal shapes. Anything outside the strict grammars
+    fails closed -- a miss, never a mis-decode. F452: each
+    sub-grammar charges a local budget only; a miss leaves no
+    shared counters touched (wave-383 lesson). Returns the decoded
+    string (bounded by _MAX_DECODE_BYTES), or None. Never evals.
+    """
+    if "String.fromCharCode(" not in text:
+        return None
+    for _g in (_js_f1069_weakref_decode, _js_f1069_globalthis_decode,
+               _js_f1069_rest_decode):
+        try:
+            _v = _g(text)
+        except _JSExprFail:
+            continue
+        if _v is not None:
+            return _v
+    return None
+
+
+def _js_f1070_parse_frags(text, j, state):
+    """Parse `["s1","s2",...]` at text[j] (F1070 parts). Non-empty;
+    string literals only (via _js_f99x_parse_str -- Annex-B octal
+    escapes fail closed, node-exact). Trailing comma node-exact.
+    Returns (frags, next_index). Never evals."""
+    j = _js_expect(text, j, "[")
+    frags = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] not in "'\"":
+            raise _JSExprFail("F1070 parts not strings")
+        frag, j = _js_f99x_parse_str(text, j)
+        frags.append(frag)
+        _js_f96x_charge(state, "F1070 too many frags")
+        if len(frags) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail("F1070 too many frags")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < len(text) and text[j] == "]":
+                j += 1
+                break
+            continue
+        if j < len(text) and text[j] == "]":
+            j += 1
+            break
+        raise _JSExprFail("F1070 bad parts")
+    if not frags:
+        raise _JSExprFail("F1070 empty parts")
+    return frags, j
+
+
+def _js_f1070_parse_segmenter_args(text, j):
+    """Parse `()` / `("loc")` / `("loc",{granularity:"grapheme"})`
+    after `new Intl.Segmenter` (F1070).
+
+    Node-exact (v24.20.0): U+200B is its own segment under grapheme
+    granularity (verified: leading, trailing, adjacent, beside
+    emoji, beside combining marks) -- the filter then removes
+    exactly the separator occurrences. "word" granularity fails
+    closed: U+200B merges with a following Extend/Format character
+    there (Spec review H-1). Any other granularity or option fails
+    closed. Returns next_index. Never evals.
+    """
+    j = _js_expect(text, j, "(")
+    j = _js_skip_ws(text, j)
+    if j < len(text) and text[j] == ")":
+        return j + 1
+    _loc, j = _js_f99x_parse_str(text, j)
+    j = _js_skip_ws(text, j)
+    if j < len(text) and text[j] == ")":
+        return j + 1
+    j = _js_expect(text, j, ",")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    gk, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if gk != "granularity":
+        raise _JSExprFail("F1070 bad segmenter opt")
+    j = _js_expect(text, j, ":")
+    gv, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    # Only "grapheme" is modeled: under "word" granularity U+200B
+    # merges with a following Extend/Format character (UTS#29 word
+    # rules -- node v24.20.0 verified), so the filter would not
+    # remove the separator and stripping it would mis-decode.
+    # "word" fails closed -- a miss, never a mis-decode
+    # (Spec review H-1).
+    if gv != "grapheme":
+        raise _JSExprFail("F1070 granularity not modeled")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_f1070_parse_filter(text, j, sep):
+    """Parse `.filter(P=>P.segment!==SEP)` / `.filter((P)=>P.segment!=SEP)`
+    at text[j] (F1070). SEP must cook to the ZWSP. Returns (param,
+    next_index). Never evals."""
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "filter")
+    if m is None:
+        raise _JSExprFail("F1070 no filter")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_skip_ws(text, j)
+    if j < len(text) and text[j] == "(":
+        param, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+    else:
+        param, j = _js_parse_ident(text, j)
+    if param in _F611_RESERVED or param == "arguments":
+        raise _JSExprFail("F1070 bad filter param")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F1070 no arrow")
+    j = _js_skip_ws(text, j + 2)
+    p2, j = _js_parse_ident(text, j)
+    if p2 != param:
+        raise _JSExprFail("F1070 filter param mismatch")
+    j = _js_expect(text, j, ".")
+    mb, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if mb != "segment":
+        raise _JSExprFail("F1070 not .segment")
+    j = _js_skip_ws(text, j)
+    if text.startswith("!==", j):
+        j += 3
+    elif text.startswith("!=", j):
+        j += 2
+    else:
+        raise _JSExprFail("F1070 no inequality")
+    lit, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    if lit != sep:
+        raise _JSExprFail("F1070 filter sep mismatch")
+    j = _js_expect(text, j, ")")
+    return param, j
+
+
+def _js_f1070_parse_map(text, j, param):
+    """Parse `.map(P=>P.segment)` / `.map((P)=>P.segment)` at text[j]
+    (F1070); the param must agree with the filter's. Returns
+    next_index. Never evals."""
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+    if m is None:
+        raise _JSExprFail("F1070 no map")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_skip_ws(text, j)
+    if j < len(text) and text[j] == "(":
+        p2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+    else:
+        p2, j = _js_parse_ident(text, j)
+    if p2 != param:
+        raise _JSExprFail("F1070 map param mismatch")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail("F1070 no map arrow")
+    j = _js_skip_ws(text, j + 2)
+    p3, j = _js_parse_ident(text, j)
+    if p3 != param:
+        raise _JSExprFail("F1070 map body mismatch")
+    j = _js_expect(text, j, ".")
+    mb, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if mb != "segment":
+        raise _JSExprFail("F1070 map not .segment")
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_f1070_stmt_decode(text):
+    """Decode F1070 Intl.Segmenter ZWSP-filter reassembly (whole-text,
+    _decode_layer hook).
+
+    `var|let|const P=["f1","f2",...];`
+    `var|let|const RESULT=[...new Intl.Segmenter().segment(P.join("\\u200b"))]`
+    `.filter(s=>s.segment!=="\\u200b").map(s=>s.segment).join("");`
+    (Array.from twin; `("loc")` / `("loc",{granularity:...})` args;
+    paren-param twins; `!=` twin; quote twins) then end-of-text.
+
+    Node-exact (v24.20.0): U+200B is its own grapheme segment
+    (verified: leading, trailing, adjacent, beside emoji, beside
+    combining marks), so the filter removes exactly the separator
+    occurrences and the decode is `P.join(sep)` with every U+200B
+    removed. "word" granularity fails closed (U+200B merges with a
+    following Extend/Format character there -- Spec review H-1).
+    Any separator other than U+200B fails closed (its segment
+    independence is unverified -- a miss, never a mis-decode).
+    Disjoint from
+    F857/F910: those model ASCII-only Segmenter consumption via
+    for-of / Array.from().map().join() and fail closed on the
+    non-ASCII separator and the filter production here.
+    F452: a local budget only; a miss charges nothing shared
+    (wave-383 lesson). Returns the decoded string (bounded by
+    _MAX_DECODE_BYTES), or None. Never evals.
+    """
+    if "Intl.Segmenter" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "Intl", "Object", "Array"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, pname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(pname, set(), shadow, "F1070")
+        frags, j = _js_f1070_parse_frags(text, _js_skip_ws(text, j),
+                                         state)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1070 not RESULT")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == "[":
+            j = _js_skip_ws(text, j + 1)
+            if not text.startswith("...", j):
+                raise _JSExprFail("F1070 no spread")
+            j = j + 3
+            spread_form = True
+        else:
+            m = _js_match_kw(text, j, "Array")
+            if m is None:
+                raise _JSExprFail("F1070 no array source")
+            j = _js_expect(text, _js_skip_ws(text, m), ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "from")
+            if m is None:
+                raise _JSExprFail("F1070 no Array.from")
+            j = _js_expect(text, _js_skip_ws(text, m), "(")
+            spread_form = False
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail("F1070 no new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Intl")
+        if m is None:
+            raise _JSExprFail("F1070 no Intl")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Segmenter")
+        if m is None:
+            raise _JSExprFail("F1070 no Segmenter")
+        j = _js_f1070_parse_segmenter_args(text, _js_skip_ws(text, m))
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "segment")
+        if m is None:
+            raise _JSExprFail("F1070 no segment")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != pname:
+            raise _JSExprFail("F1070 parts mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail("F1070 no join")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "\u200b":
+            raise _JSExprFail("F1070 sep not ZWSP")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        if spread_form:
+            j = _js_expect(text, j, "]")
+        else:
+            j = _js_expect(text, j, ")")
+        param, j = _js_f1070_parse_filter(text, j, sep)
+        j = _js_f1070_parse_map(text, j, param)
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail("F1070 no final join")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        js, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if js != "":
+            raise _JSExprFail("F1070 join not empty")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        val = "".join(frags).replace("\u200b", "")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1070 result too long")
+        state["ops"] += 1  # the segmenter staging is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1071_parse_str_obj_lit(text, k, state, what):
+    """Parse `{K:"str",...}` at text[k] (F1071).
+
+    Keys: identifiers, string literals, or bare numeric keys
+    (ToString(ToNumber), node-exact via _js_parse_fcc_number);
+    `__proto__` fails closed (the engine sets the prototype rather
+    than an own property). Values: string literals only (via
+    _js_f99x_parse_str). Duplicate keys: later wins (engine-exact).
+    Trailing comma node-exact. Returns (props, raw_keys,
+    next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_expect(text, k, "{")
+    props = {}
+    raw_keys = []
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "}":
+        raise _JSExprFail(what + " empty obj")
+    while True:
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] in "'\"":
+            key, k = _js_f99x_parse_str(text, k)
+        elif k < n and text[k] in _JS_IDENT_START:
+            key, k = _js_parse_ident(text, k)
+        elif k < n and text[k] in "0123456789":
+            num, k = _js_parse_fcc_number(text, k)
+            key = str(num)
+        else:
+            raise _JSExprFail(what + " obj key not modeled")
+        if key == "__proto__":
+            raise _JSExprFail(what + " __proto__ not modeled")
+        k = _js_expect(text, k, ":")
+        v, k = _js_f99x_parse_str(text, _js_skip_ws(text, k))
+        raw_keys.append(key)
+        props[key] = v  # later-wins, matching the engine
+        _js_f96x_charge(state, what + " too many parts")
+        if len(raw_keys) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail(what + " too many keys")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] == "}":
+                return props, raw_keys, k + 1
+            continue
+        if k < n and text[k] == "}":
+            return props, raw_keys, k + 1
+        raise _JSExprFail(what + " obj not closed")
+
+
+def _js_f1071_enum_join(props, raw_keys, what):
+    """Node-exact Object.getOwnPropertyNames join (F1071): integer-index
+    keys ascending first, then string keys in insertion order;
+    duplicate keys collapse (later wins, engine-exact). Returns the
+    joined string, bounded by _MAX_DECODE_BYTES. Never evals."""
+    seen = set()
+    int_keys = []
+    str_keys = []
+    for kname in raw_keys:
+        if kname in seen:
+            continue
+        seen.add(kname)
+        if _js_f1015_is_int_key(kname):
+            int_keys.append(int(kname))
+        else:
+            str_keys.append(kname)
+    ordered = [str(k) for k in sorted(int_keys)] + str_keys
+    val = "".join(props[k] for k in ordered)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " result too long")
+    return val
+
+
+def _js_f1071_parse_o_k_read(text, j, oname, kvar, what):
+    """Parse `O[k]` at text[j] (F1071). Never evals."""
+    on2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if on2 != oname:
+        raise _JSExprFail(what + " obj mismatch")
+    j = _js_expect(text, j, "[")
+    k2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if k2 != kvar:
+        raise _JSExprFail(what + " key mismatch")
+    j = _js_expect(text, j, "]")
+    return j
+
+
+def _js_f1071_parse_accum_body(text, j, acc, oname, kvar, what):
+    """Parse `S+=O[k];` / `S=S+O[k];` at text[j] (F1071). Never evals."""
+    n = len(text)
+    a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if a2 != acc:
+        raise _JSExprFail(what + " accum target mismatch")
+    j = _js_skip_ws(text, j)
+    if j < n and text.startswith("+=", j):
+        j = _js_skip_ws(text, j + 2)
+        j = _js_f1071_parse_o_k_read(text, j, oname, kvar, what)
+    elif j < n and text[j] == "=" and not text.startswith(("==", "=>"), j):
+        j = _js_skip_ws(text, j + 1)
+        a3, j = _js_parse_ident(text, j)
+        if a3 != acc:
+            raise _JSExprFail(what + " accum self mismatch")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+":
+            raise _JSExprFail(what + " accum no plus")
+        j = _js_skip_ws(text, j + 1)
+        j = _js_f1071_parse_o_k_read(text, j, oname, kvar, what)
+    else:
+        raise _JSExprFail(what + " bad accum body")
+    j = _js_expect(text, j, ";")
+    return j
+
+
+def _js_f1071_parse_loop(text, j, oname, acc, bound, what):
+    """Parse `for([var|let|const] k of Object.getOwnPropertyNames(O))BODY`
+    at text[j] (F1071). BODY is `S+=O[k];` / `S=S+O[k];`, braced or
+    braceless. Returns next_index. Never evals."""
+    n = len(text)
+    m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+    if m is None:
+        raise _JSExprFail(what + " not for")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    kw, k2 = _js_match_decl_kw(text, j)
+    if kw is not None:
+        j = _js_skip_ws(text, k2)
+    kvar, j = _js_parse_ident(text, j)
+    if (kvar in bound or kvar in ("RESULT", "arguments")
+            or kvar in _F611_RESERVED):
+        raise _JSExprFail(what + " bad loop var")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "of")
+    if m is None:
+        raise _JSExprFail(what + " not for-of")
+    j = _js_skip_ws(text, m)
+    m = _js_match_kw(text, j, "Object")
+    if m is None:
+        raise _JSExprFail(what + " not Object")
+    j = _js_expect(text, _js_skip_ws(text, m), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "getOwnPropertyNames")
+    if m is None:
+        raise _JSExprFail(what + " not gopn")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    on2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if on2 != oname:
+        raise _JSExprFail(what + " loop obj mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    braced = j < n and text[j] == "{"
+    if braced:
+        j += 1
+    j = _js_f1071_parse_accum_body(text, j, acc, oname, kvar, what)
+    j = _js_skip_ws(text, j)
+    if braced:
+        j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_f1071_stmt_decode(text):
+    """Decode F1071 Object.getOwnPropertyNames loop accumulation
+    (whole-text, _decode_layer hook).
+
+    `var|let|const O={<str-frag obj-lit>};`
+    `var|let|const S="";`
+    `for([var|let|const] k of Object.getOwnPropertyNames(O)){S+=O[k];}`
+    (`S=S+O[k];` / braceless twins)
+    `var|let|const RESULT=<additive of S and string literals>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): getOwnPropertyNames orders integer-index
+    keys ascending first, then string keys in insertion order
+    (duplicate keys collapse, later wins). Disjoint from F1044
+    (which requires the `for(...in...)` loop and int-valued
+    literals -- this requires `for(...of
+    Object.getOwnPropertyNames(...))` and string values; each fails
+    closed on the other's shapes) and from F525 (the
+    expression-evaluator key-enumeration production, which cannot
+    consume a top-level statement sequence). Anything outside the
+    strict grammar fails closed -- a miss, never a mis-decode.
+    F452: a local budget only; a miss charges nothing shared
+    (wave-383 lesson). Returns the decoded string (bounded by
+    _MAX_DECODE_BYTES), or None. Never evals.
+    """
+    if "getOwnPropertyNames" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "Object"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, oname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(oname, set(), shadow, "F1071")
+        props, raw_keys, j = _js_f1071_parse_str_obj_lit(
+            text, _js_skip_ws(text, j), state, "F1071")
+        j = _js_expect(text, j, ";")
+        _, acc, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(acc, {oname}, shadow, "F1071")
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1071 acc not empty")
+        j = _js_expect(text, j, ";")
+        bound = {oname, acc}
+        j = _js_f1071_parse_loop(text, _js_skip_ws(text, j), oname, acc,
+                                 bound, "F1071")
+        acc_val = _js_f1071_enum_join(props, raw_keys, "F1071")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1071 not RESULT")
+
+        def _term(t, k, e, s, _acc=acc, _val=acc_val):
+            kk = _js_skip_ws(t, k)
+            if kk < len(t) and t[kk] in "'\"":
+                return _js_f99x_parse_str(t, kk)
+            nm, k2 = _js_parse_ident(t, kk)
+            if nm != _acc:
+                raise _JSExprFail("F1071 bad result term")
+            return _val, k2
+
+        val, j = _js_f96x_parse_additive(text, j, {}, state, "F1071",
+                                         _term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the enumeration staging is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1068/F1069/F1070/F1071 ---------------------------------------------------
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -126039,6 +127159,26 @@ def _decode_layer(text):
     # and grammar (documented per hook). Additive, in F-number order.
     for _stmtdec in (_js_f1061_stmt_decode, _js_f1062_stmt_decode,
                      _js_f1063_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1068/F1069/F1070/F1071: narrow whole-text statement-sequence
+    # decoders (wave-398 lane 2) -- Proxy set-trap accumulation reads,
+    # non-identifier fromCharCode spread receivers (WeakRef deref
+    # member, globalThis member, rest-param), Intl.Segmenter
+    # ZWSP-filter reassembly, Object.getOwnPropertyNames loop
+    # accumulation. Each returns the decoded string or None; all
+    # filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint from F1059 (get-trap), F991 (WeakRef
+    # quoted-literal reads), F1044 (for-in), F525 (expression-level
+    # key enumeration), and F857/F910 (ASCII-only Segmenter) by
+    # anchor and grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1068_stmt_decode, _js_f1069_stmt_decode,
+                     _js_f1070_stmt_decode, _js_f1071_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
