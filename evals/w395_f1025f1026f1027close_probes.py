@@ -251,18 +251,18 @@ def test_p4_sibling_pins():
         # from F1025's spread-CALL `...G()` / twin bare-ident `...IT`).
         _redfirst_shapes("w391_f987")[0],
     ]
-    still_open = []
+    # Wave-395 merge: F1028-F1033 are now CLOSED (lanes 2/3) -- their
+    # shapes moved to the still-blocked list; merged-tree truth.
     for modname in ("w394_f1028", "w394_f1029",
                     "w394_f1030", "w394_f1031",
                     "w394_f1032", "w394_f1033"):
-        still_open.extend(_redfirst_shapes(modname))
+        still_closed.extend(_redfirst_shapes(modname))
     bad_open = [s for s in quiet_twins if _blocked(s)]
     bad_closed = [s for s in still_closed if not _blocked(s)]
-    bad_incidental = [s for s in still_open if _blocked(s)]
-    ok = not bad_open and not bad_closed and not bad_incidental
+    ok = not bad_open and not bad_closed
     return ("HELD" if ok else "BREAK",
-            "overblocked=%d lost_closed=%d incidental=%d"
-            % (len(bad_open), len(bad_closed), len(bad_incidental)))
+            "overblocked=%d lost_closed=%d"
+            % (len(bad_open), len(bad_closed)))
 
 
 # ------------------------------------------------------ P5 honest text
@@ -322,10 +322,9 @@ def _green_check():
         for ln in lines:
             if ": BREAK" in ln:
                 broken.append(ln.split(":")[0])
-        # Wave-395 merge: my closures are flipped to _closed pins -- only
-        # the 3 now-closed pins may BREAK there; the merge flips them.
-        expected = {"test_r62_f1025_open", "test_r62_f1026_open",
-                    "test_r62_f1027_open"}
+        # Wave-395 merge: the w394 pins were flipped to _closed
+        # (expect-block) -- nothing may BREAK there anymore.
+        expected = set()
         ok = set(broken) == expected
         return (("HELD" if ok else "BREAK"),
                 "green(w394_attack): broken=%s" % sorted(broken))

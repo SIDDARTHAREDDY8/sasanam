@@ -253,10 +253,13 @@ def test_p3_fail_closed():
 
 # --------------------------------------- p4: sibling pins
 
-# Round-62 OPEN findings (F1025-F1027, F1031-F1034) must still miss; adjacent
-# CLOSED findings must still block. Shapes copied verbatim from
+# Wave-395 merge: F1025-F1027 and F1031-F1033 are now CLOSED (lanes 1/3);
+# their shapes moved to _SIBLING_CLOSED. Shapes copied verbatim from
 # evals/w394_attack_probes.py.
-_SIBLING_OPEN = [
+_SIBLING_OPEN = []
+
+# Wave-395 merge: round-62 findings F1025-F1027, F1031-F1033 now CLOSED -- must block.
+_SIBLING_NOW_CLOSED = [
     # F1025: generator spread
     'var g=function*(){yield 120;yield 111;yield 120;yield 98;yield 45;yield 48;yield 49;yield 50;yield 51;yield 52;yield 53;yield 54;yield 55;yield 56;yield 57;yield 97;yield 98;yield 99;yield 100;yield 101;yield 102;};var RESULT=String.fromCharCode(...g());',
     # F1026: for-of over generator
@@ -285,14 +288,16 @@ _SIBLING_CLOSED = [
 
 @_t
 def test_p4_sibling_pins():
-    """Round-62 OPEN findings still miss; adjacent CLOSED still block."""
+    """Wave-395 merge: round-62 now-CLOSED findings block; adjacent CLOSED still block."""
     bad_open = [p for p in _SIBLING_OPEN if not _misses(p)]
     bad_closed = [p for p in _SIBLING_CLOSED if not _blocked(p)]
-    bad = bad_open + bad_closed
+    bad_nowclosed = [p for p in _SIBLING_NOW_CLOSED if not _blocked(p)]
+    bad = bad_open + bad_closed + bad_nowclosed
     return ("HELD" if not bad else "BREAK",
-            "open_miss=%d/%d closed_block=%d/%d" %
+            "open_miss=%d/%d closed_block=%d/%d nowclosed_block=%d/%d" %
             (len(_SIBLING_OPEN) - len(bad_open), len(_SIBLING_OPEN),
-             len(_SIBLING_CLOSED) - len(bad_closed), len(_SIBLING_CLOSED)))
+             len(_SIBLING_CLOSED) - len(bad_closed), len(_SIBLING_CLOSED),
+             len(_SIBLING_NOW_CLOSED) - len(bad_nowclosed), len(_SIBLING_NOW_CLOSED)))
 
 
 # --------------------------------------- p5: honest text
