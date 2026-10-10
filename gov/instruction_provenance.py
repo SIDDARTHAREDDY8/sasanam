@@ -96,6 +96,7 @@ Machine codes (domain ``provlabel``, all in the taxonomy):
 Stdlib only. Deterministic.
 """
 
+import json
 import re
 
 #: The machine codes this module emits, pinned by
@@ -551,6 +552,228 @@ def _has_hidden_md_refdef(text):
     return False
 
 
+# F1047: hidden-instruction carriers beyond the F1034 class. Eight
+# further carriers hide substantive text from the human reader while a
+# summarizer/agent still processes it. Like F1024/F1034, a carrier
+# counts only when its text is PROSE-SHAPED: substantive
+# (non-whitespace) AND containing whitespace. Single whitespace-free
+# tokens are machine metadata (schema.org contexts, SKUs, CSRF tokens,
+# test ids, short UI labels) -- honest text, quiet. This mirrors the
+# F1034 `_is_locator_only` carve. No re.compile() here (module-level
+# count stays as audited); string patterns ride the re module's cache.
+# All detectors run on the zero-width-stripped norm (F1024) so ZWSP
+# mangling of the carrier markup cannot evade them.
+
+
+def _is_prose_shaped(value):
+    """True when *value* is substantive hidden prose: non-whitespace and
+    containing whitespace. A single whitespace-free token is machine
+    metadata (honest text). Never evals."""
+    return bool(value and value.strip()
+                and any(ch.isspace() for ch in value))
+
+
+def _scan_element_regions(text, tag):
+    """Yield the inner text of each `<tag>...</tag>` region in *text*.
+
+    An UNTERMINATED open tag scans to end of text (fail-closed: in
+    HTML error recovery the rest is hidden from the human either way;
+    the F1024 unterminated-`<!--` rule). Never evals.
+    """
+    for m in re.finditer(r"<%s\b[^>]*>" % tag, text, re.I):
+        start = m.end()
+        close = re.search(r"</%s\s*>" % tag, text[start:], re.I)
+        end = start + close.start() if close else len(text)
+        yield text[start:end]
+
+
+def _json_has_prose(data):
+    """True when any string value in the JSON structure is prose-shaped.
+
+    Iterative (explicit stack): pathological nesting cannot raise
+    RecursionError -- the seam stays Deterministic. Never evals.
+    """
+    stack = [data]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, str):
+            if _is_prose_shaped(cur):
+                return True
+        elif isinstance(cur, dict):
+            stack.extend(cur.values())
+        elif isinstance(cur, (list, tuple)):
+            stack.extend(cur)
+    return False
+
+
+def _has_hidden_jsonld(text):
+    """True when *text* carries prose-shaped text in a JSON-LD script block.
+
+    F1047: `<script type="application/ld+json">` is never rendered, so
+    prose inside it is hidden from the human reader -- instruction-shaped
+    by construction (the F1024 rationale). Machine data (valid JSON whose
+    string values are all whitespace-free tokens) is honest text, quiet;
+    malformed JSON with substantive text fails closed (flagged).
+    Never evals.
+    """
+    for m in re.finditer(
+            r"<script\b[^>]*\btype\s*=\s*(\"[^\"]*\"|'[^']*')[^>]*>",
+            text, re.I):
+        if "ld+json" not in m.group(1).lower():
+            continue
+        start = m.end()
+        close = re.search(r"</script\s*>", text[start:], re.I)
+        end = start + close.start() if close else len(text)
+        inner = text[start:end]
+        if not inner.strip():
+            continue
+        try:
+            data = json.loads(inner)
+        except (ValueError, RecursionError):
+            # Not valid JSON-LD, or pathologically nested: hidden text,
+            # fail closed. RecursionError is caught because the seam is
+            # documented Deterministic -- an escaping exception would be
+            # a loud crash, not a verdict.
+            return True
+        if _json_has_prose(data):
+            return True
+    return False
+
+
+def _has_hidden_template(text):
+    """True when *text* carries prose-shaped text in a `<template>` element.
+
+    F1047: template contents are inert -- never rendered -- so prose
+    there is hidden from the human reader (the F1024 rationale).
+    Empty/whitespace-only and markup-only templates are quiet.
+    Never evals.
+    """
+    for region in _scan_element_regions(text, "template"):
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+            return True
+    return False
+
+
+def _has_hidden_svg_title(text):
+    """True when *text* carries prose-shaped text in an SVG `<title>`.
+
+    F1047: SVG titles are accessible names, not visually rendered, so
+    prose there is hidden from the human reader (the F1024 rationale).
+    Scoped to `<svg>` blocks -- the HTML document `<title>` (shown in
+    the tab) is out of scope. Never evals.
+    """
+    for svg in _scan_element_regions(text, "svg"):
+        for region in _scan_element_regions(svg, "title"):
+            if _is_prose_shaped(region):
+                return True
+    return False
+
+
+def _has_hidden_svg_desc(text):
+    """True when *text* carries prose-shaped text in an SVG `<desc>`.
+
+    F1047: SVG descriptions are accessible names, not visually rendered
+    (the F1024 rationale), scoped to `<svg>` blocks like titles.
+    Never evals.
+    """
+    for svg in _scan_element_regions(text, "svg"):
+        for region in _scan_element_regions(svg, "desc"):
+            if _is_prose_shaped(region):
+                return True
+    return False
+
+
+def _f1047_attr_value(tag_text, name):
+    """Extract attribute *name*'s value from a tag string.
+
+    Returns (value, found); quoted values honor backslash escapes via
+    the shared scanner. Never evals.
+    """
+    m = re.search(r"\b%s\s*=\s*" % re.escape(name), tag_text, re.I)
+    if not m:
+        return None, False
+    rest = tag_text[m.end():].lstrip()
+    if rest and rest[0] in "\"'":
+        inner, _ = _scan_quoted_string(rest, 0)
+        return inner, True
+    um = re.match(r"[^\s>]+", rest)
+    return (um.group(0), True) if um else ("", True)
+
+
+def _has_hidden_meta_itemprop(text):
+    """True when *text* carries prose-shaped text in a `<meta itemprop>`
+    content attribute.
+
+    F1047: `<meta itemprop>` is not rendered, so prose in its content
+    is hidden from the human reader (the F1024 rationale). Machine
+    tokens (`content="ABC-123"`) are honest text, quiet. `<meta
+    name="description">` is not an itemprop carrier (out of scope).
+    Never evals.
+    """
+    for m in re.finditer(r"<meta\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        _, has_itemprop = _f1047_attr_value(tag, "itemprop")
+        if not has_itemprop:
+            continue
+        content, has_content = _f1047_attr_value(tag, "content")
+        if has_content and _is_prose_shaped(content):
+            return True
+    return False
+
+
+def _has_hidden_aria_label(text):
+    """True when *text* carries prose-shaped text in an `aria-label`.
+
+    F1047: aria-labels are screen-reader only -- not visually rendered --
+    so prose there is hidden from the human reader (the F1024 rationale).
+    Short UI labels (`aria-label="Close"`) are honest text, quiet.
+    Never evals.
+    """
+    for m in re.finditer(r"\baria-label\s*=\s*", text, re.I):
+        rest = text[m.end():].lstrip()
+        if rest and rest[0] in "\"'":
+            inner, _ = _scan_quoted_string(rest, 0)
+        else:
+            um = re.match(r"[^\s>]+", rest)
+            inner = um.group(0) if um else ""
+        if _is_prose_shaped(inner):
+            return True
+    return False
+
+
+def _has_hidden_input_value(text):
+    """True when *text* carries prose-shaped text in an
+    `<input type="hidden">` value.
+
+    F1047: hidden inputs are not rendered, so prose in the value is
+    hidden from the human reader (the F1024 rationale). Machine tokens
+    (`value="tok_abc123"`) are honest text, quiet. Never evals.
+    """
+    for m in re.finditer(r"<input\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        itype, has_type = _f1047_attr_value(tag, "type")
+        if not has_type or itype.lower() != "hidden":
+            continue
+        value, has_value = _f1047_attr_value(tag, "value")
+        if has_value and _is_prose_shaped(value):
+            return True
+    return False
+
+
+def _has_hidden_data_attr(text):
+    """True when *text* carries prose-shaped text in a `data-*` attribute.
+
+    F1047: data attributes are not rendered, so prose there is hidden
+    from the human reader (the F1024 rationale). Machine tokens
+    (`data-testid="submit-btn"`) are honest text, quiet. Never evals.
+    """
+    for m in re.finditer(r"\bdata-[A-Za-z0-9-]+\s*=\s*(\"[^\"]*\"|'[^']*')",
+                         text, re.I):
+        if _is_prose_shaped(m.group(1)[1:-1]):
+            return True
+    return False
+
+
 def instruction_shaped(text):
     """Deterministic heuristic: does this unit read like an instruction
     to the agent? A stand-in for the plan-trace / intent-slicing
@@ -573,9 +796,23 @@ def instruction_shaped(text):
     # `<foreignObject>` text, and markdown reference definitions.
     # All detectors run on the zero-width-stripped norm so ZWSP
     # mangling of the carrier markup cannot evade them.
-    return (_has_hidden_css_content(norm)
+    if (_has_hidden_css_content(norm)
             or _has_hidden_svg_foreign_object(norm)
-            or _has_hidden_md_refdef(norm))
+            or _has_hidden_md_refdef(norm)):
+        return True
+    # F1047: the same construction for eight further hidden-from-human
+    # carriers -- JSON-LD script blocks, <template> contents, SVG
+    # <title>/<desc>, <meta itemprop>, aria-label, <input type=hidden>,
+    # and data-* attributes. Prose-shaped text in these carriers is
+    # instruction-shaped by construction; machine tokens stay quiet.
+    return (_has_hidden_jsonld(norm)
+            or _has_hidden_template(norm)
+            or _has_hidden_svg_title(norm)
+            or _has_hidden_svg_desc(norm)
+            or _has_hidden_meta_itemprop(norm)
+            or _has_hidden_aria_label(norm)
+            or _has_hidden_input_value(norm)
+            or _has_hidden_data_attr(norm))
 
 
 class ActionRequest(object):
