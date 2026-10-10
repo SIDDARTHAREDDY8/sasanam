@@ -118544,6 +118544,403 @@ def _js_f1020_stmt_decode(text):
 # -- end F1017/F1018/F1019/F1020 ------------------------------------------
 
 
+# -- F1025/F1026/F1027 (wave-395 lane 1) ---------------------------------------
+# Narrow whole-text statement-sequence decoders, hooked in the _stmtdec
+# loop alongside F961-F1024. Each parses a strict whole-text grammar;
+# anything outside the grammar fails closed (returns None -- a miss,
+# never a mis-decode). All shapes node-verified (v24.20.0). Like the
+# wave-394 lane 3 hooks these are pure text-to-string scans and charge
+# no F452 scan budget, so there is nothing to snapshot/restore on miss
+# (wave-383 rule). No new decision codes, no new re.compile (pin
+# tests unchanged). Never evals.
+
+
+def _js_f1025_parse_yield_ints(text, j, what):
+    """Parse `yield INT; ...` sequence at text[j] (F1025/F1026).
+
+    The generator body contains only `yield <int>;` statements (extra
+    semicolons tolerated, node-exact v24.20.0); a final `yield <int>}`
+    with no trailing semicolon is also admitted (node accepts it).
+    Int literals are digits only with value <= 0x10FFFF -- floats,
+    bare `yield;`, `yield*`, `yield <expr>`, and `return` all fail
+    closed (a miss, never a mis-decode). Returns (ints,
+    index_past_`}`). Never evals.
+    """
+    n = len(text)
+    ints = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "}":
+            return ints, j + 1
+        m = _js_match_kw(text, j, "yield")
+        if m is None:
+            raise _JSExprFail(what + " non-yield statement")
+        k = _js_skip_ws(text, m)
+        d0 = k
+        while k < n and text[k].isdigit():
+            k += 1
+        if k == d0:
+            raise _JSExprFail(what + " non-int yield")
+        v = int(text[d0:k])
+        if v > 0x10FFFF:
+            raise _JSExprFail(what + " yield out of range")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == "}":
+            # `yield <int>}` with no trailing semicolon (node-exact).
+            ints.append(v)
+            if len(ints) > _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail(what + " too many yields")
+            return ints, k + 1
+        if k >= n or text[k] != ";":
+            raise _JSExprFail(what + " yield not closed")
+        while k < n and text[k] == ";":
+            k += 1
+        ints.append(v)
+        if len(ints) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail(what + " too many yields")
+        j = k
+
+
+def _js_f1025_parse_genexpr(text, j, what):
+    """Parse `function*(){...}` at text[j] (F1025/F1026); returns (ints, next).
+
+    No parameters, non-empty yield-only body. Never evals.
+    """
+    m = _js_match_kw(text, j, "function")
+    if m is None:
+        raise _JSExprFail(what + " not a generator")
+    j = _js_expect(text, m, "*")
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    ints, j = _js_f1025_parse_yield_ints(text, j, what)
+    if not ints:
+        raise _JSExprFail(what + " empty generator")
+    return ints, j
+
+
+def _js_f1025_stmt_decode(text):
+    """Decode F1025 generator-spread into fromCharCode (whole-text, _decode_layer hook).
+
+    `var|let G=function*(){yield <ints>;};`
+    `var|let|const RESULT=String.fromCharCode(...G());`
+    and the custom-iterable twin
+    `var|let IT={[Symbol.iterator]:function*(){yield <ints>;}};`
+    `var|let|const RESULT=String.fromCharCode(...IT);`
+    (attack round 62: spreading a generator CALL (or a custom
+    [Symbol.iterator] object) into String.fromCharCode assembles
+    node-exactly; the spread argument is iterated in order and
+    fromCharCode applies ToUint16 per element, v24.20.0).
+
+    Node-exact (v24.20.0) for the modeled subset: yields are int
+    literals only; each becomes chr(v & 0xFFFF) (ToUint16 wrap, the
+    F897 discipline). Disjoint from F942 (the IIFE-scoped expression
+    route requiring a `(function(){` head -- ours is a top-level
+    `var|let` declaration), from the F987 rewrite (spread of a bound
+    ARRAY ident `...c` -- ours is a spread CALL `...G()`), and from
+    F1006 (Proxy apply-trap head). Anything else -- bare `yield;`,
+    float yields, `yield*`, `yield <expr>`, `return`, extra statements
+    -- fails closed: a miss, never a mis-decode. Returns the decoded
+    string, or None. Never evals.
+    """
+    if "String.fromCharCode" not in text or "function" not in text:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        name, j = _js_f99x_ident(text, j)
+        if name == "RESULT":
+            return None
+        j = _js_expect(text, j, "=")
+        j = _js_skip_ws(text, j)
+        spread_is_call = True
+        if j < n and text[j] == "{":
+            # custom-iterable twin: {[Symbol.iterator]:function*(){...}}
+            spread_is_call = False
+            j = _js_expect(text, j, "{")
+            j = _js_expect(text, j, "[")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "Symbol")
+            if m is None:
+                return None
+            j = _js_expect(text, m, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "iterator")
+            if m is None:
+                return None
+            j = _js_expect(text, m, "]")
+            j = _js_expect(text, j, ":")
+            ints, j = _js_f1025_parse_genexpr(text, _js_skip_ws(text, j),
+                                             "F1025")
+            j = _js_expect(text, j, "}")
+        else:
+            ints, j = _js_f1025_parse_genexpr(text, j, "F1025")
+        j = _js_expect(text, j, ";")
+        # var|let|const RESULT=String.fromCharCode(...NAME());
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1025 not RESULT")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1025 no String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1025 no fromCharCode")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j + 2 >= n or text[j:j + 3] != "...":
+            raise _JSExprFail("F1025 not a spread")
+        j = _js_skip_ws(text, j + 3)
+        nm, j = _js_f99x_ident(text, j)
+        if nm != name:
+            raise _JSExprFail("F1025 spread of other")
+        if spread_is_call:
+            j = _js_expect(text, j, "(")
+            j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        v = "".join(chr(c & 0xFFFF) for c in ints)
+        if len(v) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1025 result too long")
+        return v
+    except _JSExprFail:
+        return None
+
+
+def _js_f1026f1027_for_head(text, j, what):
+    """Parse `for(var|let|const X of ` at text[j]; returns (loopname, next).
+
+    Shared by F1026 (for-of over a generator call) and F1027 (for-of
+    over a BigInt-literal array). Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "for")
+    if m is None:
+        raise _JSExprFail(what + " not for")
+    j = _js_expect(text, m, "(")
+    kw, j = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail(what + " loop decl")
+    j = _js_skip_ws(text, j)
+    xname, j = _js_f99x_ident(text, j)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "of")
+    if m is None:
+        raise _JSExprFail(what + " not of")
+    return xname, _js_skip_ws(text, m)
+
+
+def _js_f1026f1027_acc_body(text, j, acc, loop, number_coerce, what):
+    """Parse the accumulation body (F1026/F1027); returns next index.
+
+    `{ acc+=String.fromCharCode(EXPR); }` with braces optional;
+    `acc=acc+String.fromCharCode(EXPR);` admitted (node-identical,
+    v24.20.0). EXPR is the loop var (F1026) or `Number(loopvar)`
+    (F1027). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    braced = j < n and text[j] == "{"
+    if braced:
+        j += 1
+    j = _js_skip_ws(text, j)
+    nm, j = _js_f99x_ident(text, j)
+    if nm != acc:
+        raise _JSExprFail(what + " acc read")
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j:j + 2] == "+=":
+        j = _js_skip_ws(text, j + 2)
+    elif (j < n and text[j] == "=" and
+          text[j + 1:j + 2] not in ("=", ">")):
+        j = _js_skip_ws(text, j + 1)
+        nm2, j = _js_f99x_ident(text, j)
+        if nm2 != acc:
+            raise _JSExprFail(what + " acc rebind")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+" or text[j + 1:j + 2] == "+":
+            raise _JSExprFail(what + " not plus")
+        j = _js_skip_ws(text, j + 1)
+    else:
+        raise _JSExprFail(what + " not accumulative")
+    m = _js_match_kw(text, j, "String")
+    if m is None:
+        raise _JSExprFail(what + " no String")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " no fromCharCode")
+    j = _js_expect(text, m, "(")
+    if number_coerce:
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Number")
+        if m is None:
+            raise _JSExprFail(what + " no Number")
+        j = _js_expect(text, m, "(")
+    nm3, j = _js_f99x_ident(text, _js_skip_ws(text, j))
+    if nm3 != loop:
+        raise _JSExprFail(what + " loop var")
+    if number_coerce:
+        j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    if braced:
+        j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_f1026_stmt_decode(text):
+    """Decode F1026 for-of over generator accumulation (whole-text, _decode_layer hook).
+
+    `var|let G=function*(){yield <ints>;};`
+    `var|let ACC="<init>";`
+    `for(var|let|const X of G()){ACC+=String.fromCharCode(X);}`
+    `var|let|const RESULT=ACC;`
+    (attack round 62; distinct production vs F989 (Map entries),
+    F1012 (array pairs), and F1013 (manual .next() iterator) -- this
+    is for-of over a GENERATOR CALL).
+
+    Node-exact (v24.20.0): the loop binds each yielded int in order;
+    `ACC+=String.fromCharCode(X)` and `ACC=ACC+String.fromCharCode(X)`
+    are engine-identical; braced and unbraced bodies admitted. The
+    decoded string is init + chr(v & 0xFFFF) per yield (ToUint16 wrap,
+    the F897 discipline). Disjoint from F989 (requires `new Map(`),
+    F1012 (requires `of [`), F1013 (requires `.values()` + a
+    while-next/done loop). Loop/generator/accumulator name collisions
+    fail closed. Returns the decoded string, or None. Never evals.
+    """
+    if "of" not in text or "String.fromCharCode" not in text:
+        return None
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, j = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        j = _js_skip_ws(text, j)
+        gname, j = _js_f99x_ident(text, j)
+        if gname == "RESULT":
+            return None
+        j = _js_expect(text, j, "=")
+        ints, j = _js_f1025_parse_genexpr(text, _js_skip_ws(text, j), "F1026")
+        j = _js_expect(text, j, ";")
+        _, acc, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if acc in ("RESULT", gname):
+            raise _JSExprFail("F1026 bad acc")
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ";")
+        xname, j = _js_f1026f1027_for_head(text, j, "F1026")
+        if xname in ("RESULT", gname, acc):
+            raise _JSExprFail("F1026 loop shadow")
+        j = _js_skip_ws(text, j)
+        nm, j = _js_f99x_ident(text, j)
+        if nm != gname:
+            raise _JSExprFail("F1026 of other")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_f1026f1027_acc_body(text, j, acc, xname, False, "F1026")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1026 not RESULT")
+        nm2, j = _js_f99x_ident(text, _js_skip_ws(text, j))
+        if nm2 != acc:
+            raise _JSExprFail("F1026 RESULT other")
+        _js_f96x_expect_semi_end(text, j)
+        v = init + "".join(chr(c & 0xFFFF) for c in ints)
+        if len(v) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1026 result too long")
+        return v
+    except _JSExprFail:
+        return None
+
+
+def _js_f1027_parse_bigint_list(text, j, what):
+    """Parse `[INTn(,INTn)*]` at text[j] (F1027); returns (ints, next).
+
+    Elements are digits-only BigInt literals with value <= 0x10FFFF
+    (hex/octal forms, negatives, and huge values fail closed -- a
+    miss, never a mis-decode). Trailing commas allowed (node).
+    Element count capped at _JS_EXPR_MAX_CODEPOINTS. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "[")
+    ints = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "]":
+            return ints, j + 1
+        d0 = j
+        while j < n and text[j].isdigit():
+            j += 1
+        if j == d0 or j >= n or text[j] != "n":
+            raise _JSExprFail(what + " not bigint")
+        v = int(text[d0:j])
+        if v > 0x10FFFF:
+            raise _JSExprFail(what + " bigint out of range")
+        j = _js_skip_ws(text, j + 1)
+        ints.append(v)
+        if len(ints) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail(what + " too many")
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        if j < n and text[j] == "]":
+            return ints, j + 1
+        raise _JSExprFail(what + " bad list")
+
+
+def _js_f1027_stmt_decode(text):
+    """Decode F1027 BigInt code ints via Number() (whole-text, _decode_layer hook).
+
+    `var|let ACC="<init>";`
+    `for(var|let|const B of [120n,...]){ACC+=String.fromCharCode(Number(B));}`
+    `var|let|const RESULT=ACC;`
+    (attack round 62; code ints as BigInt literals coerced with
+    Number() -- distinct vs F996 (.map(Number) over string-code
+    arrays) and F1007 (parseInt hex)).
+
+    Node-exact (v24.20.0): Number(120n) is 120; fromCharCode applies
+    ToUint16, so each element decodes to chr(v & 0xFFFF) (the F897
+    discipline). `ACC+=...` / `ACC=ACC+...` and braced/unbraced
+    bodies admitted. Disjoint from F996 (requires `.map(Number)`),
+    F1007 (requires `parseInt`), and F1012 (requires `"k","v"` pairs
+    -- the `n` suffix fails its pair grammar). Returns the decoded
+    string, or None. Never evals.
+    """
+    if "of" not in text or "Number(" not in text:
+        return None
+    try:
+        j = _js_skip_ws(text, 0)
+        _, acc, j = _js_f96x_decl(text, j)
+        if acc == "RESULT":
+            raise _JSExprFail("F1027 bad acc")
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ";")
+        xname, j = _js_f1026f1027_for_head(text, j, "F1027")
+        if xname in ("RESULT", acc):
+            raise _JSExprFail("F1027 loop shadow")
+        ints, j = _js_f1027_parse_bigint_list(text, j, "F1027")
+        j = _js_expect(text, j, ")")
+        j = _js_f1026f1027_acc_body(text, j, acc, xname, True, "F1027")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1027 not RESULT")
+        nm, j = _js_f99x_ident(text, _js_skip_ws(text, j))
+        if nm != acc:
+            raise _JSExprFail("F1027 RESULT other")
+        _js_f96x_expect_semi_end(text, j)
+        v = init + "".join(chr(c & 0xFFFF) for c in ints)
+        if len(v) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1027 result too long")
+        return v
+    except _JSExprFail:
+        return None
+
+
+# -- end F1025/F1026/F1027 ---------------------------------------------------
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -118930,6 +119327,22 @@ def _decode_layer(text):
     # Additive, in F-number order.
     for _stmtdec in (_js_f1021_stmt_decode, _js_f1022_stmt_decode,
                      _js_f1023_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1025/F1026/F1027: narrow whole-text statement-sequence decoders
+    # (wave-395 lane 1). F1025: generator-spread into fromCharCode
+    # (disjoint from F942's IIFE expression route, the F987 array-spread
+    # rewrite, and F1006's Proxy head by the top-level `var|let` decl +
+    # spread-CALL form). F1026: for-of over a generator call (disjoint
+    # from F989/F1012/F1013 by the `of NAME()` generator-call form).
+    # F1027: for-of over BigInt-literal arrays with Number() coercion
+    # (disjoint from F996/F1007 by the `n`-suffixed literal form).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1025_stmt_decode, _js_f1026_stmt_decode,
+                     _js_f1027_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
