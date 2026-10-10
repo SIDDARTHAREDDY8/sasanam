@@ -122593,6 +122593,539 @@ def _js_f1072_stmt_decode(text):
 
 
 
+# -- F1074/F1075 (wave-399 lane 1) -------------------------------------------
+# Narrow whole-text statement-sequence decoders, hooked in the _decode_layer
+# _stmtdec loop after F1072. Each parses a strict whole-text grammar;
+# anything else is a miss, never a mis-decode (fail closed). All shapes
+# node-verified (v24.20.0). Like every other _stmtdec hook these charge no
+# F452 scan budget (pure text-to-string scans; staged items are charged to
+# a per-attempt local state via _js_f96x_charge and results bounded by
+# _MAX_DECODE_BYTES), so there is nothing to snapshot/restore on miss
+# (wave-383 rule). No new decision codes, no new re.compile. Never evals.
+
+
+def _js_f1074f1075_check_name(name, bound, what):
+    """Freshness check for F1074/F1075 statement-decoder names.
+
+    Rejects RESULT, already-bound names, reserved words and `arguments`.
+    Never evals.
+    """
+    if (name == "RESULT" or name in bound or name == "arguments"
+            or name in _F611_RESERVED):
+        raise _JSExprFail(what + " bad name")
+
+
+def _js_f1074f1075_sim(dstr, start, lte, incr_first, what):
+    """Node-exact accumulation simulation (F1074/F1075).
+
+    dstr is the ToUint16-decoded array string; start is 0|1; lte selects
+    `<=` vs `<` against len(dstr); incr_first models a while body whose
+    increment precedes the accumulation. An out-of-range read is the
+    engine's undefined: String.fromCharCode(undefined) is "\\0" (the
+    F1046 precedent). Iterations are capped by _JS_EXPR_MAX_CODEPOINTS
+    and the result by _MAX_DECODE_BYTES. Never evals.
+    """
+    length = len(dstr)
+    parts = []
+    i = start
+    while True:
+        if not ((i <= length) if lte else (i < length)):
+            break
+        if incr_first:
+            i += 1
+        if 0 <= i < length:
+            parts.append(dstr[i])
+        else:
+            parts.append("\0")
+        if not incr_first:
+            i += 1
+        if len(parts) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail(what + " too many iterations")
+    val = "".join(parts)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " result too long")
+    return val
+
+
+def _js_f1074f1075_plain_arrref(pname, what):
+    """Array-reference parser for a plain identifier (F1074/F1075).
+
+    Returns a parse_arrref callable: parses an identifier at text[j]
+    that must equal pname, else fails closed. Never evals.
+    """
+    def _parse(t, k):
+        nm, k2 = _js_parse_ident(t, _js_skip_ws(t, k))
+        if nm != pname:
+            raise _JSExprFail(what + " arrref mismatch")
+        return k2
+    return _parse
+
+
+def _js_f1075_member_arrref(oname, what):
+    """Array-reference parser for `O.v` / `O['v']` / `O["v"]` (F1075).
+
+    The base identifier must equal oname and the key must be `v`
+    (dot or string-literal bracket form); `__proto__` and any other
+    key fail closed. Never evals.
+    """
+    def _parse(t, k):
+        n = len(t)
+        base, k = _js_parse_ident(t, _js_skip_ws(t, k))
+        if base != oname:
+            raise _JSExprFail(what + " member base mismatch")
+        k = _js_skip_ws(t, k)
+        if k < n and t[k] == ".":
+            key, k = _js_parse_ident(t, _js_skip_ws(t, k + 1))
+        elif k < n and t[k] == "[":
+            key, k = _js_f99x_parse_str(t, _js_skip_ws(t, k + 1))
+            k = _js_expect(t, k, "]")
+        else:
+            raise _JSExprFail(what + " member not modeled")
+        if key != "v":
+            raise _JSExprFail(what + " member key not v")
+        return k
+    return _parse
+
+
+def _js_f1074f1075_parse_accum(text, j, acc, parse_arrref, ivar, what):
+    """Parse `ACC+=String.fromCharCode(ARR[I]);` / `ACC=ACC+...` (F1074/F1075).
+
+    The ARR reference is parsed by the hook-specific parse_arrref; a
+    spread (`...`) or any non-indexed form fails closed (F1069 owns
+    spread receivers). Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    a2, j = _js_parse_ident(text, j)
+    if a2 != acc:
+        raise _JSExprFail(what + " accum target mismatch")
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j] == "+" and text[j + 1] == "=":
+        j += 2
+    elif j < n and text[j] == "=" and not text.startswith(("==", "=>"), j):
+        j += 1
+        j = _js_skip_ws(text, j)
+        a3, j = _js_parse_ident(text, j)
+        if a3 != acc:
+            raise _JSExprFail(what + " accum self mismatch")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+" or text.startswith("++", j):
+            raise _JSExprFail(what + " accum not plus")
+        j += 1
+    else:
+        raise _JSExprFail(what + " accum not modeled")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, j, "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    j = parse_arrref(text, j)
+    j = _js_expect(text, j, "[")
+    iv2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iv2 != ivar:
+        raise _JSExprFail(what + " accum var mismatch")
+    j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    return j
+
+
+def _js_f1074f1075_parse_cond(text, j, what):
+    """Parse `<` / `<=` at text[j] (F1074/F1075 loop conditions).
+
+    Returns (lte, next_index); anything else fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if text.startswith("<=", j):
+        return True, j + 2
+    if j < n and text[j] == "<" and not text.startswith("<<", j):
+        return False, j + 1
+    raise _JSExprFail(what + " cond not modeled")
+
+
+def _js_f1074f1075_parse_incr(text, j, ivar, what):
+    """Parse `I++` / `++I` / `I+=1` at text[j] (F1074/F1075 loop increments).
+
+    The variable must equal ivar. Returns next_index; anything else
+    fails closed. Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    if text.startswith("++", j):
+        iv2, j = _js_parse_ident(text, j + 2)
+    else:
+        iv2, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if text.startswith("++", j):
+            j += 2
+        elif text.startswith("+=", j):
+            j += 2
+            one, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+            if one != 1:
+                raise _JSExprFail(what + " incr not +=1")
+        else:
+            raise _JSExprFail(what + " incr not modeled")
+    if iv2 != ivar:
+        raise _JSExprFail(what + " incr var mismatch")
+    return j
+
+
+def _js_f1074f1075_parse_for(text, j, acc, bound, parse_arrref, dstr,
+                             what):
+    """Parse a C-style indexed accumulation for-loop (F1074/F1075 shared).
+
+    `for ([var|let|const] I=0|1; I<ARR.length|I<=ARR.length; I++|++I|I+=1)`
+    `{ACC+=String.fromCharCode(ARR[I]);}` (or `ACC=ACC+...`; braces
+    optional). The ARR reference is hook-specific via parse_arrref.
+    Returns (decoded_string, next_index); the accumulation is simulated
+    node-exactly. Anything else fails closed. Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+    if m is None:
+        raise _JSExprFail(what + " not for")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    kw, k2 = _js_match_decl_kw(text, j)
+    if kw is not None:
+        j = _js_skip_ws(text, k2)
+    ivar, j = _js_parse_ident(text, j)
+    _js_f1074f1075_check_name(ivar, bound, what)
+    j = _js_expect(text, j, "=")
+    start, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+    if start not in (0, 1):
+        raise _JSExprFail(what + " bad loop start")
+    j = _js_expect(text, j, ";")
+    iv2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iv2 != ivar:
+        raise _JSExprFail(what + " cond var mismatch")
+    lte, j = _js_f1074f1075_parse_cond(text, j, what)
+    j = parse_arrref(text, j)
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "length")
+    if m is None:
+        raise _JSExprFail(what + " cond not length")
+    j = _js_expect(text, m, ";")
+    j = _js_f1074f1075_parse_incr(text, j, ivar, what)
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    braced = j < n and text[j] == "{"
+    if braced:
+        j += 1
+    j = _js_f1074f1075_parse_accum(text, j, acc, parse_arrref, ivar, what)
+    j = _js_skip_ws(text, j)
+    if braced:
+        j = _js_expect(text, j, "}")
+    return _js_f1074f1075_sim(dstr, start, lte, False, what), j
+
+
+def _js_f1074_parse_labels(text, j):
+    """Consume zero or more `IDENT:` label prefixes at text[j] (F1074).
+
+    A label is only consumed at statement position (start of text or
+    just after `;`, `{` or `}` modulo whitespace), so an object-literal
+    key or a ternary `:` can never be mistaken for one; reserved words
+    and RESULT never label. The caller guarantees (via a
+    string/comment-safe identifier-token scan) that the text contains
+    no break/continue, so every consumed label is semantically inert
+    and ignoring it is node-exact (v24.20.0). Returns next_index.
+    Never evals.
+    """
+    n = len(text)
+    consumed = False
+    while True:
+        k = _js_skip_ws(text, j)
+        if not consumed:
+            k0 = k
+            while k0 > 0 and text[k0 - 1] in " \t\r\n":
+                k0 -= 1
+            if k0 != 0 and text[k0 - 1] not in ";{}":
+                return j
+        try:
+            lname, k2 = _js_parse_ident(text, k)
+        except _JSExprFail:
+            return j
+        if lname in _F611_RESERVED or lname == "RESULT":
+            return j
+        k3 = _js_skip_ws(text, k2)
+        if k3 >= n or text[k3] != ":" or text.startswith("::", k3):
+            return j
+        j = k3 + 1
+        consumed = True
+
+
+def _js_f1074_parse_while(text, j, acc, cname, ivar, dstr, what):
+    """Parse `while(I<C.length|I<=C.length){ACC...;I++;}` (F1074).
+
+    The loop variable is the pre-declared ivar (init `=0`). The braced
+    body holds exactly the accumulation statement and the increment in
+    either order; both orders are simulated node-exactly. Unbraced
+    bodies fail closed (a lone accumulation statement would loop
+    forever in node). Returns (decoded_string, next_index). Never
+    evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "while")
+    if m is None:
+        raise _JSExprFail(what + " not while")
+    j = _js_expect(text, m, "(")
+    iv2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iv2 != ivar:
+        raise _JSExprFail(what + " cond var mismatch")
+    lte, j = _js_f1074f1075_parse_cond(text, j, what)
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " cond arr mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "length")
+    if m is None:
+        raise _JSExprFail(what + " cond not length")
+    j = _js_expect(text, m, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+
+    def _incr(t, k):
+        k = _js_f1074f1075_parse_incr(t, k, ivar, what)
+        return _js_expect(t, k, ";")
+
+    arrref = _js_f1074f1075_plain_arrref(cname, what)
+    j0 = _js_skip_ws(text, j)
+    try:
+        j = _js_f1074f1075_parse_accum(text, j0, acc, arrref, ivar, what)
+        j = _incr(text, j)
+        incr_first = False
+    except _JSExprFail:
+        j = _incr(text, j0)
+        j = _js_f1074f1075_parse_accum(text, j, acc, arrref, ivar, what)
+        incr_first = True
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return _js_f1074f1075_sim(dstr, 0, lte, incr_first, what), j
+
+
+def _js_f1074_stmt_decode(text):
+    """Decode F1074 labeled-statement accumulation reads (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S='';`
+    `[var|let|const I=0;]`                      (while-form only)
+    `[lbl:] for([var|let|const] I=0|1; I<C.length|I<=C.length; I++|++I|I+=1)`
+    `{S+=String.fromCharCode(C[I]);}`  (or `S=S+...`; braces optional)
+    `[lbl:] while(I<C.length|I<=C.length){S+=String.fromCharCode(C[I]);I++;}`
+    (accumulation and increment in either order; braces required)
+    `[lbl:] {for(...){...}}`                    (labeled-block form)
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    The label prefix is optional: the filed shapes are the labeled
+    ones, and the unlabeled while/block twins (which no earlier
+    production decodes) are the same production. Labels are consumed
+    only at statement position and only when the text carries no
+    break/continue (string/comment-safe scan), so ignoring them is
+    node-exact (v24.20.0). Disjoint from every other _stmtdec hook: no
+    earlier hook models while-loops, labeled statements, or
+    block-wrapped loops, and the plain-identifier for twin keeps its
+    F949/IIFE decode (byte-identical result). Anything else fails
+    closed: a miss, never a mis-decode. Returns the decoded string,
+    or None. Never evals.
+    """
+    if "fromCharCode(" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        try:
+            toks = _js_ident_tokens(text)
+        except _JSExprFail:
+            return None
+        for tname, _ts, _te in toks:
+            if tname == "break" or tname == "continue":
+                return None
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail("F1074 bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                          state)
+        if not arr:
+            raise _JSExprFail("F1074 empty arr")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname):
+            raise _JSExprFail("F1074 bad acc name")
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1074 acc not empty")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, "F1074")
+        bound = {cname, sname, "RESULT"}
+        arrref = _js_f1074f1075_plain_arrref(cname, "F1074")
+        # While-form: its `I=0` init decl precedes the label.
+        jw = j
+        is_while = False
+        ivar = None
+        try:
+            js = _js_skip_ws(text, jw)
+            _, ivar, js = _js_f96x_decl(text, js)
+            zero, js = _js_parse_fcc_number(text, _js_skip_ws(text, js))
+            if zero != 0:
+                raise _JSExprFail("F1074 while init not 0")
+            js = _js_expect(text, js, ";")
+            js = _js_f1074_parse_labels(text, js)
+            if _js_match_kw(text, _js_skip_ws(text, js), "while") is None:
+                raise _JSExprFail("F1074 not while")
+            _js_f1074f1075_check_name(ivar, bound, "F1074")
+            bound = bound | {ivar}
+            jw = js
+            is_while = True
+        except _JSExprFail:
+            pass
+        if is_while:
+            val, jw = _js_f1074_parse_while(text, jw, sname, cname,
+                                          ivar, dstr, "F1074")
+        else:
+            jw = _js_f1074_parse_labels(text, jw)
+            jx = _js_skip_ws(text, jw)
+            if jx < n and text[jx] == "{":
+                val, jw = _js_f1074f1075_parse_for(text, jx + 1, sname,
+                                                  bound, arrref, dstr,
+                                                  "F1074")
+                jw = _js_expect(text, _js_skip_ws(text, jw), "}")
+            else:
+                val, jw = _js_f1074f1075_parse_for(text, jw, sname, bound,
+                                                  arrref, dstr,
+                                                  "F1074")
+        _, rname, jw = _js_f96x_decl(text, _js_skip_ws(text, jw))
+        if rname != "RESULT":
+            raise _JSExprFail("F1074 not RESULT")
+        val, jw = _js_f104x_additive_result(text, jw, val, sname, state,
+                                           "F1074")
+        _js_f96x_expect_semi_end(text, jw)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1075_parse_obj(text, k, state):
+    """Parse `{v:[INT,...]}` at text[k] (F1075).
+
+    The key may be `v`, `'v'` or `"v"` (`__proto__` and any other key
+    fail closed). Exactly one property; a trailing comma is node-exact.
+    Returns (codes, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_expect(text, k, "{")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] in "'\"":
+        key, k = _js_f99x_parse_str(text, k)
+    else:
+        key, k = _js_parse_ident(text, k)
+    if key != "v":
+        raise _JSExprFail("F1075 obj key not v")
+    k = _js_expect(text, k, ":")
+    arr, k = _js_f1046_parse_int_array(text, _js_skip_ws(text, k), state)
+    if not arr:
+        raise _JSExprFail("F1075 empty arr")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ",":
+        k = _js_skip_ws(text, k + 1)
+    k = _js_expect(text, k, "}")
+    return arr, k
+
+
+def _js_f1075_stmt_decode(text):
+    """Decode F1075 member-expression / with-scope accumulation (whole-text).
+
+    `var|let|const O={v:[INT,...]};`
+    `[var|let|const V=O.v;]`                        (alias form only)
+    `var|let|const S='';`
+    `for([var|let|const] I=0|1; I<O.v.length|I<=O.v.length; I++|++I|I+=1)`
+    `{S+=String.fromCharCode(O.v[I]);}`  (or `S=S+...`; braces optional;
+    `O['v']` / `O["v"]` bracket twins; alias form reads plain `V[I]`)
+    `with(O){for([var|let|const] I=0|1; I<v.length|I<=v.length; I++|++I|I+=1)`
+    `{S+=String.fromCharCode(v[I]);}}`              (with form: bare `v`
+    resolves to O.v; O carries only `v`, so S/I/RESULT/String resolve
+    outward exactly as without the with)
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Only loop/indexed reads are modeled -- spread receivers
+    (`String.fromCharCode(...X)`) fail closed here; F1069 owns those.
+    Disjoint from F1074 (which requires a plain-identifier array-literal
+    declarator): this requires the `{v:[...]}` object declarator. All
+    shapes node-verified (v24.20.0); anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None. Never
+    evals.
+    """
+    if "fromCharCode(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, oname, j = _js_f96x_decl(text, j)
+        if oname == "RESULT":
+            raise _JSExprFail("F1075 bad obj name")
+        codes, j = _js_f1075_parse_obj(text, _js_skip_ws(text, j), state)
+        j = _js_expect(text, j, ";")
+        bound = {oname, "RESULT"}
+        dstr = _js_f996f997_fcc_chr(codes, "F1075")
+        # Alias form: `var|let|const V=O.v;`
+        vname = None
+        try:
+            ja = _js_skip_ws(text, j)
+            _, vname, ja = _js_f96x_decl(text, ja)
+            if vname in bound:
+                raise _JSExprFail("F1075 bad alias name")
+            ja = _js_f1075_member_arrref(oname, "F1075")(text, ja)
+            ja = _js_expect(text, ja, ";")
+            bound = bound | {vname}
+            j = ja
+        except _JSExprFail:
+            vname = None
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1075 bad acc name")
+        bound = bound | {sname}
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1075 acc not empty")
+        j = _js_expect(text, j, ";")
+        jw = _js_skip_ws(text, j)
+        mwith = _js_match_kw(text, jw, "with")
+        if mwith is not None and vname is None:
+            jw = _js_expect(text, mwith, "(")
+            base, jw = _js_parse_ident(text, _js_skip_ws(text, jw))
+            if base != oname:
+                raise _JSExprFail("F1075 with base mismatch")
+            jw = _js_expect(text, jw, ")")
+            jw = _js_expect(text, _js_skip_ws(text, jw), "{")
+            arrref = _js_f1074f1075_plain_arrref("v", "F1075")
+            val, jw = _js_f1074f1075_parse_for(text, jw, sname, bound,
+                                              arrref, dstr,
+                                              "F1075")
+            jw = _js_expect(text, _js_skip_ws(text, jw), "}")
+        else:
+            if vname is not None:
+                arrref = _js_f1074f1075_plain_arrref(vname, "F1075")
+            else:
+                arrref = _js_f1075_member_arrref(oname, "F1075")
+            val, jw = _js_f1074f1075_parse_for(text, jw, sname, bound,
+                                              arrref, dstr,
+                                              "F1075")
+        _, rname, jw = _js_f96x_decl(text, _js_skip_ws(text, jw))
+        if rname != "RESULT":
+            raise _JSExprFail("F1075 not RESULT")
+        val, jw = _js_f104x_additive_result(text, jw, val, sname, state,
+                                           "F1075")
+        _js_f96x_expect_semi_end(text, jw)
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1074/F1075 ----------------------------------------------------
+
+
 # -- F1048/F1049/F1050/F1051 (wave-397 lane 1) --------------------------
 # Narrow whole-text statement-sequence decoders, hooked in the
 # _decode_layer _stmtdec loop alongside F961-F1047. Each parses a strict
@@ -127871,6 +128404,17 @@ def _decode_layer(text):
     # pre-existing variant order (F441) is preserved. Additive, in
     # F-number order.
     for _stmtdec in (_js_f1072_stmt_decode,):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1074/F1075 (wave-399 lane 1): labeled-statement accumulation
+    # reads and member-expression / with-scope int-array accumulation
+    # reads. Each filed shape BREAKs on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order (F441)
+    # is preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1074_stmt_decode, _js_f1075_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
