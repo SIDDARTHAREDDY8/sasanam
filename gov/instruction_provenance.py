@@ -1520,6 +1520,112 @@ def _has_hidden_area_alt(text):
     return False
 
 
+# F1098: five further hidden-instruction carriers beyond
+# F1024/F1034/F1047/F1064/F1073/F1079/F1085. Same construction:
+# substantive PROSE-SHAPED text in a carrier never rendered to the
+# human reader is instruction-shaped by construction (the F1024
+# rationale); machine tokens, short labels, and empty carriers are
+# honest text, quiet. No re.compile() here (module-level count stays
+# as audited); patterns ride the re module's cache. All detectors run
+# on the zero-width-stripped norm (F1024) so ZWSP mangling of the
+# carrier markup cannot evade them. Never evals.
+
+
+def _has_hidden_aria_roledescription(text):
+    """True when prose hides in an `aria-roledescription` attribute
+    (F1098).
+
+    F1098: the roledescription is AT-only metadata, never rendered,
+    so prose there is hidden from the human reader (the F1024
+    rationale). Distinct from F1047's `aria-label` (different
+    attribute name; `_f1047_attr_value` anchors the full escaped
+    name, so one cannot match the other). Short role names
+    (`aria-roledescription="switch"`) are honest text, quiet --
+    multi-word values are prose-shaped and flag, per the
+    family-wide gate convention. Never evals.
+    """
+    for m in re.finditer(r"<[a-zA-Z][^>]*>", text):
+        value, has_value = _f1047_attr_value(m.group(0),
+                                             "aria-roledescription")
+        if has_value and _is_prose_shaped(value):
+            return True
+    return False
+
+
+def _has_hidden_aria_description(text):
+    """True when prose hides in an `aria-description` attribute
+    (F1098).
+
+    F1098: the description is AT-only text, never rendered (the
+    F1024 rationale). Distinct from F1047's `aria-label` and from
+    F1047's `data-*` attributes (the `data-` prefix pattern cannot
+    match `aria-description`). Short descriptions stay quiet.
+    Never evals.
+    """
+    for m in re.finditer(r"<[a-zA-Z][^>]*>", text):
+        value, has_value = _f1047_attr_value(m.group(0),
+                                             "aria-description")
+        if has_value and _is_prose_shaped(value):
+            return True
+    return False
+
+
+def _has_hidden_optgroup_label(text):
+    """True when prose hides in an `<optgroup label>` attribute
+    (F1098).
+
+    F1098: dropdown group headers are chrome text, not rendered
+    inline content, so prose there is hidden from the human reader
+    in the harness view (the F1024 rationale). Distinct from
+    F1073's `<option value>` and F1079's `<datalist>` option text
+    (different elements and attributes: `<optgroup\\b` cannot match
+    `<option\\b`). Short group names stay quiet. Never evals.
+    """
+    for m in re.finditer(r"<optgroup\b[^>]*>", text, re.I):
+        label, has_label = _f1047_attr_value(m.group(0), "label")
+        if has_label and _is_prose_shaped(label):
+            return True
+    return False
+
+
+def _has_hidden_input_image_alt(text):
+    """True when prose hides in an `<input type="image" alt>`
+    attribute (F1098).
+
+    F1098: an image button's alt is fallback text for the image,
+    hidden from the human reader when the image renders (the F1024
+    rationale). Distinct from F1064's `<img alt>` (different
+    element: `<img\\b` cannot match `<input\\b`) and from F1047's
+    `<input type="hidden">` value (different type value). Short
+    labels stay quiet. Never evals.
+    """
+    for m in re.finditer(r"<input\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        itype, has_type = _f1047_attr_value(tag, "type")
+        if not has_type or itype.lower() != "image":
+            continue
+        alt, has_alt = _f1047_attr_value(tag, "alt")
+        if has_alt and _is_prose_shaped(alt):
+            return True
+    return False
+
+
+def _has_hidden_table_summary(text):
+    """True when prose hides in a `<table summary>` attribute
+    (F1098).
+
+    F1098: the summary attribute is AT-only metadata, never
+    rendered as text (the F1024 rationale). No other detector
+    scans `<table>` or the `summary` attribute. Machine tokens and
+    short summaries stay quiet. Never evals.
+    """
+    for m in re.finditer(r"<table\b[^>]*>", text, re.I):
+        summary, has_summary = _f1047_attr_value(m.group(0), "summary")
+        if has_summary and _is_prose_shaped(summary):
+            return True
+    return False
+
+
 def instruction_shaped(text):
     """Deterministic heuristic: does this unit read like an instruction
     to the agent? A stand-in for the plan-trace / intent-slicing
@@ -1616,11 +1722,24 @@ def instruction_shaped(text):
     # actiontype="toggle"> non-first <mtext>, and <iframe srcdoc>.
     # The srcdoc carrier is scoped to the inbox threat model (email
     # clients strip iframes; documented scope boundary).
-    return (_has_hidden_details_collapsed(norm)
+    if (_has_hidden_details_collapsed(norm)
             or _has_hidden_datalist_option(norm)
             or _has_hidden_media_fallback(norm)
             or _has_hidden_maction_toggle(norm)
-            or _has_hidden_iframe_srcdoc(norm))
+            or _has_hidden_iframe_srcdoc(norm)):
+        return True
+    # F1098: the same construction for five further hidden-from-human
+    # carriers -- aria-roledescription, aria-description, <optgroup
+    # label>, <input type="image"> alt, and <table summary>. All
+    # AT-only or chrome-attribute regions, never rendered inline.
+    # Disjoint from F1047's aria-label / data-* / <input
+    # type="hidden">, F1064's <img alt>, and F1073's <option value>
+    # (documented per detector).
+    return (_has_hidden_aria_roledescription(norm)
+            or _has_hidden_aria_description(norm)
+            or _has_hidden_optgroup_label(norm)
+            or _has_hidden_input_image_alt(norm)
+            or _has_hidden_table_summary(norm))
 
 
 class ActionRequest(object):
