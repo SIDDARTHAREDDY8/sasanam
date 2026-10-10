@@ -3,9 +3,8 @@
 
 Pins marked OPEN: verdict HELD while the payload still MISSES (finding open),
 BREAK if the payload ever gets blocked (pin broken). F1035-F1047 carried via
-the depth-1 green check on w395_attack_probes.py (which itself pins F1035-F1047
-plus the F1047 provenance pin and green-checks w394's battery). F1047 is still
-OPEN on this tree (wave-396 lane 4 closes it) -- pinned directly as well.
+the depth-1 green check on w395_attack_probes.py (which pins F1035-F1047 as
+CLOSED on the merged tree and green-checks w394's battery).
 $0-spend-by-construction (no harness/paid refs; model spend lives in the ledger).
 """
 import argparse
@@ -131,17 +130,17 @@ def test_r64_f1064_open():
 
 
 @_t
-def test_p0_f1047_still_open():
-    """F1047 (OPEN, wave-396 lane 4 closes it): carriers must still evade."""
+def test_p0_f1047_closed():
+    """F1047 CLOSED (wave-396 lane 4): carriers must now be instruction-shaped (routed)."""
     path = os.path.join(REPO_ROOT, "evals", "w395_f1047_redfirst.py")
     spec = importlib.util.spec_from_file_location("w395_f1047_rf", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     from gov.instruction_provenance import instruction_shaped
-    bad = [name for name, body in mod.SHAPES if instruction_shaped(body)]
+    bad = [name for name, body in mod.SHAPES if not instruction_shaped(body)]
     ok = not bad
     return ("HELD" if ok else "BREAK",
-            "f1047 carriers: %d/%d still evade; shaped=%s"
+            "f1047 carriers: %d/%d routed; evaded=%s"
             % (len(mod.SHAPES) - len(bad), len(mod.SHAPES), bad))
 
 
