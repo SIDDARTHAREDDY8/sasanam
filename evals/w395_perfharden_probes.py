@@ -322,6 +322,7 @@ def c_sibling_disjointness():
 # Wave-402 lane 3: +1 F1110 loop (real code-count change) -> 32.
 # Wave-402 merge: +1 F1103/F1104/F1108 loop (lane 1) +1 F1105/F1106/F1107 loop (lane 2) -> 34 (real code-count change, wave-385; asserted by count).
 # Wave-403 lane 3: +1 F1117/F1118/F1119 loop (real code-count change) -> 35.
+# Wave-403 lane 4: +1 F1121/F1122 loop (real code-count change) -> 35.
 N_STMTDEC_LOOPS = 35
 
 def d_tail_guards():
