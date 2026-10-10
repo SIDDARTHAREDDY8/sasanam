@@ -49,12 +49,11 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-402 round-70 footer (F1111-F1120 filed OPEN (10);
-    next free F1121)."""
+    """Control: wave-403 footer (F1111-F1122 CLOSED (12); F1123-F1140 OPEN (18);
+    next free F1141)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1111-F1120 filed OPEN (10" in text
-          and "Next free finding: **F1121**" in text)
+    ok = ("# Wave-403: F1111-F1122 CLOSED (12); F1123-F1140 OPEN (18); next free F1141" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -94,13 +93,15 @@ def _closed_pin(prefix, num):
     return _fn
 
 
-# New round-70 pins (F1111-F1120 decoder seam) -- still OPEN.
+# Round-70 pins (F1111-F1120 decoder seam) -- CLOSED on the merged tree
+# (wave-403 lanes 1-3).
 for _n in (1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1120):
-    _open_pin("w402", _n)
+    _closed_pin("w402", _n)
 
-# Wave-402 lane 3 self-files renumbered F1121/F1122 (F1091 residuals) -- still OPEN.
+# Wave-402 lane 3 self-files renumbered F1121/F1122 (F1091 residuals) -- CLOSED
+# on the merged tree (wave-403 lane 4).
 for _n in (1121, 1122):
-    _open_pin("w402", _n)
+    _closed_pin("w402", _n)
 
 # Carried round-69 pins (F1103-F1110) -- CLOSED on the merged tree
 # (wave-402 lanes 1-4).
