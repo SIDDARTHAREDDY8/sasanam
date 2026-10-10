@@ -50,7 +50,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 32  # wave-402 lane 2: 31 + 1 new dispatch loop
+N_STMTDEC_LOOPS_PIN = 34  # wave-402 merge: 31 + 3 dispatch loops (lanes 1, 2, 3)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -326,12 +326,12 @@ def test_p5_sibling_hooks_hold():
 
 @_t
 def test_p5_still_open_miss():
-    """F1103, F1104, F1108, F1109, F1110 are still OPEN on this lane's scope."""
+    """F1111, F1121 are still OPEN on the merged tree (wave-402 attack + lane 3)."""
     shapes = [
-        # F1103 String.raw staged reads.
-        "var R=String.raw({raw:%s});var S=R;var RESULT=S;" % _codes(SECRET_S),
-        # F1108 slice-apply staged reads.
-        "var C=%s;var S='';for(var i=0;i<C.length;i++){S+=String.fromCharCode.apply(null,C.slice(i,i+1));}var RESULT=S;" % _codes(SECRET_S),
+        # F1111 Array.prototype.flat staged reads.
+        "var C=%s;var S=String.fromCharCode(...C.flat());var RESULT=S;" % _codes(SECRET_S),
+        # F1121 top-level for-await (renumbered).
+        "var C=%s;var S='';for await (var x of C){S+=String.fromCharCode(x);}var RESULT=S;" % _codes(SECRET_S),
     ]
     bad = [p[:40] for p in shapes if _blocked(p)]
     return (not bad, "%d/%d still-open shapes miss%s"
@@ -395,8 +395,9 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[0] == "BREAK":
                 broken.append(parts[1])
-        want = {"test_open_w401_f1105", "test_open_w401_f1106",
-                "test_open_w401_f1107"}
+        # wave-402 merge: F1105-F1107 now CLOSED, so the w401 open pins
+        # are flipped to closed; expect 0 BREAK.
+        want = set()
         ok = set(broken) == want
         return (ok, "green(w401_attack): BREAK=%s (expect %s)"
                 % (sorted(broken), sorted(want)))

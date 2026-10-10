@@ -55,7 +55,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 32  # wave-402 lane 3: 31 + 1 new loop (real code-count change)
+N_STMTDEC_LOOPS_PIN = 34  # wave-402 merge: 31 + 3 dispatch loops (lanes 1, 2, 3)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -385,9 +385,8 @@ def test_p7_open_f1122():
 
 def _green_check():
     """Depth-1 green check on w401's attack battery (carries
-    F1103-F1110 pins). Honor GOV_SKIP_GREEN. On this lane tree F1110
-    is closed, so exactly test_open_w401_f1110 flips; everything else
-    must hold."""
+    F1103-F1110 pins). Honor GOV_SKIP_GREEN. On the merged tree F1110 is closed (w401 pin flipped),
+    so expect 0 BREAK; everything else must hold."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w401_attack): skipped via GOV_SKIP_GREEN=1")
     import tempfile
@@ -405,7 +404,8 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[0] == "BREAK":
                 real.append(parts[1])
-        expect_break = {"test_open_w401_f1110"}
+        # wave-402 merge: F1110 now CLOSED, w401 pin flipped to closed.
+        expect_break = set()
         ok = set(real) == expect_break
         return (ok,
                 "green(w401_attack): %d BREAK (expect exactly %s: %s)"

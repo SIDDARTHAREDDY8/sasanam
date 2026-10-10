@@ -203,7 +203,7 @@ def _green_check():
         r = subprocess.run([sys.executable, child],
                            capture_output=True, text=True, env=env,
                            timeout=600, cwd=REPO_ROOT)
-        real, flips = [], []
+        real = []
         for line in r.stdout.split("\n"):
             nm = None
             if ": BREAK" in line:
@@ -211,16 +211,16 @@ def _green_check():
             elif line.startswith("BREAK "):
                 nm = line.split()[1].strip()
             if nm is not None:
-                if nm == "test_open_w401_f1109_provenance":
-                    flips.append(nm)
-                else:
-                    real.append(nm)
+                real.append(nm)
+        # wave-402 merge: F1109 CLOSED, so expect 0 BREAK; the closed pin
+        # test_closed_w401_f1109_provenance should be HELD.
+        has_closed_pin = "test_closed_w401_f1109_provenance" in r.stdout
         tally = (r.stdout.strip().split("\n") or ["?"])[-1] \
             if r.stdout else "?"
-        ok = not real and len(flips) >= 1
+        ok = not real and has_closed_pin
         return (("HELD" if ok else "BREAK"),
-                "green(w401_attack): %d real BREAK %s; flips %d; tally=%s"
-                % (len(real), sorted(real), len(flips), tally))
+                "green(w401_attack): %d BREAK %s; closed pin present=%s; tally=%s"
+                % (len(real), sorted(real), has_closed_pin, tally))
     except Exception as e:
         return ("BREAK", "green(w401_attack): error %r" % (e,))
 

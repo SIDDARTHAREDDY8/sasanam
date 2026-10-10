@@ -80,25 +80,43 @@ def _open_pin(prefix, num):
     _fn.__name__ = "test_open_%s_f%d" % (prefix, num)
     return _fn
 
+def _closed_pin(prefix, num):
+    """All red-first shapes for a CLOSED finding must now BLOCK."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _misses(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
+
 
 # New round-70 pins (F1111-F1120 decoder seam) -- still OPEN.
 for _n in (1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1120):
     _open_pin("w402", _n)
 
-# Carried round-69 pins (F1103-F1110) -- still OPEN on this tree.
+# Wave-402 lane 3 self-files renumbered F1121/F1122 (F1091 residuals) -- still OPEN.
+for _n in (1121, 1122):
+    _open_pin("w402", _n)
+
+# Carried round-69 pins (F1103-F1110) -- CLOSED on the merged tree
+# (wave-402 lanes 1-4).
 for _n in (1103, 1104, 1105, 1106, 1107, 1108, 1110):
-    _open_pin("w401", _n)
+    _closed_pin("w401", _n)
 
 
 @_t
-def test_open_w401_f1109_provenance():
-    """F1109 carriers must still evade the seam (instruction_shaped harness,
-    matching w401_f1109_redfirst.py)."""
+def test_closed_w401_f1109_provenance():
+    """F1109 carriers must now be flagged by the seam (CLOSED wave-402 lane 4;
+    instruction_shaped harness, matching w401_f1109_redfirst.py)."""
     from gov.instruction_provenance import instruction_shaped
     shapes = _redfirst_shapes("w401", 1109)
-    bad = [name for name, payload in shapes if instruction_shaped(payload)]
+    bad = [name for name, payload in shapes if not instruction_shaped(payload)]
     ok = not bad
-    print(("HELD " if ok else "BREAK") + " test_open_w401_f1109_provenance (%d carriers%s)" % (
+    print(("HELD " if ok else "BREAK") + " test_closed_w401_f1109_provenance (%d carriers%s)" % (
         len(shapes), "" if ok else ": " + ",".join(bad)))
     return ok
 
