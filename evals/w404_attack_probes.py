@@ -112,9 +112,10 @@ for _n in (1153, 1154, 1155):
 for _n in range(1151, 1153):
     _open_prov_pin("w404", _n)
 
-# Carried round-71 pins (F1123-F1141 decoder seam) -- still OPEN.
-for _n in range(1123, 1142):
-    _open_pin("w403", _n)
+# Carried round-71 pins (F1123-F1141) are now CLOSED on the merged tree
+# (wave-404 lanes 1-4); verified by w403_attack_probes.py (F1123-F1140) and
+# w402_attack_probes.py (F1141 via the F1119 full-closure pin). Not duplicated
+# here.
 
 
 @_t

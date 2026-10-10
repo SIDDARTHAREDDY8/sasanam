@@ -57,7 +57,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 39  # wave-404 lane 3: 38 + 1 loop -> 39
+N_STMTDEC_LOOPS_PIN = 41  # wave-404 merge: 38 + 3 loops (lanes 2,3,4) -> 41
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -396,18 +396,19 @@ def test_p5_sibling_hooks_hold():
 
 @_t
 def test_p5_still_open_miss():
-    """F1123-F1130, F1138-F1141 (other lanes' scope) still miss."""
+    """Merged tree: F1123 and F1138 (other lanes' scope) are now CLOSED;
+    their shapes must BLOCK. (On the lane tree they still missed.)"""
     I = _codes(SECRET_S)
-    open_shapes = [
-        # F1123 systemic: leading statement breaks hooks
+    closed_shapes = [
+        # F1123 systemic: leading statement (closed wave-404 lane 1)
         "var x=1;var C=%s;var S=String.fromCharCode(...C);var RESULT=S;" % I,
-        # F1138 unescape
+        # F1138 unescape (closed wave-404 lane 4)
         "var C=%s;var S=unescape(C.map(function(c){return '%%'+c.toString(16);}).join(''));var RESULT=S;" % I,
     ]
-    bad = [s[:40] for s in open_shapes if not _misses(s)]
-    return (not bad, "%d/%d still-open miss%s"
-            % (len(open_shapes) - len(bad), len(open_shapes),
-               (" BAD=" + ",".join(bad)) if bad else ""))
+    bad = [s[:40] for s in closed_shapes if _misses(s)]
+    return (not bad, "%d/%d now-closed block%s"
+            % (len(closed_shapes) - len(bad), len(closed_shapes),
+               (" BAD(still miss)=" + ",".join(bad)) if bad else ""))
 
 
 # ---------------- p6: honest-text quiet ----------------
@@ -450,11 +451,8 @@ def test_p7_perf_200_sites():
 def _green_check():
     """Depth-1 green check on w403's round-71 attack battery.
 
-    w403_attack_probes.py pins F1123-F1141 as still-open (HELD means
-    the scanner still misses them). This lane CLOSES F1131-F1137, so
-    exactly those 7 test_open_w403_f113N pins must flip to BREAK on
-    this tree; every other pin (F1123-F1130, F1138-F1141 still open)
-    must keep its prior verdict. Any other flip is a regression.
+    w403_attack_probes.py now pins F1123-F1140 as CLOSED (all 18
+    test_closed_w403_fNNNN must HELD). Any BREAK is a regression.
     Honor GOV_SKIP_GREEN.
     """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
@@ -469,18 +467,18 @@ def _green_check():
             [sys.executable, "evals/w403_attack_probes.py"],
             capture_output=True, text=True, env=env,
             timeout=600, cwd=REPO_ROOT)
-        breaks = set()
+        held = set()
+        broke = set()
         for line in r.stdout.split("\n"):
             parts = line.split()
-            if len(parts) >= 2 and parts[0] == "BREAK":
-                breaks.add(parts[1])
-        # Expected flips: the 7 closed findings' open-pins now BREAK.
-        expect = {"test_open_w403_f%d" % n for n in range(1131, 1138)}
-        extra = breaks - expect
-        missing = expect - breaks
-        ok = (not extra) and (not missing)
-        return (ok, "green(w403_attack): %d BREAK, extra=%s missing=%s"
-                % (len(breaks), sorted(extra), sorted(missing)))
+            if len(parts) >= 2 and parts[1].startswith("test_closed_w403_f"):
+                (held if parts[0] == "HELD" else broke).add(parts[1])
+        # All 18 closed pins must HELD.
+        expect = {"test_closed_w403_f%d" % n for n in range(1123, 1141)}
+        missing = expect - held - broke
+        ok = (not broke) and (not missing) and held == expect
+        return (ok, "green(w403_attack): %d HELD, broke=%s missing=%s"
+                % (len(held), sorted(broke), sorted(missing)))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
 

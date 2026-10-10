@@ -64,7 +64,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 39  # wave-404 lane 2: 38 + 1 loop -> 39
+N_STMTDEC_LOOPS_PIN = 41  # wave-404 merge: 38 + 3 loops (lanes 2,3,4) -> 41
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -415,25 +415,24 @@ def test_p6_perf():
 
 @_t
 def test_p7_open_f1123_f1131_1141():
-    # F1123 (systemic) and F1131-F1141 must still MISS on this tree.
+    # Merged tree: F1123 and F1131-F1141 are now CLOSED (wave-404 lanes
+    # 1, 3, 4); all their red-first shapes must BLOCK. (On the lane tree
+    # they were still OPEN.)
     bad = []
     for n in (1123, 1131, 1132, 1133, 1134, 1135, 1136, 1137,
               1138, 1139, 1140, 1141):
         shapes = _redfirst_shapes("w403", n)
-        bad += [name for name, payload in shapes if not _misses(payload)]
-    return (not bad, "F1123,F1131-F1141 still open%s"
-            % ("" if not bad else ": " + ",".join(bad)))
+        bad += [name for name, payload in shapes if _misses(payload)]
+    return (not bad, "F1123,F1131-F1141 now closed%s"
+            % ("" if not bad else " (missed): " + ",".join(bad)))
 
 
 # ---------------- g0: green check ----------------
 
 def _green_check():
-    """Depth-1 green check on w403's attack battery (carries the
-    F1123-F1141 open pins). Honor GOV_SKIP_GREEN. Pin semantics:
-    HELD = payload still MISSES (finding still open); BREAK = payload
-    blocked (pin broken). On this lane tree F1124-F1130 are CLOSED,
-    so their pins must BREAK; F1123, F1131-F1141 are still OPEN, so
-    their pins must HELD."""
+    """Depth-1 green check on w403's attack battery (F1123-F1140 flipped
+    to CLOSED on the merged tree). Honor GOV_SKIP_GREEN. All 18 closed
+    pins must HELD (every shape blocks)."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w403_attack): skipped via GOV_SKIP_GREEN=1")
     import tempfile
@@ -446,36 +445,24 @@ def _green_check():
             [sys.executable, "evals/w403_attack_probes.py"],
             capture_output=True, text=True, env=env,
             timeout=600, cwd=REPO_ROOT)
-        held_open = []   # pins that HELD (still open) -- expect F1123,F1131-F1141
-        broke_closed = []  # pins that BREAK (now closed) -- expect F1124-F1130
-        broke_open = []   # pins that BREAK but should be open -- bad
-        held_closed = []  # pins that HELD but should be closed -- bad
+        held = []   # closed pins that HELD (all shapes block) -- expect all 18
+        broke = []  # closed pins that BREAK (a shape still misses) -- bad
         for line in r.stdout.split("\n"):
-            # lines are "HELD  test_open_w403_f1123 (22 shapes)" (two spaces)
-            if "test_open_w403_f" not in line:
+            # lines are "HELD  test_closed_w403_f1123 (22 shapes)" (two spaces)
+            if "test_closed_w403_f" not in line:
                 continue
             is_break = line.lstrip().startswith("BREAK")
             is_held = line.lstrip().startswith("HELD")
             if not (is_break or is_held):
                 continue
-            # extract finding number: test_open_w403_f1124 (...)
-            m = re.search(r"test_open_w403_f(\d+)", line)
+            m = re.search(r"test_closed_w403_f(\d+)", line)
             if not m:
                 continue
             n = int(m.group(1))
-            if 1124 <= n <= 1130:
-                (broke_closed if is_break else held_closed).append(n)
-            elif n == 1123 or 1131 <= n <= 1140:
-                # F1141 not in w403_attack (filed at merge); covered by p7
-                (held_open if not is_break else broke_open).append(n)
-        ok = (sorted(broke_closed) == [1124, 1125, 1126, 1127, 1128, 1129, 1130]
-              and not broke_open and not held_closed
-              and sorted(held_open) == [1123, 1131, 1132, 1133, 1134, 1135,
-                                        1136, 1137, 1138, 1139, 1140])
-        return (ok, "green(w403_attack): closed-break=%s open-held=%d (%s)"
-                % (sorted(broke_closed), len(held_open),
-                   "ok" if ok else "BAD broke_open=%s held_closed=%s"
-                   % (broke_open, held_closed)))
+            (held if is_held else broke).append(n)
+        ok = (sorted(held) == list(range(1123, 1141)) and not broke)
+        return (ok, "green(w403_attack): closed-held=%d (%s)"
+                % (len(held), "ok" if ok else "BAD broke=%s" % broke))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
 

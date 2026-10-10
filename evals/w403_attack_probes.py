@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Round-71 attack battery: 18 new pins (expected miss) + carried F1111-F1122.
+"""Round-71 attack battery: F1123-F1140 pins flipped to CLOSED on the
+wave-404 merged tree (lanes 1-4 closed them; F1141 was a merge-audit filing,
+pinned in w402_attack_probes.py).
 
-Pins marked OPEN: verdict HELD while the payload still MISSES (finding open),
-BREAK if the payload ever gets blocked (pin broken). New pins F1123-F1140 via
-their w403 red-first SHAPES (decoder seam). F1111-F1122 carried via their
-w402 red-first SHAPES (all still OPEN on this tree). $0-spend-by-construction
+Pins marked CLOSED: verdict HELD while every red-first shape BLOCKS,
+BREAK if any shape still misses (closure regressed). $0-spend-by-construction
 (no harness/paid refs; model spend lives in the ledger).
 """
 import importlib.util
@@ -49,12 +49,12 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-403 round-71 footer (F1123-F1140 filed OPEN (18);
-    next free F1141)."""
+    """Control: wave-404 merge footer (F1123-F1141 CLOSED (19);
+    F1142-F1157 OPEN (16); next free F1158)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1123-F1140 filed OPEN (18" in text
-          and "Next free finding: **F1141**" in text)
+    ok = ("# Wave-404: F1123-F1141 CLOSED (19); F1142-F1157 OPEN (16); next free F1158" in text
+          and "Next free finding: **F1158**" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -81,9 +81,25 @@ def _open_pin(prefix, num):
     return _fn
 
 
-# New round-71 pins (F1123-F1140 decoder seam) -- still OPEN.
+def _closed_pin(prefix, num):
+    """All red-first shapes for a CLOSED finding must now BLOCK."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _misses(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
+
+
+# Round-71 pins (F1123-F1140 decoder seam) -- CLOSED on the merged tree
+# (wave-404 lanes 1-4). F1141 (merge-audit filing) pinned in
+# w402_attack_probes.py; F1142+ pinned OPEN in w404_attack_probes.py.
 for _n in range(1123, 1141):
-    _open_pin("w403", _n)
+    _closed_pin("w403", _n)
 
 # Carried round-70 pins (F1111-F1122) are now CLOSED on the merged tree
 # (wave-403 lanes 1-4); verified by w402_attack_probes.py (including the

@@ -101,17 +101,19 @@ for _n in (1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1120):
 
 @_t
 def test_partial_w402_f1119():
-    """F1119 is partially CLOSED: the for-of and for-await (no trailing)
-    shapes block, but the trailing-statement variants (now F1141) still miss.
+    """F1119 is now FULLY closed: the for-of and for-await (no trailing)
+    shapes block, and the trailing-statement variants (F1141, closed
+    wave-404 lane 4) also block.
     """
     shapes = _redfirst_shapes("w402", 1119)
     # The first 2 shapes (for-of, for-await no trailing) must block
-    blocked = [name for name, payload in shapes[:2] if _misses(payload)]
-    # The last 2 shapes (trailing variants, now F1141) must still miss
-    still_open = [name for name, payload in shapes[2:] if _misses(payload)]
-    ok = (not blocked) and (len(still_open) == 2)
+    missed_head = [name for name, payload in shapes[:2] if _misses(payload)]
+    # The last 2 shapes (trailing variants, F1141 CLOSED wave-404 lane 4)
+    # must now also block
+    missed_trailing = [name for name, payload in shapes[2:] if _misses(payload)]
+    ok = (not missed_head) and (not missed_trailing)
     print(("HELD " if ok else "BREAK") + " test_partial_w402_f1119 "
-          "(blocked-miss=%s, trailing-still-open=%d/2)" % (blocked, len(still_open)))
+          "(head-miss=%s, trailing-miss=%s)" % (missed_head, missed_trailing))
     return ok
 
 # Wave-402 lane 3 self-files renumbered F1121/F1122 (F1091 residuals) -- CLOSED

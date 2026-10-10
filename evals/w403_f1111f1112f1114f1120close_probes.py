@@ -44,7 +44,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 38  # wave-403 merge: 34 + 4 loops -> 38 (was lane 1-local 35)
+N_STMTDEC_LOOPS_PIN = 41  # wave-404 merge: 38 + 3 loops (lanes 2,3,4) -> 41
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -355,14 +355,12 @@ def test_p5_sibling_hooks_hold():
 
 @_t
 def test_p5_still_open_miss():
-    """Merged tree: F1123-F1140 stay OPEN (attack round 71)."""
+    """Merged tree: F1156/F1157 stay OPEN (wave-404 merge audit residuals)."""
     shapes = [
-        # F1124 side-effect find callback (attack round 71).
+        # F1156: F1124 residual -- no-return find callback.
         "var C=%s;var S='';C.find(function(c){S+=String.fromCharCode(c);});var RESULT=S;",
-        # F1127 push-then-join (attack round 71).
+        # F1157: F1127 residual -- direct-RESULT push-then-join.
         "var C=%s;var A=[];for(var i=0;i<C.length;i++){A.push(String.fromCharCode(C[i]));}var RESULT=A.join('');",
-        # F1140 for-loop header variant (attack round 71).
-        "var C=%s;var S='';for(var i=0,n=C.length;i<n;i++){S+=String.fromCharCode(C[i]);}var RESULT=S;",
     ]
     bad = [p[:40] for p in shapes if _blocked(p % _codes(SECRET_S))]
     return (not bad, "%d/%d still-open miss%s"

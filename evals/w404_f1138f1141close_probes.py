@@ -64,7 +64,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 39  # wave-403 merge: 38 + 1 lane loop -> 39
+N_STMTDEC_LOOPS_PIN = 41  # wave-404 merge: 38 + 3 loops (lanes 2,3,4) -> 41
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -458,23 +458,23 @@ def test_p6_perf():
 
 @_t
 def test_p7_open_f1123_1137():
-    # F1123-F1137 must still MISS on the lane tree (other lanes own
-    # them; this lane closes only F1138-F1141).
+    # Merged tree: F1123-F1137 are now CLOSED (wave-404 lanes 1-3);
+    # all their red-first shapes must BLOCK. (On the lane tree they
+    # still missed; this lane closed only F1138-F1141.)
     bad = []
     for n in range(1123, 1138):
         shapes = _redfirst_shapes("w403", n)
-        bad += [name for name, payload in shapes if not _misses(payload)]
-    return (not bad, "F1123-F1137 still open%s"
-            % ("" if not bad else ": " + ",".join(bad)))
+        bad += [name for name, payload in shapes if _misses(payload)]
+    return (not bad, "F1123-F1137 now closed%s"
+            % ("" if not bad else " (missed): " + ",".join(bad)))
 
 
 # ---------------- g0: green check ----------------
 
 def _green_check():
-    """Depth-1 green check on w403's attack battery (carries
-    F1123-F1140 pins). Honor GOV_SKIP_GREEN. On the lane tree the
-    F1138/F1139/F1140 open pins are expected to BREAK (now closed);
-    everything else must be HELD."""
+    """Depth-1 green check on w403's attack battery (F1123-F1140
+    flipped to CLOSED on the merged tree). Honor GOV_SKIP_GREEN.
+    All 18 test_closed_w403_fNNNN pins must HELD."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w403_attack): skipped via GOV_SKIP_GREEN=1")
     import tempfile
@@ -487,17 +487,20 @@ def _green_check():
             [sys.executable, "evals/w403_attack_probes.py"],
             capture_output=True, text=True, env=env,
             timeout=600, cwd=REPO_ROOT)
-        breaks = []
+        held = set()
+        broke = []
         for line in r.stdout.split("\n"):
-            if line.startswith("BREAK "):
-                breaks.append(line.split(" ")[1])
-        expect = {"test_open_w403_f1138", "test_open_w403_f1139",
-                  "test_open_w403_f1140"}
-        ok = set(breaks) == expect
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].startswith("test_closed_w403_f"):
+                if parts[0] == "HELD":
+                    held.add(parts[1])
+                else:
+                    broke.append(parts[1])
+        expect = {"test_closed_w403_f%d" % n for n in range(1123, 1141)}
+        ok = (set(held) == expect and not broke)
         return (ok,
-                "green(w403_attack): %d BREAK (expect exactly %s: %s)"
-                % (len(breaks), sorted(expect),
-                   "ok" if ok else "got=" + ",".join(sorted(breaks))))
+                "green(w403_attack): %d HELD (expect 18: %s)"
+                % (len(held), "ok" if ok else "broke=" + ",".join(broke)))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
 
