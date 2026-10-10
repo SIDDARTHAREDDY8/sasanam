@@ -134081,6 +134081,393 @@ def _js_f1122_stmt_decode(text):
 # -- end F1121/F1122 ---------------------------------------------------------
 
 
+# -- F1123: single-wrapper-level unwrap ---------------------------------------
+
+def _js_f1123_rfind_kw(text, kw, start):
+    """Last *kw* at/before *start* at an identifier boundary, else -1."""
+    i = text.rfind(kw, 0, start)
+    while i != -1:
+        before_ok = (i == 0) or (text[i - 1] not in _JS_IDENT_CONT)
+        ae = i + len(kw)
+        after_ok = (ae >= len(text)) or (text[ae] not in _JS_IDENT_CONT)
+        if before_ok and after_ok:
+            return i
+        i = text.rfind(kw, 0, i)
+    return -1
+
+
+def _js_f1123_simple_init(text, j):
+    """Parse a number or '...'/"..." literal at text[j]; return next."""
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        _, k = _js_f99x_parse_str(text, j)
+        return k
+    _, k = _js_parse_fcc_number(text, j)
+    return k
+
+
+def _js_f1123_return_rewrite(body):
+    """Rewrite a trailing `return IDENT;` to `var RESULT=IDENT;`.
+
+    The function-decl and arrow-IIFE wrappers end their bodies with
+    `return S;`; statement decoders anchor on `var RESULT=...`, so the
+    body is rewritten to the canonical tail form. Node-exact for the
+    static-decode abstraction: the function returns S, the rewritten
+    text binds RESULT to the same value. Parsed by hand (no regex,
+    so the pinned module-level compiled-regex count stays at 28): trailing `return`,
+    whitespace, an ASCII identifier, optional `;`, trailing whitespace --
+    anything else raises _JSExprFail (fail closed). A `$`-prefixed
+    `return` (e.g. `$return`, an identifier, not the keyword) fails
+    closed, which a `\\breturn` regex would mis-parse. The `;` is
+    optional (ASI at end of body); anything else raises _JSExprFail
+    (fail closed)."""
+    n = len(body)
+    i = n
+    while i > 0 and body[i - 1] in " \t\n\r":
+        i -= 1
+    if i > 0 and body[i - 1] == ";":
+        i -= 1
+        while i > 0 and body[i - 1] in " \t\n\r":
+            i -= 1
+    if i <= 0:
+        raise _JSExprFail("F1123 body without trailing return")
+    e = i
+    while i > 0 and body[i - 1] in _JS_IDENT_CONT:
+        i -= 1
+    name = body[i:e]
+    if not name or body[i] not in _JS_IDENT_START:
+        raise _JSExprFail("F1123 return ident malformed")
+    j = i
+    while j > 0 and body[j - 1] in " \t\n\r":
+        j -= 1
+    if j < 6 or body[j - 6:j] != "return":
+        raise _JSExprFail("F1123 return keyword missing")
+    if j - 7 >= 0 and body[j - 7] in _JS_IDENT_CONT:
+        raise _JSExprFail("F1123 return keyword boundary")
+    return body[:j - 6] + "var RESULT=" + name + ";"
+
+
+def _js_f1123_strip_semi(s):
+    """Strip a single trailing `;` (empty statement, node no-op) from
+    *s* when the remainder still ends a statement (`;` or `}`); else
+    return *s* unchanged. Keeps `lbl:CANON;` (one wrapper + one
+    trailing empty statement) within the two-layer decode budget."""
+    j = len(s)
+    while j > 0 and s[j - 1] in " \t\n\r":
+        j -= 1
+    if j > 0 and s[j - 1] == ";":
+        k = j - 1
+        while k > 0 and s[k - 1] in " \t\n\r":
+            k -= 1
+        if k > 0 and s[k - 1] in ";}":
+            return s[:j - 1]
+    return s
+
+
+def _js_f1123_opt_semi_end(text, m, what):
+    """Skip ws, consume one optional `;` (empty statement, node no-op),
+    then require end-of-text; raises _JSExprFail otherwise."""
+    n = len(text)
+    m = _js_skip_ws(text, m)
+    if m < n and text[m] == ";":
+        m += 1
+    if _js_skip_ws(text, m) != n:
+        raise _JSExprFail(what)
+    return m
+
+
+def _js_f1123_unwrap(text):
+    """Strip one wrapper level around a statement sequence (F1123).
+
+    Statement-sequence decoders anchor to whole-text boundaries: a
+    single leading/trailing statement or one wrapper level around the
+    canonical accumulation breaks every hook. Each production below
+    strips exactly one such wrapper and yields the inner text as a
+    *candidate variant*; the layer-2 decode pass runs all statement
+    decoders on it, so only genuinely-decodable inner text becomes a
+    credential hit. Every production is node-exact for its wrapper
+    form (v24.20.0): leading `var x=1;` / `;` / `/*c*/` / `//c`,
+    trailing `var z=2;` / `;` (empty statement), `{...}`,
+    `if(true){...}`, `lbl:`,
+    `function g(){...}var RESULT=g();`, `var RESULT=(()=>{...})();`,
+    `do{...}while(false);` (trailing `;` optional via ASI),
+    `try{...}catch(e){}` (catch binding optional, ES2019).
+    Wrapper productions tolerate one trailing `;` (empty statement).
+    Function-decl/arrow-IIFE bodies may end `return IDENT` with or
+    without `;` (ASI). Anything else yields
+    nothing (fail closed). Each production is a single bounded parse
+    (no match enumeration), so no F452 budget charging is needed.
+    The return-rewrite is hand-parsed (no new module-level compiled
+    regex: the pinned count stays at 28). Never evals.
+    """
+    out = []
+    n = len(text)
+    if n == 0:
+        return out
+
+    def _emit(s):
+        t = s.strip(" \t\n\r")
+        if t and t != text and t not in out:
+            out.append(t)
+
+    # -- leading `var|let|const NAME = <number|string>;` ------------------
+    try:
+        j = _js_skip_ws(text, 0)
+        _, _nm, k = _js_f96x_decl(text, j)
+        k = _js_f1123_simple_init(text, k)
+        k = _js_expect(text, k, ";")
+        _emit(text[k:])
+    except _JSExprFail:
+        pass
+
+    # -- leading `;` ------------------------------------------------------
+    j = _js_skip_ws(text, 0)
+    if j < n and text[j] == ";":
+        _emit(text[j + 1:])
+
+    # -- trailing `;` (empty statement) ------------------------------------
+    # A lone trailing `;` is an empty statement (node no-op): strip it
+    # so `{...};`, `if(true){...};`, `try{...}catch(e){};` reach the
+    # wrapper productions on the layer-2 pass. The remainder must still
+    # end a statement (`;` or `}`) so a bare `;` or a non-statement
+    # tail cannot fabricate a boundary.
+    j = n
+    while j > 0 and text[j - 1] in " \t\n\r":
+        j -= 1
+    if j > 0 and text[j - 1] == ";":
+        k = j - 1
+        while k > 0 and text[k - 1] in " \t\n\r":
+            k -= 1
+        if k > 0 and text[k - 1] in ";}":
+            _emit(text[:j - 1])
+
+    # -- leading `/*...*/` ------------------------------------------------
+    try:
+        j = _js_skip_ws(text, 0)
+        if not text.startswith("/*", j):
+            raise _JSExprFail("F1123 no leading comment")
+        end = text.find("*/", j + 2)
+        if end == -1:
+            raise _JSExprFail("F1123 unterminated comment")
+        _emit(text[end + 2:])
+    except _JSExprFail:
+        pass
+
+    # -- leading `//...` line comment --------------------------------------
+    try:
+        j = _js_skip_ws(text, 0)
+        if not text.startswith("//", j):
+            raise _JSExprFail("F1123 no leading line comment")
+        nl = text.find("\n", j + 2)
+        if nl == -1:
+            # The comment swallows the rest of the text: nothing to
+            # unwrap (fail closed).
+            raise _JSExprFail("F1123 line comment swallows rest")
+        _emit(text[nl + 1:])
+    except _JSExprFail:
+        pass
+
+    # -- trailing `var|let|const NAME = <number|string>;` ------------------
+    for _kw in ("var", "let", "const"):
+        _stripped = False
+        i = n
+        while True:
+            i = _js_f1123_rfind_kw(text, _kw, i)
+            if i == -1:
+                break
+            # statement-boundary guard: preceded by `;`/`}` (skipping ws)
+            k = i - 1
+            while k >= 0 and text[k] in " \t\n\r":
+                k -= 1
+            if k < 0 or text[k] not in ";}":
+                continue
+            try:
+                _, _nm, m = _js_f96x_decl(text, i)
+                m = _js_f1123_simple_init(text, m)
+                m = _js_skip_ws(text, m)
+                if m >= n or text[m] != ";":
+                    raise _JSExprFail("F1123 trailing not closed")
+                m = _js_skip_ws(text, m + 1)
+                if m != n:
+                    raise _JSExprFail("F1123 trailing not at end")
+            except _JSExprFail:
+                continue
+            _emit(text[:i])
+            _stripped = True
+            break
+        if _stripped:
+            break
+
+    # -- leading `lbl:` ---------------------------------------------------
+    try:
+        j = _js_skip_ws(text, 0)
+        _nm, k = _js_parse_ident(text, j)
+        if _nm in _F611_RESERVED or _nm == "arguments":
+            raise _JSExprFail("F1123 label reserved")
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ":" or text.startswith("::", k):
+            raise _JSExprFail("F1123 no label colon")
+        _emit(_js_f1123_strip_semi(text[k + 1:]))
+    except _JSExprFail:
+        pass
+
+    # -- `{...}` block ----------------------------------------------------
+    try:
+        j = _js_skip_ws(text, 0)
+        if j >= n or text[j] != "{":
+            raise _JSExprFail("F1123 no block")
+        _bs, _be, _after = _js_span_braced(text, j)
+        _js_f1123_opt_semi_end(text, _after, "F1123 block trailing")
+        _emit(text[_bs:_be])
+    except _JSExprFail:
+        pass
+
+    # -- `if(true){...}` --------------------------------------------------
+    try:
+        j = _js_skip_ws(text, 0)
+        m = _js_match_kw(text, j, "if")
+        if m is None:
+            raise _JSExprFail("F1123 no if")
+        m = _js_expect(text, m, "(")
+        m = _js_skip_ws(text, m)
+        m2 = _js_match_kw(text, m, "true")
+        if m2 is None:
+            raise _JSExprFail("F1123 if not true")
+        m = _js_expect(text, m2, ")")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F1123 if no brace")
+        _bs, _be, _after = _js_span_braced(text, m)
+        _js_f1123_opt_semi_end(text, _after, "F1123 if trailing")
+        _emit(text[_bs:_be])
+    except _JSExprFail:
+        pass
+
+    # -- `do{...}while(false);` --------------------------------------------
+    try:
+        j = _js_skip_ws(text, 0)
+        m = _js_match_kw(text, j, "do")
+        if m is None:
+            raise _JSExprFail("F1123 no do")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F1123 do no brace")
+        _bs, _be, _after = _js_span_braced(text, m)
+        m = _js_skip_ws(text, _after)
+        m2 = _js_match_kw(text, m, "while")
+        if m2 is None:
+            raise _JSExprFail("F1123 do no while")
+        m = _js_expect(text, m2, "(")
+        m = _js_skip_ws(text, m)
+        m2 = _js_match_kw(text, m, "false")
+        if m2 is None:
+            raise _JSExprFail("F1123 do not false")
+        m = _js_expect(text, m2, ")")
+        m = _js_skip_ws(text, m)
+        # The do-while's own `;` (ASI-optional at end of input), then
+        # one optional trailing `;` (empty statement).
+        if m < n and text[m] == ";":
+            m += 1
+        _js_f1123_opt_semi_end(text, m, "F1123 do trailing")
+        _emit(text[_bs:_be])
+    except _JSExprFail:
+        pass
+
+    # -- `try{...}catch(e){}` ----------------------------------------------
+    try:
+        j = _js_skip_ws(text, 0)
+        m = _js_match_kw(text, j, "try")
+        if m is None:
+            raise _JSExprFail("F1123 no try")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F1123 try no brace")
+        _bs, _be, _after = _js_span_braced(text, m)
+        m = _js_skip_ws(text, _after)
+        m2 = _js_match_kw(text, m, "catch")
+        if m2 is None:
+            raise _JSExprFail("F1123 no catch")
+        m = _js_skip_ws(text, m2)
+        # Optional catch binding (ES2019 `catch{...}`) or `(e)`.
+        if m < n and text[m] == "(":
+            m = _js_skip_ws(text, m + 1)
+            _cn, m = _js_parse_ident(text, m)
+            m = _js_expect(text, m, ")")
+            m = _js_skip_ws(text, m)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F1123 catch no brace")
+        _, _, _after2 = _js_span_braced(text, m)
+        _js_f1123_opt_semi_end(text, _after2, "F1123 catch trailing")
+        _emit(text[_bs:_be])
+    except _JSExprFail:
+        pass
+
+    # -- `function NAME(){BODY}var RESULT=NAME();` ---------------------------
+    try:
+        j = _js_skip_ws(text, 0)
+        m = _js_match_kw(text, j, "function")
+        if m is None:
+            raise _JSExprFail("F1123 no function")
+        m = _js_skip_ws(text, m)
+        _fn, m = _js_parse_ident(text, m)
+        if _fn in _F611_RESERVED:
+            raise _JSExprFail("F1123 bad fn name")
+        m = _js_expect(text, m, "(")
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F1123 fn no brace")
+        _bs, _be, _after = _js_span_braced(text, m)
+        m = _js_skip_ws(text, _after)
+        # var|let|const RESULT=g(); -- _js_f96x_decl enforces the decl
+        # keyword itself (raises _JSExprFail otherwise).
+        _, _rn, m = _js_f96x_decl(text, m)
+        if _rn != "RESULT":
+            raise _JSExprFail("F1123 fn not RESULT")
+        m = _js_skip_ws(text, m)
+        _cn2, m = _js_parse_ident(text, m)
+        if _cn2 != _fn:
+            raise _JSExprFail("F1123 fn call mismatch")
+        m = _js_expect(text, m, "(")
+        m = _js_expect(text, m, ")")
+        m = _js_expect(text, m, ";")
+        _js_f1123_opt_semi_end(text, m, "F1123 fn trailing")
+        _emit(_js_f1123_return_rewrite(text[_bs:_be]))
+    except _JSExprFail:
+        pass
+
+    # -- `var RESULT=(()=>{BODY})();` ---------------------------------------
+    try:
+        j = _js_skip_ws(text, 0)
+        _, _rn, m = _js_f96x_decl(text, j)
+        if _rn != "RESULT":
+            raise _JSExprFail("F1123 iife not RESULT")
+        m = _js_expect(text, m, "(")
+        m = _js_expect(text, m, "(")
+        m = _js_expect(text, m, ")")
+        m = _js_skip_ws(text, m)
+        if not text.startswith("=>", m):
+            raise _JSExprFail("F1123 iife no arrow")
+        m = _js_skip_ws(text, m + 2)
+        if m >= n or text[m] != "{":
+            raise _JSExprFail("F1123 iife no brace")
+        _bs, _be, _after = _js_span_braced(text, m)
+        m = _js_expect(text, _after, ")")
+        m = _js_expect(text, m, "(")
+        m = _js_expect(text, m, ")")
+        m = _js_expect(text, m, ";")
+        _js_f1123_opt_semi_end(text, m, "F1123 iife trailing")
+        _emit(_js_f1123_return_rewrite(text[_bs:_be]))
+    except _JSExprFail:
+        pass
+
+    return out
+
+
+# -- end F1123 ---------------------------------------------------------------
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -134958,6 +135345,18 @@ def _decode_layer(text):
     _top = _js_f95x_top_seq(text)
     if _top is not None:
         _add(_top)
+    # F1123: single-wrapper-level unwrap -- strip one leading/trailing
+    # statement or one wrapper level (`{...}`, `if(true){...}`, `lbl:`,
+    # `function g(){...}var RESULT=g();`, `var RESULT=(()=>{...})();`,
+    # `do{...}while(false);`, `try{...}catch(e){}`) and re-emit the
+    # inner text as a candidate variant. The layer-2 pass runs all
+    # statement decoders on it, so only genuinely-decodable inner
+    # text becomes a credential hit. Additive at the end so the
+    # pre-existing variant order is preserved exactly (F441).
+    for _unwrapped in _js_f1123_unwrap(text):
+        _add(_unwrapped)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
     return variants
 
 
