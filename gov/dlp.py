@@ -69198,6 +69198,879 @@ def _js_f970_stmt_decode(text):
     return _js_f970_defprop_decode(text)
 
 
+
+# -- F999 ---------------------------------------------------------------
+
+def _js_f999_parse_descriptor(text, j, state):
+    """Parse `{value:'lit'[,writable|enumerable|configurable:bool]*}` (F999).
+
+    Data descriptors with a string-literal value only; accessor
+    descriptors (`get`/`set`), non-literal values, and unknown
+    attributes fail closed (documented boundary). Duplicate keys:
+    later wins (engine-exact). Returns (value, writable,
+    configurable, next_index); writable/configurable are None when
+    the descriptor does not mention the flag -- the caller applies
+    the defineProperties/Object.create-descriptor engine defaults
+    (both false) or partial-descriptor preservation (node
+    v24.20.0). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F999 descriptor not an object")
+    j = _js_skip_ws(text, j + 1)
+    value = None
+    seen_value = False
+    writable = None
+    configurable = None
+    if j < n and text[j] == "}":
+        raise _JSExprFail("F999 empty descriptor")
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F999 descriptor key not modeled")
+        if key not in ("value", "writable", "enumerable",
+                       "configurable"):
+            raise _JSExprFail("F999 descriptor attr not modeled")
+        j = _js_expect(text, _js_skip_ws(text, j), ":")
+        j = _js_skip_ws(text, j)
+        if key == "value":
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F999 descriptor value not a literal")
+            value, j = _js_parse_string(text, j)
+            seen_value = True
+        else:
+            flag = None
+            for bkw in _F96X_BOOL_KW:
+                bm = _js_match_kw(text, j, bkw)
+                if bm is not None:
+                    j = bm
+                    flag = (bkw == "true")
+                    break
+            if flag is None:
+                raise _JSExprFail("F999 descriptor flag not a bool")
+            if key == "writable":
+                writable = flag
+            elif key == "configurable":
+                configurable = flag
+        _js_f96x_charge(state, "F999 too many parts")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        raise _JSExprFail("F999 bad descriptor")
+    if not seen_value:
+        raise _JSExprFail("F999 no value in descriptor")
+    return value, writable, configurable, j
+
+
+def _js_f999_install(text, j, oname, env, wr, conf, state):
+    """Parse `{k:{descriptor},...}` at text[j], installing into env[oname].
+
+    Fresh keys get writable/configurable False when the descriptor
+    omits the flags (the defineProperties/Object.create-descriptor
+    engine defaults, node v24.20.0); redefining an existing
+    non-configurable key fails closed (the engine throws);
+    partial descriptors preserve the pre-existing flags (F970
+    discipline). Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    seen = 0
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        if j < n and text[j] in "'\"":
+            key, j = _js_parse_string(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            key, j = _js_parse_ident(text, j)
+        else:
+            raise _JSExprFail("F999 prop key not modeled")
+        if key == "__proto__":
+            raise _JSExprFail("F999 __proto__ not modeled")
+        j = _js_expect(text, _js_skip_ws(text, j), ":")
+        val, wflag, cflag, j = _js_f999_parse_descriptor(text, j,
+                                                         state)
+        if key in env[oname]:
+            if not conf.get(key, False):
+                # The engine throws TypeError redefining a
+                # non-configurable property (node v24.20.0) --
+                # fail closed, never mis-decode.
+                raise _JSExprFail("F999 redefine non-configurable")
+            if wflag is not None:
+                wr[key] = wflag
+            if cflag is not None:
+                conf[key] = cflag
+        else:
+            wr[key] = wflag if wflag is not None else False
+            conf[key] = cflag if cflag is not None else False
+        env[oname][key] = val
+        _js_f96x_charge(state, "F999 too many parts")
+        seen += 1
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            continue
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        raise _JSExprFail("F999 bad props")
+    if seen == 0:
+        raise _JSExprFail("F999 empty props")
+    return j
+
+
+def _js_f999_assign_add(text, j, oname, env, wr, conf, state):
+    """Parse `O.key='lit';` / `O['key']='lit';` at text[j] (F999).
+
+    Plain assignment installs (fresh key) or updates (writable key)
+    node-exactly; assigning to an existing non-writable
+    descriptor-installed key fails closed (the engine sloppy-ignores
+    or strict-throws -- both outside the string discipline). Returns
+    next_index. Never evals.
+    """
+    n = len(text)
+    tname, k = _js_parse_ident(text, _js_skip_ws(text, j))
+    if tname != oname:
+        raise _JSExprFail("F999 assign target")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ".":
+        key, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+    elif k < n and text[k] == "[":
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F999 assign key not a literal")
+        key, k = _js_parse_string(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F999 assign bracket not closed")
+        k += 1
+    else:
+        raise _JSExprFail("F999 assign not a member")
+    if key == "__proto__":
+        raise _JSExprFail("F999 __proto__ not modeled")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != "=" or text.startswith(("==", "=>"), k):
+        raise _JSExprFail("F999 assign not plain")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail("F999 assign value not a literal")
+    val, k = _js_parse_string(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ";":
+        raise _JSExprFail("F999 assign not closed")
+    if key in env[oname] and not wr.get(key, True):
+        raise _JSExprFail("F999 assign to non-writable")
+    env[oname][key] = val
+    wr[key] = True
+    conf[key] = True
+    _js_f96x_charge(state, "F999 too many parts")
+    return k + 1
+
+
+def _js_f99x_term(what):
+    """Build one RESULT additive term parser for the F999/F1000 family.
+
+    A string literal, a bound-string ident, or an `O.k` / `O['k']`
+    member read over a dict env binding. Never evals.
+    """
+    def _term(text, j, env, state):
+        n = len(text)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            return _js_parse_string(text, j)
+        if j < n and text[j] in _JS_IDENT_START:
+            nm, k2 = _js_parse_ident(text, j)
+            k3 = _js_skip_ws(text, k2)
+            if k3 < n and text[k3] in ".[":
+                return _js_f96x_dict_read(text, j, env, what)
+            if nm in env and isinstance(env[nm], str):
+                return env[nm], k2
+            raise _JSExprFail(what + " term ident unbound")
+        raise _JSExprFail(what + " term not modeled")
+    return _term
+
+
+def _js_f999_defineprops_decode(text):
+    """Decode the F999 defineProperties family.
+
+    `var|let|const O={}|{k:'v',...};`
+    `Object.defineProperties(O,{k:{value:'lit'[,flags]},...});` (0+)
+    [`O.k='lit';` / `O['k']='lit';` (0+)]
+    `var|let|const RESULT=<ADD>;` -- descriptor-object fragment
+    assembly (F970 residual: F970 models only the singular
+    defineProperty). At least one install or plain assignment is
+    required. Node-exact (v24.20.0) for the modeled subset;
+    everything else fails closed. Returns the decoded string, or
+    None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    env = {}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, oname, j = _js_f96x_decl(text, j)
+        props, j = _js_f95x_parse_obj_lit(text, _js_skip_ws(text, j),
+                                          state)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j += 1
+        env[oname] = dict(props)
+        # Object-literal own props are writable+configurable in the
+        # engine (node v24.20.0).
+        wr = {k: True for k in props}
+        conf = {k: True for k in props}
+        _js_f96x_charge(state, "F999 too many parts")
+        installed = 0
+        while True:
+            save = _js_skip_ws(text, j)
+            save_state = dict(state)
+            try:
+                m = _js_match_kw(text, save, "Object")
+                if m is None:
+                    raise _JSExprFail("F999 not defineProperties")
+                k = _js_expect(text, _js_skip_ws(text, m), ".")
+                dm = _js_match_kw(text, k, "defineProperties")
+                if dm is None:
+                    raise _JSExprFail("F999 not defineProperties")
+                k = _js_expect(text, _js_skip_ws(text, dm), "(")
+                tname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+                if tname != oname:
+                    raise _JSExprFail("F999 defineProperties target")
+                k = _js_expect(text, _js_skip_ws(text, k), ",")
+                k = _js_f999_install(text, k, oname, env, wr, conf,
+                                     state)
+                k = _js_expect(text, _js_skip_ws(text, k), ")")
+                k = _js_expect(text, _js_skip_ws(text, k), ";")
+                installed += 1
+                j = k
+                continue
+            except _JSExprFail:
+                # A failed install may have charged F452 budget: restore
+                # it (wave-383 snapshot/restore discipline). The state is
+                # hook-local, so this is consistency-only, but the rule
+                # is unconditional.
+                state.update(save_state)
+            try:
+                j = _js_f999_assign_add(text, save, oname, env, wr,
+                                        conf, state)
+                installed += 1
+                continue
+            except _JSExprFail:
+                state.update(save_state)
+                j = save
+                break
+        if installed == 0:
+            return None
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        val, j = _js_f96x_parse_additive(text, j, env, state,
+                                         "F999", _js_f99x_term("F999"))
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the descriptor assembly is
+                           # obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f999_create_decode(text):
+    """Decode the F999 Object.create-descriptor family.
+
+    `var|let|const O=Object.create(null|{...},{k:{value:'lit'[,flags]},...});`
+    [`O.k='lit';` / `O['k']='lit';` (0+)]
+    `var|let|const RESULT=<ADD>;` -- Object.create with a
+    descriptors argument (F970 residual). An optional leading
+    `var|let|const P={...};` allows the bound name P as the proto
+    (node-exact: P is a known object literal, so the create cannot
+    throw; P's props stay proto-chain-only and fail closed here).
+    Prototype reads fail closed here (F1002 owns the proto-chain
+    shape). Node-exact (v24.20.0) for the modeled subset; everything
+    else fails closed. Returns the decoded string, or None. Never
+    evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    env = {}
+    try:
+        j = _js_skip_ws(text, 0)
+        # Optional leading `var|let|const P={...};` -- a bound proto
+        # name for the create below. Speculative: restore the
+        # position and the F452 budget if it is not there (the
+        # wave-383 snapshot/restore discipline).
+        pname = None
+        save0 = j
+        save_state = dict(state)
+        try:
+            _, pname, j = _js_f96x_decl(text, j)
+            _, j = _js_f95x_parse_obj_lit(text, _js_skip_ws(text, j),
+                                          state)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ";":
+                raise _JSExprFail("F999 proto decl not closed")
+            j += 1
+        except _JSExprFail:
+            j = save0
+            pname = None
+            state.update(save_state)
+        _, oname, j = _js_f96x_decl(text, j)
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "Object")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "create")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        nm = _js_match_kw(text, j, "null")
+        if nm is not None:
+            j = nm
+        elif j < n and text[j] == "{":
+            # Inline proto literal -- its props are reachable only
+            # via the proto chain, which fails closed in this family
+            # (F1002 owns the proto-chain shape).
+            _, j = _js_f95x_parse_obj_lit(text, j, state)
+        elif pname is not None and j < n and \
+                text[j] in _JS_IDENT_START:
+            qname, qj = _js_parse_ident(text, j)
+            if qname != pname:
+                return None
+            j = qj
+        else:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        env[oname] = {}
+        wr = {}
+        conf = {}
+        j = _js_f999_install(text, j, oname, env, wr, conf, state)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j += 1
+        _js_f96x_charge(state, "F999 too many parts")
+        while True:
+            save = _js_skip_ws(text, j)
+            try:
+                j = _js_f999_assign_add(text, save, oname, env, wr,
+                                        conf, state)
+            except _JSExprFail:
+                j = save
+                break
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        val, j = _js_f96x_parse_additive(text, j, env, state,
+                                         "F999", _js_f99x_term("F999"))
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the descriptor assembly is
+                           # obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f999_stmt_decode(text):
+    """Decode F999 statement sequences (whole-text, _decode_layer hook).
+
+    Descriptor-object assembly: `Object.defineProperties` installs
+    and `Object.create(null|{...},{descriptors})` installs (filed
+    2026-10-09 by wave-392 attack round 60; F970 models only the
+    singular defineProperty and inline-literal gopd). Tries the two
+    families in order; both return None on miss. Never evals.
+    """
+    val = _js_f999_defineprops_decode(text)
+    if val is not None:
+        return val
+    return _js_f999_create_decode(text)
+
+
+# -- F1000 ---------------------------------------------------------------
+
+def _js_f1000_decl(text, j, state):
+    """Parse the F1000 accumulator declaration.
+
+    `var|let|const NAME='lit';` / `=null;` / bare `;`, or
+    `var|let|const NAME={k:'v',...};` / `={};` for the member form.
+    Returns (name, value, j-after-`;`) where value is a string, None
+    (undefined/null), or a dict (member accumulator). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    kw, k = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail("F1000 not a declaration")
+    k = _js_skip_ws(text, k)
+    name, k = _js_parse_ident(text, k)
+    if name == "arguments" or name in _F611_RESERVED:
+        raise _JSExprFail("F1000 bad decl name")
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == ";":
+        return name, None, k + 1
+    if k >= n or text[k] != "=" or text.startswith(("==", "=>"), k):
+        raise _JSExprFail("F1000 decl without init")
+    k = _js_skip_ws(text, k + 1)
+    if k < n and text[k] in "'\"":
+        val, k = _js_parse_string(text, k)
+    elif k < n and text[k] == "{":
+        val, k = _js_f95x_parse_obj_lit(text, k, state)
+    elif _js_match_kw(text, k, "null") is not None:
+        val = None
+        k = _js_match_kw(text, k, "null")
+    else:
+        raise _JSExprFail("F1000 decl init not modeled")
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ";":
+        raise _JSExprFail("F1000 decl not closed")
+    return name, val, k + 1
+
+
+def _js_f1000_apply_op(op, base, rhs):
+    """Node-exact (v24.20.0) logical/plus assignment over the modeled base.
+
+    base is a string or None (undefined/null). `||=` assigns on
+    falsy, `&&=` on truthy, `??=` on null/undefined, `+=`
+    concatenates. `+=` on an unbound/null base fails closed (node
+    yields "undefinedx"/"nullx" -- a documented boundary, never a
+    mis-decode). Returns the new base value. Never evals.
+    """
+    if op == "+=":
+        if base is None:
+            raise _JSExprFail("F1000 plus-assign on empty")
+        return base + rhs
+    if op == "||=":
+        if base is None or base == "":
+            return rhs
+        return base
+    if op == "&&=":
+        if isinstance(base, str) and base != "":
+            return rhs
+        return base
+    if op == "??=":
+        if base is None:
+            return rhs
+        return base
+    raise _JSExprFail("F1000 bad op")
+
+
+def _js_f1000_op_stmt(text, j, env, state):
+    """Parse `ACC ||= 'lit';` / `O.k += 'lit';` etc. at text[j] (F1000).
+
+    The op token must be exactly `||=`, `&&=`, `??=`, or `+=` (no
+    internal whitespace -- node rejects `+ =` as a SyntaxError);
+    the bitwise `|=` is not modeled. RHS must be a string literal.
+    Returns next_index; updates env node-exactly. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    tname, k = _js_parse_ident(text, j)
+    k = _js_skip_ws(text, k)
+    member = False
+    key = None
+    if k < n and text[k] == ".":
+        key, k = _js_parse_ident(text, _js_skip_ws(text, k + 1))
+        member = True
+    elif k < n and text[k] == "[":
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            raise _JSExprFail("F1000 member key not a literal")
+        key, k = _js_parse_string(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "]":
+            raise _JSExprFail("F1000 member not closed")
+        k += 1
+        member = True
+    k = _js_skip_ws(text, k)
+    op = None
+    for cand in ("||=", "&&=", "??=", "+="):
+        if text.startswith(cand, k):
+            op = cand
+            break
+    if op is None:
+        raise _JSExprFail("F1000 op not modeled")
+    k = _js_skip_ws(text, k + len(op))
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail("F1000 rhs not a literal")
+    rhs, k = _js_parse_string(text, k)
+    k = _js_skip_ws(text, k)
+    if k >= n or text[k] != ";":
+        raise _JSExprFail("F1000 stmt not closed")
+    if member:
+        if key == "__proto__":
+            raise _JSExprFail("F1000 __proto__ not modeled")
+        if tname not in env or not isinstance(env[tname], dict):
+            raise _JSExprFail("F1000 member target not an object")
+        env[tname][key] = _js_f1000_apply_op(op, env[tname].get(key),
+                                             rhs)
+    else:
+        if tname not in env or isinstance(env[tname], dict):
+            raise _JSExprFail("F1000 acc unbound")
+        env[tname] = _js_f1000_apply_op(op, env[tname], rhs)
+    _js_f96x_charge(state, "F1000 too many parts")
+    return k + 1
+
+
+def _js_f1000_stmt_decode(text):
+    """Decode F1000 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const s='lit'|null|<bare>;` (or `var o={v:'lit'};`)
+    (`s`/`o.v` `||=`/`&&=`/`??=`/`+=` `'lit';`)+ (1+)
+    `var|let|const RESULT=<ADD>;` -- assignment-operator fragment
+    accumulation (filed 2026-10-09 by wave-392 attack round 60; no
+    assignment-operator production existed). Node-exact (v24.20.0)
+    for the modeled subset; everything else fails closed. Returns
+    the decoded string, or None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    env = {}
+    try:
+        j = _js_skip_ws(text, 0)
+        sname, sval, j = _js_f1000_decl(text, j, state)
+        env[sname] = sval
+        _js_f96x_charge(state, "F1000 too many parts")
+        nops = 0
+        while True:
+            save = _js_skip_ws(text, j)
+            try:
+                j = _js_f1000_op_stmt(text, save, env, state)
+                nops += 1
+            except _JSExprFail:
+                j = save
+                break
+        if nops == 0:
+            return None
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        val, j = _js_f96x_parse_additive(text, j, env, state,
+                                         "F1000", _js_f99x_term("F1000"))
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the op-assign assembly is
+                           # obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- F1001 ---------------------------------------------------------------
+
+def _js_f1001_stmt_decode(text):
+    """Decode F1001 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const RESULT=Reflect.apply(String.prototype.concat,"lit",['l1',...]);`
+    -- Reflect.apply on String.prototype.concat (filed 2026-10-09 by
+    wave-392 attack round 60; F951 models Reflect on the String
+    constructor only, and the F469 machinery models
+    Array.prototype.concat targets only -- String.prototype.concat
+    is outside both). Node-exact (v24.20.0): the string thisArg
+    concatenates with each string-literal array element in order;
+    null/undefined thisArgs throw in the engine (fail closed here);
+    non-literal args fail closed. Returns the decoded string, or
+    None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "Reflect")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "apply")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "String")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "prototype")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "concat")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ",")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            # null/undefined thisArgs throw in the engine (node
+            # v24.20.0); non-literal thisArgs fail closed.
+            return None
+        thisarg, j = _js_parse_string(text, j)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        args = []
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "]":
+            j += 1
+        else:
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    return None
+                arg, j = _js_parse_string(text, j)
+                args.append(arg)
+                _js_f96x_charge(state, "F1001 too many parts")
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    if j < n and text[j] == "]":
+                        # Trailing comma -- engine-legal.
+                        j += 1
+                        break
+                    continue
+                if j < n and text[j] == "]":
+                    j += 1
+                    break
+                return None
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_expect_semi_end(text, j)
+        val = thisarg + "".join(args)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1001 result too long")
+        state["ops"] += 1  # the Reflect call is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- F1002 ---------------------------------------------------------------
+
+def _js_f1002_term(text, j, env, state):
+    """One F1002 RESULT additive term.
+
+    A string literal, a `D.value` / `D['value']` descriptor read, or
+    an `O.k` / `O['k']` member read resolved over O's own props then
+    its one-level prototype (node-exact, v24.20.0). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    if j < n and text[j] in _JS_IDENT_START:
+        nm, k2 = _js_parse_ident(text, j)
+        k3 = _js_skip_ws(text, k2)
+        if k3 < n and text[k3] in ".[":
+            oname = nm
+            if text[k3] == "[":
+                kk = _js_skip_ws(text, k3 + 1)
+                if kk >= n or text[kk] not in "'\"":
+                    raise _JSExprFail("F1002 member key not a literal")
+                key, kk = _js_parse_string(text, kk)
+                kk = _js_skip_ws(text, kk)
+                if kk >= n or text[kk] != "]":
+                    raise _JSExprFail("F1002 member not closed")
+                kk += 1
+            else:
+                key, kk = _js_parse_ident(text, _js_skip_ws(text,
+                                                            k3 + 1))
+            if oname == env["_dname"]:
+                if key != "value":
+                    raise _JSExprFail("F1002 descr key not value")
+                return env["_dval"], kk
+            if oname == env["_obj"]:
+                if key in env["_own"]:
+                    return env["_own"][key], kk
+                proto = env["_proto"]
+                if proto is not None and key in proto:
+                    return proto[key], kk
+                raise _JSExprFail("F1002 member unbound")
+            raise _JSExprFail("F1002 member target unbound")
+        # Bare identifiers never assemble strings in this family: the
+        # env holds only the decoder's internal keys
+        # (_obj/_own/_proto/_dname/_dval), so a bare `_dval`/`_d`/`_obj`
+        # would mis-decode an object-typed variable as a string (the
+        # engine yields "[object Object]" -- H1, wave-393 spec review).
+        # The documented term grammar needs no bare idents; member
+        # reads (`D.value`, `O.k`) are handled above. Fail closed.
+        raise _JSExprFail("F1002 term ident unbound")
+    raise _JSExprFail("F1002 term not modeled")
+
+
+def _js_f1002_stmt_decode(text):
+    """Decode F1002 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const P={v:'lit',...};`
+    `var|let|const O=Object.create(P|{...});`
+    [`O.w='lit';` / `O['w']='lit';` (0+)]
+    `var|let|const D=(Object|Reflect).getOwnPropertyDescriptor(Object.getPrototypeOf(O),'v');`
+    `var|let|const RESULT=<ADD>;`
+    -- prototype-chain descriptor reads (filed 2026-10-09 by wave-392
+    attack round 60; F970 models only own-descriptor reads on inline
+    literals). Node-exact (v24.20.0): one-level proto resolution; a
+    missing key (engine undefined) and a null proto (engine throws)
+    fail closed. Returns the decoded string, or None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    env = {}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, pname, j = _js_f96x_decl(text, j)
+        pprops, j = _js_f95x_parse_obj_lit(text, _js_skip_ws(text, j),
+                                           state)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j += 1
+        _js_f96x_charge(state, "F1002 too many parts")
+        _, oname, j = _js_f96x_decl(text, j)
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "Object")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "create")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        proto = None
+        if j < n and text[j] == "{":
+            proto, j = _js_f95x_parse_obj_lit(text, j, state)
+        elif j < n and text[j] in _JS_IDENT_START:
+            qname, j = _js_parse_ident(text, j)
+            if qname != pname:
+                return None
+            proto = dict(pprops)
+        else:
+            # Object.create(null) -- the engine throws on the later
+            # getOwnPropertyDescriptor(null,...): fail closed here.
+            return None
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j += 1
+        own = {}
+        _js_f96x_charge(state, "F1002 too many parts")
+        while True:
+            save = _js_skip_ws(text, j)
+            try:
+                tname, k = _js_parse_ident(text, save)
+                if tname != oname:
+                    raise _JSExprFail("F1002 assign target")
+                k = _js_skip_ws(text, k)
+                if k < n and text[k] == ".":
+                    key, k = _js_parse_ident(text, _js_skip_ws(text,
+                                                               k + 1))
+                elif k < n and text[k] == "[":
+                    k = _js_skip_ws(text, k + 1)
+                    if k >= n or text[k] not in "'\"":
+                        raise _JSExprFail("F1002 assign key not literal")
+                    key, k = _js_parse_string(text, k)
+                    k = _js_skip_ws(text, k)
+                    if k >= n or text[k] != "]":
+                        raise _JSExprFail("F1002 assign not closed")
+                    k += 1
+                else:
+                    raise _JSExprFail("F1002 assign not a member")
+                if key == "__proto__":
+                    raise _JSExprFail("F1002 __proto__ not modeled")
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != "=" or \
+                        text.startswith(("==", "=>"), k):
+                    raise _JSExprFail("F1002 assign not plain")
+                k = _js_skip_ws(text, k + 1)
+                if k >= n or text[k] not in "'\"":
+                    raise _JSExprFail("F1002 assign value not literal")
+                val, k = _js_parse_string(text, k)
+                k = _js_skip_ws(text, k)
+                if k >= n or text[k] != ";":
+                    raise _JSExprFail("F1002 assign not closed")
+                # O is fresh from Object.create: its own props are
+                # writable+configurable (node v24.20.0).
+                own[key] = val
+                _js_f96x_charge(state, "F1002 too many parts")
+                j = k + 1
+            except _JSExprFail:
+                j = save
+                break
+        _, dname, j = _js_f96x_decl(text, j)
+        if len({pname, oname, dname}) < 3:
+            # Redeclared names: a `var` redeclare would be node-exact,
+            # but `let`/`const` duplicates throw SyntaxError in the
+            # engine (H2, wave-393 spec review -- the decoder
+            # mis-decoded `let o=...;let o=...`). The hook does not
+            # track decl kinds, so fail closed uniformly; the filed
+            # shapes use distinct names.
+            return None
+        j = _js_skip_ws(text, j)
+        hm = _js_match_kw(text, j, "Object")
+        if hm is None:
+            hm = _js_match_kw(text, j, "Reflect")
+        if hm is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, hm), ".")
+        m = _js_match_kw(text, j, "getOwnPropertyDescriptor")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "Object")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "getPrototypeOf")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        tname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if tname != oname:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            return None
+        key, j = _js_parse_string(text, j)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j += 1
+        if key not in proto:
+            # The engine returns undefined -- outside the string
+            # discipline: fail closed.
+            raise _JSExprFail("F1002 descriptor key missing")
+        env["_obj"] = oname
+        env["_own"] = own
+        env["_proto"] = proto
+        env["_dname"] = dname
+        env["_dval"] = proto[key]
+        _js_f96x_charge(state, "F1002 too many parts")
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        val, j = _js_f96x_parse_additive(text, j, env, state,
+                                         "F1002", _js_f1002_term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the proto-chain read is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
 def _js_f963_apply_cb(elements, cb, state):
     """Apply an F963 parsed callback to *elements* (F963).
 
@@ -114369,7 +115242,8 @@ def _decode_layer(text):
                 if len(variants) >= _MAX_CANDIDATES:
                     return variants
     # F961/F962/F964/F967/F968/F969/F970/F971/F972/F973/F974/F986/
-    # F988/F989/F990/F991/F992/F993/F994/F995: narrow whole-text
+    # F988/F989/F990/F991/F992/F993/F994/F995/F999/F1000/F1001/F1002:
+    # narrow whole-text
     # statement-sequence decoders. Each returns the decoded string
     # or None; all filed shapes BREAK on the open tree, so no
     # earlier production decoded them and the pre-existing variant
@@ -114384,7 +115258,9 @@ def _decode_layer(text):
                      _js_f988_stmt_decode, _js_f989_stmt_decode,
                      _js_f990_stmt_decode, _js_f991_stmt_decode,
                      _js_f992_stmt_decode, _js_f993_stmt_decode,
-                     _js_f994_stmt_decode, _js_f995_stmt_decode):
+                     _js_f994_stmt_decode, _js_f995_stmt_decode,
+                     _js_f999_stmt_decode, _js_f1000_stmt_decode,
+                     _js_f1001_stmt_decode, _js_f1002_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
