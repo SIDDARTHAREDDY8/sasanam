@@ -52,12 +52,12 @@ def _redfirst_shapes(prefix, num):
 @_t
 def test_b0_footer_state():
     """Control: wave-401 merge footer (F1090-F1102 CLOSED (13);
-    F1103-F1109 OPEN (7); next free F1110; corrects wave-400 footer)."""
+    F1103-F1110 OPEN (8); next free F1111; corrects wave-400 footer)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("# Wave-401: F1090-F1102 CLOSED (13); F1103-F1109 OPEN (7); next free F1110" in text
-          and "Next free finding: **F1110**" in text
-          and "F1103-F1109 OPEN (7" in text
+    ok = ("# Wave-401: F1090-F1102 CLOSED (13); F1103-F1110 OPEN (8); next free F1111" in text
+          and "Next free finding: **F1111**" in text
+          and "F1103-F1110 OPEN (8" in text
           and "CORRECTS wave-400 footer error" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
@@ -102,6 +102,9 @@ def _closed_pin(prefix, num):
 # New round-69 pins (F1103-F1108 decoder seam) -- still OPEN.
 for _n in (1103, 1104, 1105, 1106, 1107, 1108):
     _open_pin("w401", _n)
+
+# Merge Spec-review residual (F1110 inline C.values() of-source) -- OPEN.
+_open_pin("w401", 1110)
 
 
 @_t
