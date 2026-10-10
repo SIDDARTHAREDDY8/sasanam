@@ -115405,6 +115405,815 @@ def _js_f998_stmt_decode(text):
 # -- end F996/F997/F998 ------------------------------------------------
 
 
+# -- F1009/F1010/F1011/F1012 (wave-394 lane 2) --------------------------------------
+
+def _js_f1009_skip_balanced(text, j, open_ch, close_ch):
+    """Skip from just past *open_ch* to just past its matching *close_ch* (F1009).
+
+    String spans are skipped with escape handling so a bracket inside a
+    string never affects the balance. Backticks fail closed (miss, never
+    mis-decoded). Raises _JSExprFail on overrun. Never evals.
+    """
+    n = len(text)
+    depth = 1
+    while j < n:
+        c = text[j]
+        if c in "'\"":
+            j = _js_skip_quoted(text, j)
+            continue
+        if c == "`":
+            raise _JSExprFail("F1009 template in class body")
+        if c == open_ch:
+            depth += 1
+        elif c == close_ch:
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    raise _JSExprFail("F1009 unbalanced")
+
+
+def _js_f1009_skip_to_semi(text, j, end):
+    """Skip to the `;` at depth 0 in [j, end) (F1009).
+
+    Nesting-aware (`()[]{}`) with string-span skipping; a `}` at depth 0
+    is a stray closer here and fails closed. Raises _JSExprFail on
+    overrun. Never evals.
+    """
+    depth = 0
+    while j < end:
+        c = text[j]
+        if c in "'\"":
+            j = _js_skip_quoted(text, j)
+            continue
+        if c == "`":
+            raise _JSExprFail("F1009 template in class body")
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                raise _JSExprFail("F1009 stray closer")
+            depth -= 1
+        elif c == ";" and depth == 0:
+            return j + 1
+        j += 1
+    return end  # a trailing member without `;` is valid node
+
+
+def _js_f1009_skip_member(text, j, end):
+    """Skip one non-static class member at text[j] (F1009).
+
+    Instance members never affect static-field reads, so they are
+    skipped, never modeled: methods (incl. getters/setters) via
+    balanced paren/brace skips, fields via the depth-aware `;` skip.
+    Computed keys, private names, and anything unrecognized fail
+    closed (miss, never mis-decoded). Returns the index just past the
+    member. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < end and text[j] == "*":
+        j = _js_skip_ws(text, j + 1)
+    if j < end and text[j] == "[":
+        raise _JSExprFail("F1009 computed member")
+    if j < end and text[j] == "#":
+        raise _JSExprFail("F1009 private member")
+    if j < end and text[j] == ";":
+        return j + 1
+    if j >= end or text[j] not in _JS_IDENT_START:
+        raise _JSExprFail("F1009 member head")
+    name, j = _js_f99x_ident(text, j)
+    j = _js_skip_ws(text, j)
+    if name in ("get", "set") and j < end and text[j] in _JS_IDENT_START:
+        _, j = _js_f99x_ident(text, j)  # accessor target; skipped like a method
+        j = _js_skip_ws(text, j)
+    if j < end and text[j] == "(":
+        j = _js_f1009_skip_balanced(text, j + 1, "(", ")")
+        j = _js_skip_ws(text, j)
+        if j < end and text[j] == "{":
+            _, _, j = _js_span_braced(text, j)
+        return j
+    if j < end and text[j] == "=":
+        return _js_f1009_skip_to_semi(text, j + 1, end)
+    if j < end and text[j] == ";":
+        return j + 1
+    if j >= end:
+        return j
+    raise _JSExprFail("F1009 member shape")
+
+
+def _js_f1009_stmt_decode(text):
+    """Decode F1009 class static-field reads (whole-text, _decode_layer hook).
+
+    `class C{static p="frag1"; ...}; ...; var|let|const RESULT=C.p+"frag2"+...;`
+    -- fragments held in class static fields and re-read via member reads
+    (attack round 61; no class-static production is modeled).
+
+    Node-exact (v24.20.0): `static p="lit"` creates an own data property
+    on the constructor; reads concatenate in term order; duplicate
+    declarations are later-wins; `static p;` (no initializer) yields
+    `undefined`; instance fields/methods never affect static reads and
+    are skipped. `static {...}` blocks fail closed: they execute in
+    textual order interleaved with field initializers and can reassign
+    modeled fields, so skipping them would mis-decode. Anything else
+    unrecognized -- `extends`, decorators, computed keys, private names,
+    `static get p(){...}` / `static async` / generators, `__proto__`
+    fields, non-literal initializers, backslash-bearing literals outside
+    the modeled escape discipline, `RESULT` as a class name -- fails
+    closed (miss, never mis-decoded). Disjoint from F949/F662 (which own
+    static *blocks*) by failing closed on them, and from wave-394 lane
+    1's F1008 (instance fields) by modeling only static reads. Returns
+    the decoded string, or None. Never evals.
+    """
+    if "class" not in text:
+        return None
+    n = len(text)
+    try:
+        classes = {}
+        j = _js_skip_ws(text, 0)
+        while True:
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, j, "class")
+            if m is None:
+                break
+            j = _js_skip_ws(text, m)
+            cname, j = _js_f99x_ident(text, j)
+            if cname in classes or cname == "RESULT" or \
+                    cname in _F611_RESERVED or cname == "arguments":
+                raise _JSExprFail("F1009 bad class name")
+            j = _js_skip_ws(text, j)
+            if _js_match_kw(text, j, "extends") is not None:
+                raise _JSExprFail("F1009 extends")
+            if j >= n or text[j] != "{":
+                raise _JSExprFail("F1009 no class body")
+            inner_start, inner_end, j = _js_span_braced(text, j)
+            fields = {}
+            k = inner_start
+            while True:
+                k = _js_skip_ws(text, k)
+                if k >= inner_end:
+                    break
+                if text[k] == ";":
+                    k += 1
+                    continue
+                sm = _js_match_kw(text, k, "static")
+                if sm is None:
+                    k = _js_f1009_skip_member(text, k, inner_end)
+                    continue
+                k = _js_skip_ws(text, sm)
+                if k < inner_end and text[k] == "{":
+                    raise _JSExprFail("F1009 static block")
+                    # Blocks run in textual order interleaved with field
+                    # initializers and can reassign modeled fields --
+                    # skipping would mis-decode (miss, never mis-decoded).
+                if k >= inner_end or text[k] in "#[*":
+                    raise _JSExprFail("F1009 bad static member")
+                fname, k = _js_f99x_ident(text, k)
+                if fname == "__proto__":
+                    raise _JSExprFail("F1009 proto field")
+                k = _js_skip_ws(text, k)
+                if k < inner_end and text[k] == "=":
+                    lit, k = _js_f99x_parse_str(text, _js_skip_ws(text, k + 1))
+                    k = _js_skip_ws(text, k)
+                    if k < inner_end and text[k] == ";":
+                        k += 1
+                    elif k != inner_end:
+                        raise _JSExprFail("F1009 static field terminator")
+                    fields[fname] = lit  # later-wins, matching the engine
+                    continue
+                if k < inner_end and text[k] == "(":
+                    k = _js_f1009_skip_balanced(text, k + 1, "(", ")")
+                    k = _js_skip_ws(text, k)
+                    if k < inner_end and text[k] == "{":
+                        _, _, k = _js_span_braced(text, k)
+                    continue
+                if k < inner_end and text[k] == ";":
+                    k += 1
+                    fields.pop(fname, None)  # `static p;` -> undefined
+                    continue
+                if k == inner_end:
+                    fields.pop(fname, None)
+                    continue
+                raise _JSExprFail("F1009 static member shape")
+            classes[cname] = fields
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ";":
+                j += 1
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        seen = []
+
+        def _res(p, _classes=classes, _seen=seen):
+            cn, q = _js_f99x_ident(text, p)
+            if cn not in _classes:
+                raise _JSExprFail("F1009 unbound class")
+            q = _js_skip_ws(text, q)
+            if q < len(text) and text[q] == ".":
+                fn, q = _js_f99x_ident(text, _js_skip_ws(text, q + 1))
+            elif q < len(text) and text[q] == "[":
+                q = _js_skip_ws(text, q + 1)  # A["p"] === A.p, node-exact
+                if q >= len(text) or text[q] not in "'\"":
+                    raise _JSExprFail("F1009 bracket key not literal")
+                fn, q = _js_f99x_parse_str(text, q)
+                q = _js_skip_ws(text, q)
+                if q >= len(text) or text[q] != "]":
+                    raise _JSExprFail("F1009 bracket not closed")
+                q += 1
+            else:
+                raise _JSExprFail("F1009 not a member read")
+            if fn not in _classes[cn]:
+                raise _JSExprFail("F1009 unbound static")
+            _seen.append(1)
+            return _classes[cn][fn], q
+
+        v, j = _js_f99x_additive(text, j, _res)
+        if not seen:
+            raise _JSExprFail("F1009 no static reads")
+        _js_f96x_expect_semi_end(text, j)
+        return v
+    except _JSExprFail:
+        return None
+
+
+def _js_f1010_parse_getter_fn(text, j):
+    """Parse a `__defineGetter__` callback at text[j] (F1010).
+
+    Accepts `function [name](){return "LIT";}`, the braced-arrow twin
+    `(x)=>{return "LIT";}` / `x=>{return "LIT";}`, and the concise-arrow
+    twin `()=>"LIT"`. Zero parameters only; the returned literal comes
+    from the node-exact string discipline (Annex-B octal fails closed).
+    Anything else -- generators, params, non-literal bodies -- fails
+    closed. Returns (literal, next_index). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_skip_ws(text, m)
+        if j < n and text[j] in _JS_IDENT_START:
+            _, j = _js_f99x_ident(text, j)
+            j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("F1010 getter params")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F1010 getter params")
+        j = _js_skip_ws(text, j + 1)
+    else:
+        if j < n and text[j] == "(":
+            j = _js_skip_ws(text, j + 1)
+            if j >= n or text[j] != ")":
+                raise _JSExprFail("F1010 arrow params")
+            j = _js_skip_ws(text, j + 1)
+        elif j < n and text[j] in _JS_IDENT_START:
+            _, j = _js_f99x_ident(text, j)
+            j = _js_skip_ws(text, j)
+        else:
+            raise _JSExprFail("F1010 getter fn shape")
+        if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+            raise _JSExprFail("F1010 no arrow")
+        j = _js_skip_ws(text, j + 2)
+        if j < n and text[j] in "'\"":
+            lit, j = _js_f99x_parse_str(text, j)  # concise arrow body
+            return lit, j
+    if j >= n or text[j] != "{":
+        raise _JSExprFail("F1010 getter body")
+    j = _js_skip_ws(text, j + 1)
+    r = _js_match_kw(text, j, "return")
+    if r is None:
+        raise _JSExprFail("F1010 getter no return")
+    j = _js_skip_ws(text, r)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail("F1010 getter non-literal")
+    lit, j = _js_f99x_parse_str(text, j)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        j += 1
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "}":
+        raise _JSExprFail("F1010 getter body end")
+    return lit, j + 1
+
+
+def _js_f1010_stmt_decode(text):
+    """Decode F1010 `__defineGetter__` reads (whole-text, _decode_layer hook).
+
+    `var|let|const O={}; O.__defineGetter__("p",function(){return "frag1";});`
+    `...; var|let|const RESULT=O.p+"frag2"+...;` -- fragments installed as
+    legacy getters and re-read via member reads (attack round 61; no
+    top-level `__defineGetter__` production is modeled).
+
+    Node-exact (v24.20.0): the install defines an accessor property;
+    reads invoke the zero-arg getter in install order (later-wins per
+    property); getters are receiver-independent here (the modeled
+    bodies close over literals only). Object literals must be exactly
+    `{}`; `__proto__` keys, non-literal keys/bodies, setters, and any
+    extra statement fail closed. Disjoint from F703/F725 (IIFE-only
+    productions) by the top-level statement grammar. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "__defineGetter__" not in text:
+        return None
+    n = len(text)
+    try:
+        getters = {}
+        j = _js_skip_ws(text, 0)
+        while True:
+            j = _js_skip_ws(text, j)
+            kw, k = _js_match_decl_kw(text, j)
+            if kw is not None:
+                k2 = _js_skip_ws(text, k)
+                nm, k2 = _js_f99x_ident(text, k2)
+                k3 = _js_skip_ws(text, k2)
+                if nm == "RESULT" and k3 < n and text[k3] == "=":
+                    j = k3 + 1
+                    break
+                if k3 >= n or text[k3] != "=":
+                    raise _JSExprFail("F1010 decl shape")
+                k4 = _js_skip_ws(text, k3 + 1)
+                if k4 >= n or text[k4] != "{":
+                    raise _JSExprFail("F1010 not object decl")
+                k5 = _js_skip_ws(text, k4 + 1)
+                if k5 >= n or text[k5] != "}":
+                    raise _JSExprFail("F1010 object not empty")
+                k6 = _js_skip_ws(text, k5 + 1)
+                if k6 >= n or text[k6] != ";":
+                    raise _JSExprFail("F1010 decl not closed")
+                if nm in getters:
+                    raise _JSExprFail("F1010 dup object")
+                getters[nm] = {}
+                j = k6 + 1
+                continue
+            oname, k = _js_f99x_ident(text, j)
+            if oname not in getters:
+                raise _JSExprFail("F1010 unbound object")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ".":
+                raise _JSExprFail("F1010 not member")
+            mn, k = _js_f99x_ident(text, _js_skip_ws(text, k + 1))
+            if mn != "__defineGetter__":
+                raise _JSExprFail("F1010 not defineGetter")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != "(":
+                raise _JSExprFail("F1010 no call")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] not in "'\"":
+                raise _JSExprFail("F1010 key not literal")
+            pname, k = _js_f99x_parse_str(text, k)
+            if pname == "__proto__":
+                raise _JSExprFail("F1010 proto key")
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ",":
+                raise _JSExprFail("F1010 no comma")
+            lit, k = _js_f1010_parse_getter_fn(text, k + 1)
+            k = _js_skip_ws(text, k)
+            if k >= n or text[k] != ")":
+                raise _JSExprFail("F1010 call not closed")
+            k = _js_skip_ws(text, k + 1)
+            if k >= n or text[k] != ";":
+                raise _JSExprFail("F1010 install not closed")
+            getters[oname][pname] = lit  # later-wins, matching the engine
+            j = k + 1
+        seen = []
+
+        def _res(p, _getters=getters, _seen=seen):
+            on, q = _js_f99x_ident(text, p)
+            if on not in _getters:
+                raise _JSExprFail("F1010 unbound read object")
+            q = _js_skip_ws(text, q)
+            if q < len(text) and text[q] == ".":
+                pn, q = _js_f99x_ident(text, _js_skip_ws(text, q + 1))
+            elif q < len(text) and text[q] == "[":
+                q = _js_skip_ws(text, q + 1)  # o["p"] === o.p, node-exact
+                if q >= len(text) or text[q] not in "'\"":
+                    raise _JSExprFail("F1010 bracket key not literal")
+                pn, q = _js_f99x_parse_str(text, q)
+                q = _js_skip_ws(text, q)
+                if q >= len(text) or text[q] != "]":
+                    raise _JSExprFail("F1010 bracket not closed")
+                q += 1
+            else:
+                raise _JSExprFail("F1010 not a member read")
+            if pn not in _getters[on]:
+                raise _JSExprFail("F1010 unbound getter")
+            _seen.append(1)
+            return _getters[on][pn], q
+
+        v, j = _js_f99x_additive(text, j, _res)
+        if not seen:
+            raise _JSExprFail("F1010 no getter reads")
+        _js_f96x_expect_semi_end(text, j)
+        return v
+    except _JSExprFail:
+        return None
+
+
+def _js_f1011_parse_callback_head(text, j):
+    """Parse a forEach callback head at text[j] (F1011).
+
+    Accepts `function [name](X){`, `(X)=>{`, `X=>{` (braced bodies) and
+    `(X)=>`, `X=>` (concise bodies). Exactly one parameter; zero or
+    2+ params fail closed. Returns (param_name, next_index, braced).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_skip_ws(text, m)
+        if j < n and text[j] in _JS_IDENT_START:
+            _, j = _js_f99x_ident(text, j)
+            j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("F1011 cb params")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] not in _JS_IDENT_START:
+            raise _JSExprFail("F1011 cb param")
+        pname, j = _js_f99x_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F1011 cb params end")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "{":
+            raise _JSExprFail("F1011 cb body")
+        return pname, j + 1, True
+    if j < n and text[j] == "(":
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] not in _JS_IDENT_START:
+            raise _JSExprFail("F1011 arrow param")
+        pname, j = _js_f99x_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F1011 arrow params end")
+        j = _js_skip_ws(text, j + 1)
+    elif j < n and text[j] in _JS_IDENT_START:
+        pname, j = _js_f99x_ident(text, j)
+        j = _js_skip_ws(text, j)
+    else:
+        raise _JSExprFail("F1011 cb shape")
+    if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+        raise _JSExprFail("F1011 no arrow")
+    j = _js_skip_ws(text, j + 2)
+    if j < n and text[j] == "{":
+        return pname, j + 1, True
+    return pname, j, False
+
+
+def _js_f1011_stmt_decode(text):
+    """Decode F1011 forEach accumulation (whole-text, _decode_layer hook).
+
+    `var|let R="init"; ["frag1","frag2"].forEach(function(X){R+=X;});`
+    `var|let|const RESULT=R+...;` -- fragments accumulated by forEach
+    (attack round 61; no forEach-accumulation production is modeled).
+
+    Node-exact (v24.20.0): forEach visits the literal array's elements
+    in order (holes are skipped by the engine -- modeled by skipping
+    them here, node-exact); `R+=X` and `R=R+X` are engine-identical;
+    the callback's single parameter must not shadow the accumulator
+    (shadowing changes the semantics -- failed closed). Arrow twins
+    (braced and concise bodies) are admitted. Non-literal elements,
+    a `thisArg`, extra params, and any extra statement fail closed.
+    Disjoint from F939 (IIFE-only) by the top-level statement grammar.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ".forEach(" not in text:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        rname, k = _js_f99x_ident(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            return None
+        init, k = _js_f99x_parse_str(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ";":
+            return None
+        j = _js_skip_ws(text, k + 1)
+        if j >= n or text[j] != "[":
+            return None
+        j += 1
+        elems = []
+        while True:
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            if j < n and text[j] == ",":
+                j += 1  # hole: forEach skips holes (node v24.20.0)
+                continue
+            if j >= n or text[j] not in "'\"":
+                return None  # non-literals fail closed
+            lit, j = _js_f99x_parse_str(text, j)
+            elems.append(lit)
+            if len(elems) > _JS_EXPR_MAX_CODEPOINTS:
+                return None
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ".":
+            return None
+        mn, j = _js_f99x_ident(text, _js_skip_ws(text, j + 1))
+        if mn != "forEach":
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "(":
+            return None
+        pname, j, braced = _js_f1011_parse_callback_head(text, j + 1)
+        if pname == rname:
+            raise _JSExprFail("F1011 param shadows accumulator")
+        j = _js_skip_ws(text, j)
+        r1, j = _js_f99x_ident(text, j)
+        if r1 != rname:
+            raise _JSExprFail("F1011 body acc")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+" and text[j + 1:j + 2] == "=":
+            j = _js_skip_ws(text, j + 2)
+        elif j < n and text[j] == "=" and text[j + 1:j + 2] not in ("=", ">"):
+            j = _js_skip_ws(text, j + 1)
+            r2, j = _js_f99x_ident(text, j)
+            if r2 != rname:
+                raise _JSExprFail("F1011 body acc2")
+            j = _js_skip_ws(text, j)
+            if not (j < n and text[j] == "+" and text[j + 1:j + 2] != "+"):
+                raise _JSExprFail("F1011 body plus")
+            j = _js_skip_ws(text, j + 1)
+        else:
+            raise _JSExprFail("F1011 body op")
+        x1, j = _js_f99x_ident(text, j)
+        if x1 != pname:
+            raise _JSExprFail("F1011 body param")
+        j = _js_skip_ws(text, j)
+        if braced:
+            if j < n and text[j] == ";":
+                j += 1
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "}":
+                raise _JSExprFail("F1011 cb body end")
+            j += 1
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F1011 forEach not closed")
+        j = _js_skip_ws(text, j + 1)
+        if j < n and text[j] == ";":
+            j += 1
+        acc = init + "".join(elems)
+        if len(acc) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1011 result too long")
+        _, rname2, j = _js_f96x_decl(text, j)
+        if rname2 != "RESULT":
+            return None
+        seen = []
+
+        def _res(p, _rname=rname, _acc=acc, _seen=seen):
+            nm, q = _js_f99x_ident(text, p)
+            if nm != _rname:
+                raise _JSExprFail("F1011 unbound acc")
+            _seen.append(1)
+            return _acc, q
+
+        v, j = _js_f99x_additive(text, j, _res)
+        if not seen:
+            raise _JSExprFail("F1011 no acc read")
+        _js_f96x_expect_semi_end(text, j)
+        return v
+    except _JSExprFail:
+        return None
+
+
+def _js_f1012_parse_index_one(text, j):
+    """Parse a numeric literal with value 1 at text[j] (F1012).
+
+    `kv[1]`, `kv[1.0]`, `kv[0x1]`, `kv[01]`, `kv[1e0]` all read index 1
+    in node (v24.20.0) -- the property key is ToString(1) either way.
+    Anything else (including a following identifier char, which would
+    make it a different token) fails closed. Returns the next index.
+    Never evals.
+    """
+    n = len(text)
+    k = j
+    if k < n and text[k] == "0" and k + 1 < n and text[k + 1] in "xXoObB":
+        base = {"x": 16, "X": 16, "o": 8, "O": 8, "b": 2, "B": 2}[text[k + 1]]
+        alpha = {16: "0123456789abcdef", 8: "01234567", 2: "01"}[base]
+        k += 2
+        d0 = k
+        while k < n and text[k].lower() in alpha:
+            k += 1
+        if k == d0:
+            raise _JSExprFail("F1012 bad index")
+        if int(text[d0:k], base) != 1:
+            raise _JSExprFail("F1012 index not 1")
+    else:
+        d0 = k
+        while k < n and text[k] in "0123456789":
+            k += 1
+        if k < n and text[k] == ".":
+            k += 1
+            while k < n and text[k] in "0123456789":
+                k += 1
+        if k < n and text[k] in "eE":
+            e = k + 1
+            if e < n and text[e] in "+-":
+                e += 1
+            e0 = e
+            while e < n and text[e] in "0123456789":
+                e += 1
+            if e == e0:
+                raise _JSExprFail("F1012 bad exponent")
+            k = e
+        if k == d0:
+            raise _JSExprFail("F1012 bad index")
+        try:
+            val = float(text[d0:k])
+        except ValueError:
+            raise _JSExprFail("F1012 bad index")
+        if val != 1:
+            raise _JSExprFail("F1012 index not 1")
+    if k < n and text[k] in _JS_IDENT_CONT:
+        raise _JSExprFail("F1012 index boundary")
+    return k
+
+
+def _js_f1012_stmt_decode(text):
+    """Decode F1012 for-of array-pair accumulation (whole-text, _decode_layer hook).
+
+    `var|let R="init"; for(var|let|const KV of [["k","frag1"],...])R+=KV[1];`
+    `var|let|const RESULT=R+...;` -- fragments accumulated by for-of over
+    an array-pair literal (attack round 61; F989 models for-of over Map
+    entries only -- the array-pair for-of is a distinct production).
+
+    Node-exact (v24.20.0): the loop binds each pair in order; `KV[1]`
+    reads the second element; `R+=KV[1]` and `R=R+KV[1]` are
+    engine-identical; braced and unbraced bodies are admitted. Pairs
+    must be exactly 2 string literals (a 1- or 3-element pair, a hole,
+    or a non-literal fails closed); the pair index accepts any numeric
+    literal with value 1 (`1`, `1.0`, `0x1`, `01` -- node ToString(1)).
+    Disjoint from F989 (which requires `new Map(` and `of IDENT`) by
+    the `of [` array-literal form. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "of" not in text:
+        return None
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        rname, k = _js_f99x_ident(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != "=":
+            return None
+        k = _js_skip_ws(text, k + 1)
+        if k >= n or text[k] not in "'\"":
+            return None
+        init, k = _js_f99x_parse_str(text, k)
+        k = _js_skip_ws(text, k)
+        if k >= n or text[k] != ";":
+            return None
+        j = _js_skip_ws(text, k + 1)
+        mf = _js_match_kw(text, j, "for")
+        if mf is None:
+            return None
+        j = _js_skip_ws(text, mf)
+        if j >= n or text[j] != "(":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        kw2, k2 = _js_match_decl_kw(text, j)
+        if kw2 is None:
+            return None
+        j = _js_skip_ws(text, k2)
+        kvname, j = _js_f99x_ident(text, j)
+        if kvname == rname:
+            return None  # loop var shadows accumulator: invalid JS anyway
+        j = _js_skip_ws(text, j)
+        mo = _js_match_kw(text, j, "of")
+        if mo is None:
+            return None
+        j = _js_skip_ws(text, mo)
+        if j >= n or text[j] != "[":
+            return None  # F989 owns `of IDENT`; array-pair form is ours
+        j += 1
+        vals = []
+        while True:
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            if j >= n or text[j] != "[":
+                return None
+            j = _js_skip_ws(text, j + 1)
+            if j >= n or text[j] not in "'\"":
+                return None
+            _, j = _js_f99x_parse_str(text, j)  # key: literal, value unused
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != ",":
+                return None
+            j = _js_skip_ws(text, j + 1)
+            if j >= n or text[j] not in "'\"":
+                return None
+            vv, j = _js_f99x_parse_str(text, j)
+            vals.append(vv)
+            if len(vals) > _JS_EXPR_MAX_CODEPOINTS:
+                return None
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "]":
+                return None  # exactly 2 elements per pair
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        braced = False
+        if j < n and text[j] == "{":
+            braced = True
+            j = _js_skip_ws(text, j + 1)
+        r1, j = _js_f99x_ident(text, j)
+        if r1 != rname:
+            return None
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+" and text[j + 1:j + 2] == "=":
+            j = _js_skip_ws(text, j + 2)
+        elif j < n and text[j] == "=" and text[j + 1:j + 2] not in ("=", ">"):
+            j = _js_skip_ws(text, j + 1)
+            r2, j = _js_f99x_ident(text, j)
+            if r2 != rname:
+                return None
+            j = _js_skip_ws(text, j)
+            if not (j < n and text[j] == "+" and text[j + 1:j + 2] != "+"):
+                return None
+            j = _js_skip_ws(text, j + 1)
+        else:
+            return None
+        kref, j = _js_f99x_ident(text, j)
+        if kref != kvname:
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "[":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        j = _js_f1012_parse_index_one(text, j)  # any numeric literal == 1
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "]":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        if j < n and text[j] == ";":
+            j += 1
+        if braced:
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "}":
+                return None
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == ";":
+                j += 1
+        acc = init + "".join(vals)
+        if len(acc) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1012 result too long")
+        _, rname2, j = _js_f96x_decl(text, j)
+        if rname2 != "RESULT":
+            return None
+        seen = []
+
+        def _res(p, _rname=rname, _acc=acc, _seen=seen):
+            nm, q = _js_f99x_ident(text, p)
+            if nm != _rname:
+                raise _JSExprFail("F1012 unbound acc")
+            _seen.append(1)
+            return _acc, q
+
+        v, j = _js_f99x_additive(text, j, _res)
+        if not seen:
+            raise _JSExprFail("F1012 no acc read")
+        _js_f96x_expect_semi_end(text, j)
+        return v
+    except _JSExprFail:
+        return None
+
+# -- end F1009/F1010/F1011/F1012 ------------------------------------------------
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -115718,6 +116527,23 @@ def _decode_layer(text):
     # requiring at least one `o.p=o.q` copy statement. Additive, in
     # F-number order.
     for _stmtdec in (_js_f1003_stmt_decode, _js_f1004_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1009/F1010/F1011/F1012: narrow whole-text statement-sequence decoders
+    # (wave-394 lane 2). F1009: class static-field reads -- disjoint from
+    # F949/F662 (static *blocks*) by requiring `static NAME=` field
+    # declarations, and from wave-394 lane 1's F1008 (instance fields) by
+    # modeling only static reads. F1010: top-level __defineGetter__
+    # installs -- disjoint from F703/F725 (IIFE-only) by the top-level
+    # statement grammar. F1011: array-literal .forEach accumulation --
+    # disjoint from F939 (IIFE-only). F1012: for-of over array-pair
+    # literals -- disjoint from F989 (which requires `new Map(`) by the
+    # `of [` array-literal form. Additive, in F-number order.
+    for _stmtdec in (_js_f1009_stmt_decode, _js_f1010_stmt_decode,
+                     _js_f1011_stmt_decode, _js_f1012_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
