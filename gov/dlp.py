@@ -112650,6 +112650,302 @@ def _js_f986_stmt_decode(text):
         return None
 
 
+# ---------------------------------------------------------------------------
+# F992/F993/F994/F995: narrow whole-text statement decoders (wave-393 lane 2)
+#
+# Each decoder matches one filed finding's statement family over the whole
+# text and returns the decoded string, or None. They are registered in
+# _decode_layer after the F986 decoder: every filed shape BREAKs on the
+# open tree, so no earlier production decoded them and the pre-existing
+# variant order (F441) is preserved. Each runs on a fresh attempt-local
+# budget state; misses raise _JSExprFail and escape nothing (the wave-383
+# snapshot/restore holds trivially -- nothing is charged before the shape
+# is committed to). All node-exact (v24.20.0) or fail-closed. Never evals.
+#
+#   F992: var|let|const E=[new ]Error("LIT");var RESULT=<additive>;
+#         with E.message / E["message"] reads. new Error("s").message
+#         is exactly s for every string s (node-exact, incl. "").
+#   F993: var|let|const R=[new ]RegExp("LIT"[,flags]);var RESULT=<additive>;
+#         with R.source / R["source"] reads. V8's .source getter escapes
+#         "/", LF, CR, U+2028, U+2029 and maps "" to "(?:)" -- so the
+#         literal must be non-empty and contain none of those; every
+#         other string is source-identical (verified in node v24.20.0),
+#         and a lone backslash or unbalanced group makes the attacker's
+#         own construction throw, which is outside the modeled charset.
+#   F994: (function(){var RESULT=<additive>;return RESULT;})("A","B");
+#         with arguments[N] reads. No declared params, so arguments[N]
+#         is exactly the Nth actual argument in sloppy and strict mode
+#         (node v24.20.0); OOB reads are engine-"undefined" -- fail
+#         closed (documented narrowness).
+#   F995: (function(...a){var RESULT=<additive>;return RESULT;})("A","B");
+#         with a[N] reads over the rest parameter (exactly the actual
+#         args array; OOB fails closed as for F994).
+
+_F993_SOURCE_SAFE = frozenset(
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "0123456789"
+    "_-. :@"
+)
+
+
+def _js_f99x_str_parse(text, i):
+    """Parse a '...' or "..." literal at text[i] (F992-F995).
+
+    Wraps _js_parse_string but fails closed on Annex-B octal escapes
+    (`\\1`-`\\7`, e.g. `"\\141"`): the shared parser cooks those to
+    the digit string ("141") while node (sloppy mode) yields "a" --
+    substituting the mis-cooked value would be a mis-decode (wave-393
+    Spec review). `\\0` (NUL) and `\\8`/`\\9` (literal "8"/"9") are
+    already node-exact via _JS_SIMPLE_ESCAPES. Never evals.
+    """
+    v, k = _js_parse_string(text, i)
+    j = i
+    while True:
+        j = text.find("\\", j, k)
+        if j == -1:
+            break
+        if j + 1 < k and text[j + 1] in "1234567":
+            raise _JSExprFail("F99x octal escape")
+        j += 2
+    return v, k
+
+
+def _js_f99x_ctor_decode(text, ctor, member, src_ok):
+    """Shared core for F992 (Error.message) / F993 (RegExp.source).
+
+    Parses `var|let|const E=[new ]CTOR("LIT"[,flags]);` then
+    `var|let|const RESULT=<additive>;` where the additive admits
+    string literals and `E.member` / `E["member"]` reads over the
+    bound literal. *src_ok* validates the cooked literal (F993: the
+    V8 .source identity rule). Returns the decoded string, or None.
+    Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, ename, j = _js_f96x_decl(text, j)
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "new")
+        if m is not None:
+            j = _js_skip_ws(text, m)
+        m = _js_match_kw(text, j, ctor)
+        if m is None:
+            return None
+        j = _js_expect(text, m, "(")
+        frag, j = _js_f99x_str_parse(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            # Optional second literal (RegExp flags / Error options):
+            # neither affects .message/.source -- node-exact to ignore.
+            _flags, j = _js_f99x_str_parse(text, _js_skip_ws(text, j + 1))
+            j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        if not src_ok(frag):
+            raise _JSExprFail("F99x ctor literal rejected")
+        env = {ename: {member: frag}}
+        _js_f96x_charge(state, "F99x too many parts")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j = _js_skip_ws(text, j + 1)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+
+        def _term(t, k, e, s):
+            k = _js_skip_ws(t, k)
+            if k < len(t) and t[k] in "'\"":
+                return _js_f99x_str_parse(t, k)
+            if k < len(t) and t[k] in _JS_IDENT_START:
+                _nm, k2 = _js_parse_ident(t, k)
+                k3 = _js_skip_ws(t, k2)
+                if k3 < len(t) and t[k3] in ".[":
+                    return _js_f96x_dict_read(t, k, e, "F99x")
+                # A bare ctor-object read coerces ("Error: x") -- the
+                # string-only discipline fails closed.
+                raise _JSExprFail("F99x term ident unbound")
+            raise _JSExprFail("F99x term not modeled")
+
+        val, j = _js_f96x_parse_additive(text, j, env, state, "F99x",
+                                         _term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the ctor-member read is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f992_stmt_decode(text):
+    """Decode F992 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const E=[new ]Error("LIT");var RESULT=<additive>;` with
+    `E.message` / `E["message"]` reads. new Error("s").message is
+    exactly s for every string s (node v24.20.0). Returns the decoded
+    string, or None. Never evals.
+    """
+    return _js_f99x_ctor_decode(text, "Error", "message",
+                                lambda v: True)
+
+
+def _js_f993_stmt_decode(text):
+    """Decode F993 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const R=[new ]RegExp("LIT"[,flags]);` then
+    `var RESULT=<additive>;` with `R.source` / `R["source"]` reads.
+    The literal must be non-empty and drawn from the source-safe
+    charset: V8 escapes "/", LF, CR, U+2028/U+2029 in .source and maps
+    "" to "(?:)" (all verified in node v24.20.0); anything else fails
+    closed. Returns the decoded string, or None. Never evals.
+    """
+    def _src_ok(v):
+        return bool(v) and all(c in _F993_SOURCE_SAFE for c in v)
+
+    return _js_f99x_ctor_decode(text, "RegExp", "source", _src_ok)
+
+
+def _js_f99x_iife_decode(text, want_rest):
+    """Shared core for F994 (arguments[N]) / F995 (rest-param a[N]).
+
+    Parses `(function([..r]){var|let|const RESULT=<additive>;` then
+    `return RESULT;})("A","B",...);` end-to-end. With *want_rest*
+    False the header params must be empty and reads are
+    `arguments[N]`; with True the header is exactly `...NAME` and
+    reads are `NAME[N]`. Call args must all be string literals; an
+    out-of-range index is engine-"undefined" -- fail closed. Returns
+    the decoded string, or None. Never evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_expect(text, _js_skip_ws(text, 0), "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            return None
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        rname = None
+        if want_rest:
+            if j >= n or text[j:j + 3] != "...":
+                return None
+            rname, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+            if rname == "arguments" or rname in _F611_RESERVED:
+                raise _JSExprFail("F99x bad rest name")
+        else:
+            if j < n and text[j] == ".":
+                # Rest params belong to F995.
+                return None
+            if j >= n or text[j] != ")":
+                # Declared params would alias arguments in sloppy
+                # mode -- outside the modeled discipline.
+                return None
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        _, resname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if resname != "RESULT":
+            return None
+        terms = []
+        while True:
+            k = _js_skip_ws(text, j)
+            if k < n and text[k] in "'\"":
+                lit, k = _js_f99x_str_parse(text, k)
+                terms.append(("lit", lit))
+            else:
+                aname = rname if want_rest else "arguments"
+                if not text.startswith(aname, k) or (
+                        k + len(aname) < n and
+                        text[k + len(aname)] in _JS_IDENT_CONT):
+                    raise _JSExprFail("F99x term not modeled")
+                kk = _js_skip_ws(text, k + len(aname))
+                kk = _js_expect(text, kk, "[")
+                kk = _js_skip_ws(text, kk)
+                d0 = kk
+                while kk < n and text[kk].isascii() and text[kk].isdigit():
+                    kk += 1
+                if kk == d0:
+                    raise _JSExprFail("F99x bad index")
+                terms.append(("arg", int(text[d0:kk])))
+                k = _js_expect(text, kk, "]")
+            _js_f96x_charge(state, "F99x too many parts")
+            j = _js_skip_ws(text, k)
+            if j < n and text[j] == "+" and \
+                    not text.startswith("++", j):
+                j = j + 1
+                continue
+            break
+        j = _js_expect(text, j, ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            return None
+        j = _js_skip_ws(text, m)
+        nm, j = _js_parse_ident(text, j)
+        if nm != "RESULT":
+            return None
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "(")
+        args = []
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            while True:
+                lit, j = _js_f99x_str_parse(text, _js_skip_ws(text, j))
+                args.append(lit)
+                _js_f96x_charge(state, "F99x too many args")
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = j + 1
+                    continue
+                break
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = j + 1
+        j = _js_skip_ws(text, j)
+        if j != n:
+            return None
+        out = []
+        for kind, v in terms:
+            if kind == "lit":
+                out.append(v)
+            else:
+                if v >= len(args):
+                    # Engine reads undefined -- outside the
+                    # string-only discipline: fail closed.
+                    raise _JSExprFail("F99x arg index OOB")
+                out.append(args[v])
+        res = "".join(out)
+        if len(res) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F99x result too long")
+        state["ops"] += 1  # the indexed read is obfuscation-shaped
+        return res
+    except _JSExprFail:
+        return None
+
+
+def _js_f994_stmt_decode(text):
+    """Decode F994 statement sequences (whole-text, _decode_layer hook).
+
+    `(function(){var RESULT=<additive>;return RESULT;})("A","B");`
+    with `arguments[N]` reads. No declared params, so arguments[N]
+    is exactly the Nth actual argument (sloppy and strict,
+    node v24.20.0). Returns the decoded string, or None. Never evals.
+    """
+    return _js_f99x_iife_decode(text, False)
+
+
+def _js_f995_stmt_decode(text):
+    """Decode F995 statement sequences (whole-text, _decode_layer hook).
+
+    `(function(...a){var RESULT=<additive>;return RESULT;})("A","B");`
+    with `a[N]` reads over the rest parameter (exactly the actual
+    args array, node v24.20.0). Returns the decoded string, or None.
+    Never evals.
+    """
+    return _js_f99x_iife_decode(text, True)
+
+
 def _js_f987_rewrite(text):
     """Rewrite leading `var|let|const C=[<ints>,...];` (F987).
 
@@ -113741,9 +114037,9 @@ def _decode_layer(text):
                 _add(decoded)
                 if len(variants) >= _MAX_CANDIDATES:
                     return variants
-    # F961/F962/F964/F967/F968/F969/F970/F971/F972/F973/F974/
-    # F988/F989/F990/F991: narrow whole-text statement-sequence
-    # decoders. Each returns the decoded string
+    # F961/F962/F964/F967/F968/F969/F970/F971/F972/F973/F974/F986/
+    # F988/F989/F990/F991/F992/F993/F994/F995: narrow whole-text
+    # statement-sequence decoders. Each returns the decoded string
     # or None; all filed shapes BREAK on the open tree, so no
     # earlier production decoded them and the pre-existing variant
     # order (F441) is preserved. Ordered after the F501 rewrite for
@@ -113755,7 +114051,9 @@ def _decode_layer(text):
                      _js_f972_stmt_decode, _js_f973_stmt_decode,
                      _js_f974_stmt_decode, _js_f986_stmt_decode,
                      _js_f988_stmt_decode, _js_f989_stmt_decode,
-                     _js_f990_stmt_decode, _js_f991_stmt_decode):
+                     _js_f990_stmt_decode, _js_f991_stmt_decode,
+                     _js_f992_stmt_decode, _js_f993_stmt_decode,
+                     _js_f994_stmt_decode, _js_f995_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
