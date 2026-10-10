@@ -127808,6 +127808,500 @@ def _js_f1071_stmt_decode(text):
 # -- end F1068/F1069/F1070/F1071 ---------------------------------------------------
 
 
+# -- F1076/F1077 (wave-399 lane 2) ----------------------------------------
+# Narrow whole-text statement-sequence decoders (wave-399 lane 2),
+# hooked in the _decode_layer _stmtdec loop after F1072. Each parses a
+# strict whole-text grammar; anything outside the grammar fails closed
+# (returns None -- a miss, never a mis-decode). All shapes node-verified
+# (v24.20.0). Like every other _stmtdec hook these charge no F452 scan
+# budget (pure text-to-string scans; element counts capped at
+# _JS_EXPR_MAX_CODEPOINTS and results at _MAX_DECODE_BYTES), so there
+# is nothing to snapshot/restore on miss (wave-383 rule). No new
+# decision codes, no new re.compile (pin 28). Never evals.
+
+
+def _js_f1076f1077_codes_to_str(codes, what):
+    """Map int codes to a string with the engine's ToUint16 wrap (F1076/F1077).
+
+    `String.fromCharCode` applies ToUint16; surrogates fail closed (the
+    F1006 documented narrowness: a non-BMP decode can never match the
+    ASCII-only credential rules). Never evals.
+    """
+    out = []
+    for cp in codes:
+        ch = _safe_chr(cp & 0xFFFF)
+        if ch is None:
+            raise _JSExprFail(what + " surrogate codepoint")
+        out.append(ch)
+    return "".join(out)
+
+
+def _js_f1076_stmt_decode(text):
+    """Decode F1076 Function-constructor body staging (whole-text hook).
+
+    `var|let|const F=(new |)Function("P","BODY");`
+    `var|let|const RESULT=F([<int codes>]);`
+    where BODY is `var|let ACC='';` + an accumulation loop over P +
+    `return ACC;` (the F1028/F1029 accum-loop grammar).
+
+    Filed 2026-10-10 (wave-398 attack round 66): F964 (CLOSED) models
+    only the param-passing form `new Function('p1',...,'pn','return
+    p1+...+pn;')`. Staging the accumulation loop INSIDE the body
+    string, called with the int array, assembles node-exactly
+    (v24.20.0) while find_credential MISSES.
+
+    Disjoint from F964 by construction: F964's body must start with
+    `return` (via _js_f964_body_value); this hook fails closed when
+    the body starts with `return`, and F964 fails closed on anything
+    else. Exactly one param is required. Returns the decoded string,
+    or None. Never evals.
+    """
+    if "Function(" not in text:
+        return None
+    shadow = {"Function", "String"}
+    bound = set()
+    try:
+        j = _js_skip_ws(text, 0)
+        _, fname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(fname, bound, shadow, "F1076")
+        bound.add(fname)
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "new")
+        if m is not None:
+            j = _js_skip_ws(text, m)
+        m = _js_match_kw(text, j, "Function")
+        if m is None:
+            raise _JSExprFail("F1076 no Function")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        n = len(text)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F1076 param not a literal")
+        param, j = _js_parse_string(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ",":
+            raise _JSExprFail("F1076 ctor args")
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F1076 body not a literal")
+        body, j = _js_parse_string(text, j)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            raise _JSExprFail("F1076 extra ctor args")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        try:
+            pname, k = _js_parse_ident(param, 0)
+        except _JSExprFail:
+            raise _JSExprFail("F1076 bad param")
+        if k != len(param) or pname in _F611_RESERVED or \
+                pname == "arguments":
+            raise _JSExprFail("F1076 bad param")
+        _js_f1028f1029_check_fresh_name(pname, bound, shadow, "F1076")
+        # F964's production starts with `return` -- fail closed there.
+        bk = _js_skip_ws(body, 0)
+        if _js_match_kw(body, bk, "return") is not None:
+            raise _JSExprFail("F1076 return body is F964")
+        # Body grammar: `var|let ACC='';` + accum loop + `return ACC;`.
+        kw, k = _js_match_decl_kw(body, 0)
+        if kw not in ("var", "let"):
+            raise _JSExprFail("F1076 body decl")
+        acc, k = _js_parse_ident(body, _js_skip_ws(body, k))
+        _js_f1028f1029_check_fresh_name(acc, bound | {pname}, shadow,
+                                        "F1076")
+        k = _js_skip_ws(body, k)
+        if k >= len(body) or body[k] != "=" or \
+                body.startswith(("==", "=>"), k):
+            raise _JSExprFail("F1076 body acc init")
+        k = _js_skip_ws(body, k + 1)
+        if k >= len(body) or body[k] not in "'\"":
+            raise _JSExprFail("F1076 body acc not a literal")
+        init, k = _js_parse_string(body, k)
+        if init != "":
+            raise _JSExprFail("F1076 body acc not empty")
+        k = _js_expect(body, _js_skip_ws(body, k), ";")
+        k = _js_f1028f1029_parse_accum_loop(
+            body, k, pname, acc, bound | {pname, acc}, shadow, "F1076")
+        k = _js_skip_ws(body, k)
+        m = _js_match_kw(body, k, "return")
+        if m is None:
+            raise _JSExprFail("F1076 body no return")
+        rname, k = _js_parse_ident(body, _js_skip_ws(body, m))
+        if rname != acc:
+            raise _JSExprFail("F1076 body return mismatch")
+        k = _js_skip_ws(body, k)
+        if k < len(body) and body[k] == ";":
+            k = _js_skip_ws(body, k + 1)
+        if k != len(body):
+            raise _JSExprFail("F1076 body trailing junk")
+        # `var|let|const RESULT=F([<int codes>]);`
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1076 not RESULT")
+        j = _js_skip_ws(text, j)
+        iname, j = _js_parse_ident(text, j)
+        if iname != fname:
+            raise _JSExprFail("F1076 callee mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        codes, j = _js_f1028f1030_parse_code_array(
+            text, _js_skip_ws(text, j), "F1076")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_expect_semi_end(text, j)
+        val = _js_f1076f1077_codes_to_str(codes, "F1076")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1076 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1077_parse_module(text, j, what):
+    """Parse `import('data:text/javascript,export default [<ints>]')` at text[j].
+
+    j is at the `import` keyword. Returns (codes, j-after-`)`).
+    The module source must be exactly `export default [<int codes>]`
+    with an optional trailing `;` (both filed shapes); anything else --
+    string-literal defaults (F959d's production), percent-encoded
+    sources, multi-statement modules -- fails closed. Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, j, "import")
+    if m is None:
+        raise _JSExprFail(what + " no import")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail(what + " URL not a literal")
+    url, j = _js_parse_string(text, j)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    prefix = "data:text/javascript,"
+    if not url.startswith(prefix):
+        raise _JSExprFail(what + " not a data URL module")
+    if "%" in url:
+        raise _JSExprFail(what + " percent-encoded module")
+    src = url[len(prefix):]
+    k = _js_skip_ws(src, 0)
+    m = _js_match_kw(src, k, "export")
+    if m is None:
+        raise _JSExprFail(what + " no export")
+    k = _js_skip_ws(src, m)
+    m = _js_match_kw(src, k, "default")
+    if m is None:
+        raise _JSExprFail(what + " no default")
+    k = _js_skip_ws(src, m)
+    codes, k = _js_f1028f1030_parse_code_array(src, k, what)
+    k = _js_skip_ws(src, k)
+    if k < len(src) and src[k] == ";":
+        k = _js_skip_ws(src, k + 1)
+    if k != len(src):
+        raise _JSExprFail(what + " trailing module text")
+    return codes, j
+
+
+def _js_f1077_parse_default_member(text, j, mod_name, what):
+    """Parse `M.default` at text[j]; returns the next index. Never evals."""
+    iname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iname != mod_name:
+        raise _JSExprFail(what + " module mismatch")
+    j = _js_skip_ws(text, j)
+    n = len(text)
+    if j >= n or text[j] != ".":
+        raise _JSExprFail(what + " no dot")
+    mname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+    if mname != "default":
+        raise _JSExprFail(what + " not default")
+    return j
+
+
+def _js_f1077_parse_default_accum_loop(text, j, mod_name, acc_name,
+                                       bound, shadow, what):
+    """Parse the F1077 accumulation loop at text[j].
+
+    `for([var|let] I=0;I<M.default.length;(++)I|I++){ACC[+]=String.fromCharCode(M.default[I]);}`
+    -- also the `ACC=ACC+...` body form and the braceless
+    single-statement body (node). Mirrors
+    _js_f1028f1029_parse_accum_loop with the module-default member in
+    place of the plain array name. Returns the next index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "for")
+    if m is None:
+        raise _JSExprFail(what + " no for")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    kw, k = _js_match_decl_kw(text, j)
+    if kw is not None:
+        if kw == "const":
+            raise _JSExprFail(what + " const loop var")
+        j = k
+    loop_name, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    _js_f1028f1029_check_fresh_name(loop_name, bound, shadow, what)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "=")
+    zero, j = _js_f997_parse_int(text, _js_skip_ws(text, j), what)
+    if zero != 0:
+        raise _JSExprFail(what + " loop not from 0")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    iname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iname != loop_name:
+        raise _JSExprFail(what + " loop var mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "<")
+    j = _js_f1077_parse_default_member(text, j, mod_name, what)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+    if m is None:
+        raise _JSExprFail(what + " no length")
+    j = _js_expect(text, _js_skip_ws(text, m), ";")
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j] == "+" and text[j + 1] == "+":
+        j = _js_skip_ws(text, j + 2)
+        iname, j = _js_parse_ident(text, j)
+    else:
+        iname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if not (j + 1 < n and text[j] == "+" and text[j + 1] == "+"):
+            raise _JSExprFail(what + " no incr")
+        j = _js_skip_ws(text, j + 2)
+    if iname != loop_name:
+        raise _JSExprFail(what + " incr var mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "{":
+        j = _js_f1077_parse_default_accum_body(text, j + 1, mod_name,
+                                               acc_name, loop_name, what)
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    else:
+        j = _js_f1077_parse_default_accum_body(text, j, mod_name,
+                                               acc_name, loop_name, what)
+    return j
+
+
+def _js_f1077_parse_default_accum_body(text, j, mod_name, acc_name,
+                                      loop_name, what):
+    """Parse one F1077 accumulation body statement at text[j].
+
+    `ACC+=String.fromCharCode(M.default[I]);` or the
+    `ACC=ACC+String.fromCharCode(M.default[I]);` form. Returns the next
+    index (after the body's `;`). Never evals.
+    """
+    n = len(text)
+    aname2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if aname2 != acc_name:
+        raise _JSExprFail(what + " acc mismatch")
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j] == "+" and text[j + 1] == "=":
+        j = _js_skip_ws(text, j + 2)
+    elif (j < n and text[j] == "="
+            and not text.startswith(("==", "=>"), j)):
+        j = _js_skip_ws(text, j + 1)
+        rhs, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if rhs != acc_name:
+            raise _JSExprFail(what + " acc rhs mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "+")
+        j = _js_skip_ws(text, j)
+    else:
+        raise _JSExprFail(what + " bad body")
+    m = _js_match_kw(text, j, "String")
+    if m is None:
+        raise _JSExprFail(what + " no String")
+    j = _js_expect(text, _js_skip_ws(text, m), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " no fromCharCode")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_f1077_parse_default_member(text, j, mod_name, what)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "[")
+    iname2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iname2 != loop_name:
+        raise _JSExprFail(what + " fcc index mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "]")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        j += 1
+    elif not (j < n and text[j] == "}"):
+        raise _JSExprFail(what + " body not closed")
+    return j
+
+
+def _js_f1077_parse_fcc_spread(text, j, mod_name, what):
+    """Parse `String.fromCharCode(...M.default)` at text[j] (F1077).
+
+    Returns the next index. Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail(what + " no String")
+    j = _js_expect(text, _js_skip_ws(text, m), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " no fromCharCode")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_skip_ws(text, j)
+    n = len(text)
+    if j + 2 >= n or text[j:j + 3] != "...":
+        raise _JSExprFail(what + " no spread")
+    j = _js_f1077_parse_default_member(text, _js_skip_ws(text, j + 3),
+                                       mod_name, what)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    return j
+
+
+def _js_f1077_parse_result_spread_decl(text, j, mod_name, what):
+    """Parse `var|let|const RESULT=String.fromCharCode(...M.default)` (F1077).
+
+    Returns the next index (before the statement's `;`, left for the
+    caller). Never evals.
+    """
+    _, rname, j = _js_f96x_decl(text, j)
+    if rname != "RESULT":
+        raise _JSExprFail(what + " not RESULT")
+    j = _js_f1077_parse_fcc_spread(text, j, mod_name, what)
+    return _js_skip_ws(text, j)
+
+
+def _js_f1077_parse_accum_tail(text, j, mod_name, bound, shadow, what):
+    """Parse the F1077 accumulation tail at text[j] (both productions).
+
+    `var|let S='';` + accum loop over M.default +
+    `var|let|const RESULT=S;`. Returns the next index (before the
+    statement's `;`, left for the caller). Never evals.
+    """
+    kw, k = _js_match_decl_kw(text, j)
+    if kw not in ("var", "let"):
+        raise _JSExprFail(what + " tail decl")
+    acc, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    _js_f1028f1029_check_fresh_name(acc, bound, shadow, what)
+    k = _js_skip_ws(text, k)
+    n = len(text)
+    if k >= n or text[k] != "=" or text.startswith(("==", "=>"), k):
+        raise _JSExprFail(what + " tail acc init")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] not in "'\"":
+        raise _JSExprFail(what + " tail acc not a literal")
+    init, k = _js_parse_string(text, k)
+    if init != "":
+        raise _JSExprFail(what + " tail acc not empty")
+    k = _js_expect(text, _js_skip_ws(text, k), ";")
+    k = _js_f1077_parse_default_accum_loop(
+        text, k, mod_name, acc, bound | {acc}, shadow, what)
+    _, rname, k = _js_f96x_decl(text, _js_skip_ws(text, k))
+    if rname != "RESULT":
+        raise _JSExprFail(what + " tail not RESULT")
+    k = _js_skip_ws(text, k)
+    iname, k = _js_parse_ident(text, k)
+    if iname != acc:
+        raise _JSExprFail(what + " tail result mismatch")
+    return _js_skip_ws(text, k)
+
+
+def _js_f1077_stmt_decode(text):
+    """Decode F1077 import()-staged int-array reads (whole-text hook).
+
+    Production (a) -- `.then()`-chain consumption:
+    `import('data:text/javascript,export default [<int codes>]');`
+    `.then(M=>{var|let S='';<accum loop over M.default>;var|let|const RESULT=S;});`
+    (also the concise `var|let|const RESULT=String.fromCharCode(...M.default);`
+    callback-body twin).
+    Production (b) -- awaited import:
+    `var|let|const M=await import('data:text/javascript,export default [<int codes>];');`
+    `var|let|const RESULT=String.fromCharCode(...M.default);`
+    (also the accum-loop-over-M.default tail twin).
+
+    Filed 2026-10-10 (wave-398 attack round 66): F959d (CLOSED) models
+    only STRING-literal default exports (`export default "L";`). An
+    INT-ARRAY default export read back via spread or an accumulation
+    loop assembles node-exactly (v24.20.0) while find_credential
+    MISSES. Disjoint from F959d by construction: the module source
+    must be an int-array literal -- a string-literal default fails
+    closed here (F959d's production). Returns the decoded string, or
+    None. Never evals.
+    """
+    if "import(" not in text:
+        return None
+    shadow = {"String"}
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is not None:
+            # Production (b): `var|let|const M=await import('...');`
+            _, mname, j = _js_f96x_decl(text, j)
+            _js_f1028f1029_check_fresh_name(mname, set(), shadow,
+                                            "F1077")
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, j, "await")
+            if m is None:
+                raise _JSExprFail("F1077 no await")
+            codes, j = _js_f1077_parse_module(text, _js_skip_ws(text, m),
+                                              "F1077")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            bound = {mname}
+            j = _js_skip_ws(text, j)
+            # Tail: spread form or accum-loop form (spread tried first;
+            # the two are disjoint by the RESULT initializer shape).
+            try:
+                j2 = _js_f1077_parse_result_spread_decl(text, j, mname,
+                                                       "F1077")
+                _js_f96x_expect_semi_end(text, j2)
+                j = j2
+            except _JSExprFail:
+                j = _js_f1077_parse_accum_tail(text, j, mname, bound,
+                                               shadow, "F1077")
+                _js_f96x_expect_semi_end(text, j)
+        else:
+            # Production (a): bare `import('...').then(M=>{...});`
+            codes, j = _js_f1077_parse_module(text, j, "F1077")
+            j = _js_skip_ws(text, j)
+            n = len(text)
+            if j >= n or text[j] != ".":
+                raise _JSExprFail("F1077 no then dot")
+            m = _js_match_kw(text, _js_skip_ws(text, j + 1), "then")
+            if m is None:
+                raise _JSExprFail("F1077 no then")
+            j = _js_expect(text, m, "(")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "(":
+                mname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+                j = _js_expect(text, _js_skip_ws(text, j), ")")
+            else:
+                mname, j = _js_parse_ident(text, j)
+            _js_f1028f1029_check_fresh_name(mname, set(), shadow,
+                                            "F1077")
+            j = _js_skip_ws(text, j)
+            if not text.startswith("=>", j):
+                raise _JSExprFail("F1077 no arrow")
+            j = _js_expect(text, _js_skip_ws(text, j + 2), "{")
+            bound = {mname}
+            # Callback body: spread form or accum-loop form.
+            try:
+                j = _js_f1077_parse_result_spread_decl(
+                    text, _js_skip_ws(text, j), mname, "F1077")
+                j = _js_expect(text, j, ";")
+            except _JSExprFail:
+                j = _js_f1077_parse_accum_tail(text, _js_skip_ws(text, j),
+                                               mname, bound, shadow,
+                                               "F1077")
+                j = _js_expect(text, j, ";")
+            j = _js_expect(text, _js_skip_ws(text, j), "}")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            j = _js_skip_ws(text, j)
+            if j != len(text):
+                raise _JSExprFail("F1077 trailing input")
+        val = _js_f1076f1077_codes_to_str(codes, "F1077")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1077 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1076/F1077 ---------------------------------------------------
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -128415,6 +128909,20 @@ def _decode_layer(text):
     # production decoded them and the pre-existing variant order (F441)
     # is preserved. Additive, in F-number order.
     for _stmtdec in (_js_f1074_stmt_decode, _js_f1075_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1076/F1077: narrow whole-text statement-sequence decoders
+    # (wave-399 lane 2) -- Function-constructor body staging (F964
+    # residual), import()-staged int-array reads (F959d residual).
+    # Each returns the decoded string or None; all filed shapes BREAK
+    # on the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F964 (return-body) and F959d (string-literal defaults) by
+    # grammar (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1076_stmt_decode, _js_f1077_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
