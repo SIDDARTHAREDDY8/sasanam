@@ -343,6 +343,48 @@ _IMPERATIVES = re.compile(
     r"copy|leak|disclose|reveal|wire|transfer|embed|collect|attach|"
     r"schedule)\b")
 
+# F1024: zero-width characters attackers interleave inside imperative
+# keywords ("W\u200bire") so the keyword heuristic misses while a
+# human/model reader still sees the word. Stripped before the
+# keyword search; the characters are invisible, so removal cannot
+# create a false keyword out of visible text.
+_ZW_CHARS = "\u200b\u200c\u200d\ufeff"
+
+
+def _strip_zero_width(text):
+    for ch in _ZW_CHARS:
+        if ch in text:
+            text = text.replace(ch, "")
+    return text
+
+
+def _has_hidden_comment(text):
+    """True when *text* carries a substantive hidden HTML comment.
+
+    F1024: `<!-- ... -->` content is not rendered by mail/user
+    agents, so a driving unit carrying it is acting on text the
+    human principal never saw. Such content is instruction-shaped
+    by construction -- it is either an injection or dead markup,
+    and the seam routes it to approval (loud) rather than allowing
+    silently. Only comments with non-whitespace content count; an
+    UNTERMINATED `<!--` with substantive trailing content also
+    counts (in HTML rendering it hides everything after it from
+    the human -- not counting it would be fail-open at the seam;
+    2026-10-10 wave-394 spec-review). Never evals.
+    """
+    i = 0
+    n = len(text)
+    while True:
+        i = text.find("<!--", i)
+        if i < 0:
+            return False
+        j = text.find("-->", i + 4)
+        if j < 0:
+            return bool(text[i + 4:].strip())
+        if text[i + 4:j].strip():
+            return True
+        i = j + 3
+
 
 def instruction_shaped(text):
     """Deterministic heuristic: does this unit read like an instruction
@@ -351,7 +393,15 @@ def instruction_shaped(text):
     internals."""
     if not isinstance(text, str):
         return False
-    return bool(_IMPERATIVES.search(text))
+    norm = _strip_zero_width(text)
+    if _IMPERATIVES.search(norm):
+        return True
+    # F1024: hidden-from-human carriers evade the keyword heuristic
+    # (polite paraphrase, zero-width mangling) -- a substantive
+    # hidden HTML comment in the driving text is instruction-shaped
+    # by construction, so the grant seam routes to approval instead
+    # of falling through to "agent authority".
+    return _has_hidden_comment(norm)
 
 
 class ActionRequest(object):
