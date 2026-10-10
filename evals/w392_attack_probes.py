@@ -53,14 +53,13 @@ def _misses(payload):
 
 @_t
 def test_b0_footer_state():
-    """Control: merged footer (F949-F987 closed; open F988-F1003, F1004; next F1005)."""
+    """Control: merged footer (wave-393: F988-F1004 closed; F1005-F1024 open; next F1025)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("Next free finding: **F1005**" in text
-          and "F967-F974 CLOSED (8" in text
-          and "F986-F987 CLOSED (2" in text
-          and "F988-F1003 OPEN (16" in text
-          and "F1004 OPEN (1" in text)
+    ok = ("F988-F1004 CLOSED (17" in text
+          and "F1005-F1024 OPEN (20" in text
+          and "Next free finding: **F1025**" in text
+          and "next free F1025" in text)
     return ("HELD" if ok else "BREAK", "footer=%s" % ok)
 
 
@@ -82,130 +81,130 @@ def test_p9_taxonomy_pin():
 
 
 @_t
-def test_r60_f988_open():
-    """F988 OPEN (round 60): new String boxing reads."""
+def test_r60_f988_closed():
+    """F988 CLOSED (wave-393): new String boxing reads."""
     miss = _misses('var s=new String("xoxb-0123");var RESULT=s+"456789abcdef";')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f989_open():
-    """F989 OPEN (round 60): for-of over Map entries."""
+def test_r60_f989_closed():
+    """F989 CLOSED (wave-393): for-of over Map entries."""
     miss = _misses('var s="";var m=new Map([["a","xoxb-0123"],["b","456789abcdef"]]);for(var kv of m){s+=kv[1];}var RESULT=s;')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f990_open():
-    """F990 OPEN (round 60): Proxy get-trap reads."""
+def test_r60_f990_closed():
+    """F990 CLOSED (wave-393): Proxy get-trap reads."""
     miss = _misses('var p=new Proxy({a:"xoxb-0123",b:"456789abcdef"},{get:function(t,k){return t[k];}});var RESULT=p.a+p.b;')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f991_open():
-    """F991 OPEN (round 60): WeakRef deref reads."""
+def test_r60_f991_closed():
+    """F991 CLOSED (wave-393): WeakRef deref reads."""
     miss = _misses('var w=new WeakRef({v:"xoxb-0123"});var x=new WeakRef({v:"456789abcdef"});var RESULT=w.deref().v+x.deref().v;')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f992_open():
-    """F992 OPEN (round 60): Error.message reads."""
+def test_r60_f992_closed():
+    """F992 CLOSED (wave-393): Error.message reads."""
     miss = _misses('var e=new Error("xoxb-0123");var RESULT=e.message+"456789abcdef";')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f993_open():
-    """F993 OPEN (round 60): RegExp.source reads."""
+def test_r60_f993_closed():
+    """F993 CLOSED (wave-393): RegExp.source reads."""
     miss = _misses('var r=new RegExp("xoxb-0123");var RESULT=r.source+"456789abcdef";')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f994_open():
-    """F994 OPEN (round 60): arguments indexed reads."""
+def test_r60_f994_closed():
+    """F994 CLOSED (wave-393): arguments indexed reads."""
     miss = _misses('(function(){var RESULT=arguments[0]+arguments[1];return RESULT;})("xoxb-0123","456789abcdef");')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f995_open():
-    """F995 OPEN (round 60): rest-parameter indexed reads."""
+def test_r60_f995_closed():
+    """F995 CLOSED (wave-393): rest-parameter indexed reads."""
     miss = _misses('(function(...a){var RESULT=a[0]+a[1];return RESULT;})("xoxb-0123","456789abcdef");')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f996_open():
-    """F996 OPEN (round 60): .map(Number) over string-code arrays."""
+def test_r60_f996_closed():
+    """F996 CLOSED (wave-393): .map(Number) over string-code arrays."""
     miss = _misses('var RESULT=String.fromCharCode.apply(null,["120","111","120","98","45","48","49","50","51","52","53","54","55","56","57","97","98","99","100","101","102"].map(Number));')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f997_open():
-    """F997 OPEN (round 60): slice-trimmed code arrays."""
+def test_r60_f997_closed():
+    """F997 CLOSED (wave-393): slice-trimmed code arrays."""
     miss = _misses('var RESULT=String.fromCharCode.apply(null,[0,120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102,0].slice(1,-1));')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f998_open():
-    """F998 OPEN (round 60): globalThis stash reads."""
+def test_r60_f998_closed():
+    """F998 CLOSED (wave-393): globalThis stash reads."""
     miss = _misses('globalThis.x="xoxb-0123";globalThis.y="456789abcdef";var RESULT=globalThis.x+globalThis.y;')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f999_open():
-    """F999 OPEN (round 60): descriptor-object assembly."""
+def test_r60_f999_closed():
+    """F999 CLOSED (wave-393): descriptor-object assembly."""
     miss = _misses('var o={};Object.defineProperties(o,{a:{value:"xoxb-0123",enumerable:true},b:{value:"456789abcdef",enumerable:true}});var RESULT=o.a+o.b;')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f1000_open():
-    """F1000 OPEN (round 60): assignment-operator assembly."""
+def test_r60_f1000_closed():
+    """F1000 CLOSED (wave-393): assignment-operator assembly."""
     miss = _misses('var s="";s||="xoxb-0123";s+="456789abcdef";var RESULT=s;')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f1001_open():
-    """F1001 OPEN (round 60): Reflect.apply on String.prototype.concat."""
+def test_r60_f1001_closed():
+    """F1001 CLOSED (wave-393): Reflect.apply on String.prototype.concat."""
     miss = _misses('var RESULT=Reflect.apply(String.prototype.concat,"xoxb-0123",["456789abcdef"]);')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f1002_open():
-    """F1002 OPEN (round 60): prototype-chain descriptor reads."""
+def test_r60_f1002_closed():
+    """F1002 CLOSED (wave-393): prototype-chain descriptor reads."""
     miss = _misses('var p={v:"xoxb-0123"};var o=Object.create(p);o.w="456789abcdef";var d=Reflect.getOwnPropertyDescriptor(Object.getPrototypeOf(o),"v");var RESULT=d.value+o.w;')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 
 @_t
-def test_r60_f1003_open():
-    """F1003 OPEN (round 60): comma-sequence assembly."""
+def test_r60_f1003_closed():
+    """F1003 CLOSED (wave-393): comma-sequence assembly."""
     miss = _misses('var s;s="xoxb-0123",s+="456789abcdef";var RESULT=s;')
-    return ("HELD" if miss else "BREAK", "miss=%s" % miss)
+    return ("BREAK" if miss else "HELD", "miss=%s" % miss)
 
 
 

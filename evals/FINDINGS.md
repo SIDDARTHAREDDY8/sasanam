@@ -12329,4 +12329,4 @@ Next free finding: **F949**. **Open findings: none (wave-390 closures F937-F948)
 # Wave-393 lane 4: F999-F1002 CLOSED (4); F1005 filed OPEN (2026-10-10 02:40 UTC, proto-chain member-read residual); open F988-F998, F1003-F1005 (14); next free F1006
 # Wave-393 lane 5: F1003-F1004 CLOSED (2); open F988-F1002, F1005 (16); next free F1006
 # Wave-393 attack round 61: F1006-F1024 filed OPEN (19, first-filing 2026-10-10 04:11 UTC, $0 spend)
-# Wave-393 merge: F988-F1004 CLOSED (17); F1005-F1024 OPEN (20); next free F1025
+Next free finding: **F1025**. **F988-F1004 CLOSED (17, wave-393 lanes 1-5).** **F1005-F1024 OPEN (20: F1005 lane-4 residual + F1006-F1024 attack round 61).** # Wave-393 merge: F988-F1004 CLOSED (17); F1005-F1024 OPEN (20); next free F1025

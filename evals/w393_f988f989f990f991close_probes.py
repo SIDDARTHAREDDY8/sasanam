@@ -84,10 +84,12 @@ def test_b0_recompile_count():
 
 @_t
 def test_b0_footer_state():
+    """Merged footer (wave-393): F988-F1004 CLOSED; F1005-F1024 OPEN; next free F1025."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Wave-393 lane 1: F988-F991 CLOSED (4)" in text
-          and "open F992-F1004 (13)" in text
-          and "next free F1005" in text)
+    ok = ("F988-F1004 CLOSED (17" in text
+          and "F1005-F1024 OPEN (20" in text
+          and "Next free finding: **F1025**" in text
+          and "next free F1025" in text)
     return ("HELD" if ok else "BREAK", "lane_footer=%s" % ok)
 
 
@@ -179,21 +181,23 @@ def test_p3_fail_closed():
 
 @_t
 def test_p4_sibling_pins():
-    # Siblings still OPEN: must still miss (my hooks must not over-block).
+    # Wave-393 merge: all wave-393 siblings are CLOSED now (F992/F993 lane 2,
+    # F1004 lane 5). still_open is empty; the closed siblings must stay blocked.
     still_open = [
-        'var e=new Error("xoxb-0123");var RESULT=e.message+"456789abcdef";',  # F992
-        'var r=new RegExp("xoxb-0123");var RESULT=r.source+"456789abcdef";',  # F993
-        'var o={a:"xoxb-0123"};o.b=o.a;var RESULT=o.b+"456789abcdef";',  # F1004
     ]
     # Siblings already CLOSED: must stay blocked.
     still_closed = [
         'var s="";var m=new Map([["a","xoxb-0123"]]);for(var kv of m){s+=kv[1];}var r=s;',  # junk twin: quiet
+        'var e=new Error("xoxb-0123");var RESULT=e.message+"456789abcdef";',  # F992 (lane 2)
+        'var r=new RegExp("xoxb-0123");var RESULT=r.source+"456789abcdef";',  # F993 (lane 2)
+        'var o={a:"xoxb-0123"};o.b=o.a;var RESULT=o.b+"456789abcdef";',  # F1004 (lane 5)
     ]
     bad_open = [s for s in still_open if _blocked(s)]
     quiet = _misses(still_closed[0])
-    ok = not bad_open and quiet
+    closed_ok = all(_blocked(s) for s in still_closed[1:])
+    ok = not bad_open and quiet and closed_ok
     return ("HELD" if ok else "BREAK",
-            "overblocked=%d quiet_twin=%s" % (len(bad_open), quiet))
+            "overblocked=%d quiet_twin=%s closed_ok=%s" % (len(bad_open), quiet, closed_ok))
 
 
 # ------------------------------------------------------ P5 honest text
@@ -248,10 +252,12 @@ def _green_check():
         for ln in lines[:-1]:
             if ": BREAK" in ln:
                 broken.append(ln.split(":")[0])
-        # Only my 4 closures may BREAK there (merge flips them).
-        expected = {"test_r60_f988_open", "test_r60_f989_open",
-                    "test_r60_f990_open", "test_r60_f991_open"}
-        ok = set(broken) == expected
+        # Wave-393 merge: my closures are flipped to _closed pins -- none may
+        # BREAK there; the flipped pins must be present.
+        names = set(ln.split(":")[0] for ln in lines[:-1])
+        expected_closed = {"test_r60_f988_closed", "test_r60_f989_closed",
+                    "test_r60_f990_closed", "test_r60_f991_closed"}
+        ok = set(broken) == set() and expected_closed <= names
         return (("HELD" if ok else "BREAK"),
                 "green(w392_attack): broken=%s" % sorted(broken))
     finally:

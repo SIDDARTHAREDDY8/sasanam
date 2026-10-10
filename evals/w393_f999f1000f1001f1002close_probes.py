@@ -92,10 +92,12 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_next_free():
-    """Lane-local footer: F999-F1002 CLOSED; open F988-F998, F1003-F1005; next free F1006."""
+    """Merged footer (wave-393): F988-F1004 CLOSED; F1005-F1024 OPEN; next free F1025."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F1006**" in text
-          and "open F988-F998, F1003-F1005" in text)
+    ok = ("F988-F1004 CLOSED (17" in text
+          and "F1005-F1024 OPEN (20" in text
+          and "Next free finding: **F1025**" in text
+          and "next free F1025" in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 

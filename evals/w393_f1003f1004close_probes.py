@@ -84,12 +84,12 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_state():
-    """Lane-local footer: F1003/F1004 CLOSED; F988-F1002 OPEN (15); next F1005."""
+    """Merged footer (wave-393): F988-F1004 CLOSED; F1005-F1024 OPEN; next free F1025."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F1005**" in text
-          and "(F1003 filed" in text and "CLOSED" in text
-          and "(F1004 filed" in text
-          and "F988-F1002 OPEN (15" in text)
+    ok = ("F988-F1004 CLOSED (17" in text
+          and "F1005-F1024 OPEN (20" in text
+          and "Next free finding: **F1025**" in text
+          and "next free F1025" in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 
@@ -209,6 +209,19 @@ def test_p3_fail_closed():
 # Shapes copied verbatim from w392_attack_probes.py / filed red-firsts.
 
 _SIBLING_OPEN = [
+    # Wave-393 merge: all wave-393 siblings CLOSED (lanes 1-4) -- list empty.
+]
+
+_SIBLING_CLOSED = [
+    # F977: delete/re-add (no copy) -- F1004 must not claim it
+    "var o={a:'xoxb-0123',b:'456789abcdef'};delete o.b;o.b='456789abcdef';var RESULT=o.a+o.b;",
+    # F982: do-while comma (initialized declarators) -- F1003 must not claim it
+    "var s='',i=0;do{s+='xoxb-0123',i++;}while(i<1);s+='456789abcdef';var RESULT=s;",
+    # F975/F976/F979: wave-391 merge incidentals
+    "class C{#x='xoxb-0123';get s(){return this.#x+'456789abcdef';}}var RESULT=new C().s;",
+    "var o={a:'xoxb-0123'};var RESULT=(o?.a??'x')+'456789abcdef';",
+    "var o={a:'xoxb-0123',b:'456789abcdef'};var RESULT=Object.keys(o).map(function(k){return o[k];}).join('');",
+    # Wave-393 merge: F988-F1002 closed by lanes 1-4 -- must stay blocked.
     'var s=new String("xoxb-0123");var RESULT=s+"456789abcdef";',  # F988
     'var s="";var m=new Map([["a","xoxb-0123"],["b","456789abcdef"]]);for(var kv of m){s+=kv[1];}var RESULT=s;',  # F989
     'var p=new Proxy({a:"xoxb-0123",b:"456789abcdef"},{get:function(t,k){return t[k];}});var RESULT=p.a+p.b;',  # F990
@@ -224,17 +237,6 @@ _SIBLING_OPEN = [
     'var s="";s||="xoxb-0123";s+="456789abcdef";var RESULT=s;',  # F1000
     'var RESULT=Reflect.apply(String.prototype.concat,"xoxb-0123",["456789abcdef"]);',  # F1001
     'var p={v:"xoxb-0123"};var o=Object.create(p);o.w="456789abcdef";var d=Reflect.getOwnPropertyDescriptor(Object.getPrototypeOf(o),"v");var RESULT=d.value+o.w;',  # F1002
-]
-
-_SIBLING_CLOSED = [
-    # F977: delete/re-add (no copy) -- F1004 must not claim it
-    "var o={a:'xoxb-0123',b:'456789abcdef'};delete o.b;o.b='456789abcdef';var RESULT=o.a+o.b;",
-    # F982: do-while comma (initialized declarators) -- F1003 must not claim it
-    "var s='',i=0;do{s+='xoxb-0123',i++;}while(i<1);s+='456789abcdef';var RESULT=s;",
-    # F975/F976/F979: wave-391 merge incidentals
-    "class C{#x='xoxb-0123';get s(){return this.#x+'456789abcdef';}}var RESULT=new C().s;",
-    "var o={a:'xoxb-0123'};var RESULT=(o?.a??'x')+'456789abcdef';",
-    "var o={a:'xoxb-0123',b:'456789abcdef'};var RESULT=Object.keys(o).map(function(k){return o[k];}).join('');",
 ]
 
 

@@ -81,10 +81,12 @@ def test_b0_recompile_count():
 
 @_t
 def test_b0_footer_state():
+    """Merged footer (wave-393): F988-F1004 CLOSED; F1005-F1024 OPEN; next free F1025."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Wave-393 lane 2: F992-F995 CLOSED (4)" in text
-          and "open F988-F991, F996-F1004 (13)" in text
-          and "next free F1005" in text)
+    ok = ("F988-F1004 CLOSED (17" in text
+          and "F1005-F1024 OPEN (20" in text
+          and "Next free finding: **F1025**" in text
+          and "next free F1025" in text)
     return ("HELD" if ok else "BREAK", "lane_footer=%s" % ok)
 
 
@@ -259,10 +261,12 @@ def _green_check():
         for ln in lines[:-1]:
             if ": BREAK" in ln:
                 broken.append(ln.split(":")[0])
-        # Only my 4 closures may BREAK there (merge flips them).
-        expected = {"test_r60_f992_open", "test_r60_f993_open",
-                    "test_r60_f994_open", "test_r60_f995_open"}
-        ok = set(broken) == expected
+        # Wave-393 merge: my closures are flipped to _closed pins -- none may
+        # BREAK there; the flipped pins must be present.
+        names = set(ln.split(":")[0] for ln in lines[:-1])
+        expected_closed = {"test_r60_f992_closed", "test_r60_f993_closed",
+                    "test_r60_f994_closed", "test_r60_f995_closed"}
+        ok = set(broken) == set() and expected_closed <= names
         return (("HELD" if ok else "BREAK"),
                 "green(w392_attack): broken=%s" % sorted(broken))
     finally:

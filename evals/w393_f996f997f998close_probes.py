@@ -85,10 +85,12 @@ def test_b0_recompile_count():
 
 @_t
 def test_b0_footer_state():
+    """Merged footer (wave-393): F988-F1004 CLOSED; F1005-F1024 OPEN; next free F1025."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Wave-393 lane 3: F996-F998 CLOSED (3)" in text
-          and "open F988-F995, F999-F1004 (14)" in text
-          and "next free F1005" in text)
+    ok = ("F988-F1004 CLOSED (17" in text
+          and "F1005-F1024 OPEN (20" in text
+          and "Next free finding: **F1025**" in text
+          and "next free F1025" in text)
     return ("HELD" if ok else "BREAK", "lane_footer=%s" % ok)
 
 
@@ -198,7 +200,12 @@ def test_p3_fail_closed():
 @_t
 def test_p4_sibling_pins():
     # Siblings still OPEN: must still miss (my hooks must not over-block).
+    # Wave-393 merge: all wave-393 siblings are CLOSED now (lanes 1/2/4/5).
     still_open = [
+    ]
+    # Siblings already CLOSED: must stay blocked.
+    still_closed = [
+        'var RESULT=String.fromCharCode.apply(null,[0,120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102,0].slice(1,-1));',  # F997 self-check shape
         'var e=new Error("xoxb-0123");var RESULT=e.message+"456789abcdef";',  # F992
         'var r=new RegExp("xoxb-0123");var RESULT=r.source+"456789abcdef";',  # F993
         '(function(){var RESULT=arguments[0]+arguments[1];return RESULT;})("xoxb-0123","456789abcdef");',  # F994
@@ -209,10 +216,6 @@ def test_p4_sibling_pins():
         'var p={v:"xoxb-0123"};var o=Object.create(p);o.w="456789abcdef";var d=Reflect.getOwnPropertyDescriptor(Object.getPrototypeOf(o),"v");var RESULT=d.value+o.w;',  # F1002
         'var s;s="xoxb-0123",s+="456789abcdef";var RESULT=s;',  # F1003
         'var o={a:"xoxb-0123"};o.b=o.a;var RESULT=o.b+"456789abcdef";',  # F1004
-    ]
-    # Siblings already CLOSED: must stay blocked.
-    still_closed = [
-        'var RESULT=String.fromCharCode.apply(null,[0,120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102,0].slice(1,-1));',  # F997 self-check shape
     ]
     bad_open = [s for s in still_open if _blocked(s)]
     closed_ok = all(_blocked(s) for s in still_closed)
@@ -273,10 +276,12 @@ def _green_check():
         for ln in lines[:-1]:
             if ": BREAK" in ln:
                 broken.append(ln.split(":")[0])
-        # Only my 3 closures may BREAK there (merge flips them).
-        expected = {"test_r60_f996_open", "test_r60_f997_open",
-                    "test_r60_f998_open"}
-        ok = set(broken) == expected
+        # Wave-393 merge: my closures are flipped to _closed pins -- none may
+        # BREAK there; the flipped pins must be present.
+        names = set(ln.split(":")[0] for ln in lines[:-1])
+        expected_closed = {"test_r60_f996_closed", "test_r60_f997_closed",
+                    "test_r60_f998_closed"}
+        ok = set(broken) == set() and expected_closed <= names
         return (("HELD" if ok else "BREAK"),
                 "green(w392_attack): broken=%s" % sorted(broken))
     finally:
