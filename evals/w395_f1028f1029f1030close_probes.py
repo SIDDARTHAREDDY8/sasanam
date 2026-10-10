@@ -9,6 +9,7 @@ Pin 2143, VERIFIER_TAXONOMY_PIN 33, re.compile( 28 -- all untouched.
 $0 spend by construction. Depth-1 green check honors GOV_SKIP_GREEN=1.
 """
 import argparse
+import importlib.util
 import os
 import subprocess
 import sys
@@ -258,21 +259,22 @@ def test_p3_fail_closed():
 # evals/w394_attack_probes.py.
 _SIBLING_OPEN = []
 
-# Wave-395 merge: round-62 findings F1025-F1027, F1031-F1033 now CLOSED -- must block.
-_SIBLING_NOW_CLOSED = [
-    # F1025: generator spread
-    'var g=function*(){yield 120;yield 111;yield 120;yield 98;yield 45;yield 48;yield 49;yield 50;yield 51;yield 52;yield 53;yield 54;yield 55;yield 56;yield 57;yield 97;yield 98;yield 99;yield 100;yield 101;yield 102;};var RESULT=String.fromCharCode(...g());',
-    # F1026: for-of over generator
-    'var g=function*(){yield 120;yield 111;yield 120;yield 98;yield 45;yield 48;yield 49;yield 50;yield 51;yield 52;yield 53;yield 54;yield 55;yield 56;yield 57;yield 97;yield 98;yield 99;yield 100;yield 101;yield 102;};var s="";for(var c of g()){s+=String.fromCharCode(c);}var RESULT=s;',
-    # F1027: BigInt codes
-    'var s="";for(var b of [120n,111n,120n,98n,45n,48n,49n,50n,51n,52n,53n,54n,55n,56n,57n,97n,98n,99n,100n,101n,102n]){s+=String.fromCharCode(Number(b));}var RESULT=s;',
-    # F1031: async iterator
-    '(async()=>{var s="";async function*ag(){yield 120;}for await(var c of ag()){s+=String.fromCharCode(c);}globalThis.RESULT=s;})();',
-    # F1032: Intl re-derivation
-    'var f=new Intl.NumberFormat("en");var s="";for(var n of [120]){s+=String.fromCharCode(Number(f.format(n).replace(/\\D/g,"")));}var RESULT=s;',
-    # F1033: replace callback
-    'var codes=[120,111];var RESULT="##".replace(/./g,function(m,i){return String.fromCharCode(codes[i]);});',
-]
+# Wave-395 merge: round-62 findings F1025-F1027, F1031-F1033 now CLOSED --
+# must block. Full credential shapes drawn from each lane's red-first
+# batteries (the w394-battery abbreviations assemble no credential, so
+# they miss trivially and cannot pin a closure).
+def _redfirst_shapes(modname):
+    spec = importlib.util.spec_from_file_location(
+        modname, os.path.join(REPO_ROOT, "evals", modname + "_redfirst.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return [p for _, p in mod.SHAPES]
+
+
+_SIBLING_NOW_CLOSED = []
+for _mod in ("w395_f1025", "w395_f1026", "w395_f1027",
+             "w395_f1031", "w395_f1032", "w395_f1033"):
+    _SIBLING_NOW_CLOSED.extend(_redfirst_shapes(_mod))
 
 _SIBLING_CLOSED = [
     # F1015: object-keys map-join -- F1030 must not claim it (additivity)
