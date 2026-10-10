@@ -14048,7 +14048,6 @@ def _js_parse_f542_delegation(text, i, params):
     return k + 1
 
 
-
 # ---------------------------------------------------------------------------
 # F789: Proxy construct-trap reads
 # ---------------------------------------------------------------------------
@@ -14554,7 +14553,6 @@ def _js_parse_f789_construct_iife(text, i, depth, state):
         return None
     state["ops"] += 1  # the IIFE wrapper is obfuscation-shaped
     return val, k
-
 
 
 def _js_parse_f542_apply_trap(text, i):
@@ -25675,7 +25673,6 @@ def _js_parse_f749_destructure_default_iife(text, i, depth, state):
     return val, k
 
 
-
 # ---------------------------------------------------------------------------
 # F790: destructuring binding reads (F749/F758 residual)
 # ---------------------------------------------------------------------------
@@ -33451,7 +33448,6 @@ def _js_f95x_top_seq(text):
         return None
     except RecursionError:
         return None
-
 
 
 def _js_f97x_member_read(text, j, oname):
@@ -45427,7 +45423,6 @@ def _js_parse_f781_proto_method_iife(text, i, depth, state):
         return None
 
 
-
 # ---------------------------------------------------------------------------
 # F823: param'd-constructor + prototype-method hybrid (F780+F781 residual)
 # ---------------------------------------------------------------------------
@@ -46267,7 +46262,6 @@ def _js_parse_f823_hybrid_iife(text, i, depth, state):
         return total, j
     except _JSExprFail:
         return None
-
 
 
 def _js_parse_f690_ctor_iife(text, i, depth, state):
@@ -51622,7 +51616,6 @@ def _js_parse_f819_fill_range_iife(text, i, depth, state):
         return None
 
 
-
 def _js_parse_f820_copywithin_iife(text, i, depth, state):
     """Parse `(function(){DECL NAME=['LIT',..];
     NAME.copyWithin(T[,S[,E]]);return NAME[INT](+ADD)*;})()` (F820).
@@ -51928,7 +51921,6 @@ def _js_parse_f820_reverse_iife(text, i, depth, state):
         return result, j
     except _JSExprFail:
         return None
-
 
 
 def _js_f841_iife_head(text, i):
@@ -52405,7 +52397,6 @@ def _js_parse_f843_length_truncate_iife(text, i, depth, state):
         return None
 
 
-
 def _js_f844_parse_int_index(text, j):
     """Parse `[+-]?UINT([+-]UINT)*` at text[j] (F844).
 
@@ -52599,7 +52590,6 @@ def _js_parse_f844_numeric_key_iife(text, i, depth, state):
         return result, j
     except _JSExprFail:
         return None
-
 
 
 def _js_parse_f684_defaultref_params_iife(text, i, depth, state):
@@ -54204,7 +54194,6 @@ def _js_parse_f646_array_foreach_iife(text, i, depth, state):
                                         joiner.join(parts))
     except _JSExprFail:
         return None
-
 
 
 def _js_parse_args_entries_values_iife(text, i, depth, state):
@@ -59038,7 +59027,6 @@ def _js_parse_f760_template_member_iife(text, i, depth, state):
         return None
 
 
-
 def _js_f784f785_bool_lit(stmts, j):
     """Parse a decidable boolean literal at stmts[j] (F784/F785).
 
@@ -60017,8 +60005,6 @@ def _js_parse_f785_flagwhile_iife(text, i, depth, state):
         return _js_parse_f6xx_iife_tail(text, j, depth, state, rval)
     except _JSExprFail:
         return None
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -61582,8 +61568,6 @@ def _js_parse_f788_aggerrors_iife(text, i, depth, state):
     except _JSExprFail:
         state["parts"], state["ops"] = saved_parts, saved_ops
         return None
-
-
 
 
 def _js_parse_decimal_literal(text, j, what):
@@ -63798,7 +63782,6 @@ def _js_parse_f852_gopd_trap_iife(text, i, depth, state):
         return None
 
 
-
 def _js_f792_parse_return_additive(text, j, mname, is_map, groups,
                                   state):
     """Parse the F792 `return` additive at text[j].
@@ -63892,7 +63875,6 @@ def _js_f792_parse_group_read(text, j, is_map, groups):
     if num >= len(arr):
         raise _JSExprFail("F792 read index out of range")
     return arr[num], q
-
 
 
 # ------------------------------------------------------------------
@@ -67398,7 +67380,6 @@ def _js_parse_f933_string_forof_iife(text, i, depth, state):
         return None
 
 
-
 def _js_parse_f93x_int_array(text, j):
     """Parse `[INT, INT, ...]` at text[j] (F937).
 
@@ -70381,7 +70362,6 @@ def _js_f970_stmt_decode(text):
     return _js_f970_defprop_decode(text)
 
 
-
 # -- F999 ---------------------------------------------------------------
 
 def _js_f999_parse_descriptor(text, j, state):
@@ -72775,7 +72755,6 @@ def _js_f1037_stmt_decode(text):
         return _js_f996f997_fcc_chr(codes, "F1037")
     except _JSExprFail:
         return None
-
 
 
 # Narrow whole-text statement-sequence decoders, hooked in the _stmtdec
@@ -75371,7 +75350,6 @@ def _js_parse_f702f703_assign_getter_iife(text, i, depth, state):
         return val, j
     except _JSExprFail:
         return None
-
 
 
 class _JSF67xBody:
@@ -79614,7 +79592,6 @@ def _js_f777_logical_at(text, j, env):
     return sval, j
 
 
-
 def _js_parse_f782_thisarg_obj(text, j, state):
     """Parse `{k:'lit',...}` at text[j] (F782).
 
@@ -80824,7 +80801,6 @@ def _js_parse_f783_super_iife(text, i, depth, state):
         return val, j
     except _JSExprFail:
         return None
-
 
 
 def _js_parse_f777_logical_iife(text, i, depth, state):
@@ -82553,8 +82529,6 @@ def _js_parse_f674_this_bound_iife(text, i, depth, state):
         return None
 
 
-
-
 def _js_parse_f811_computed_method_iife(text, i, depth, state):
     """Parse `(function(){var K='LIT';var o={[K](){return ADD;},...};
     return ADD;})()` (F811).
@@ -82707,8 +82681,6 @@ def _js_parse_f811_computed_method_iife(text, i, depth, state):
         return total, j
     except _JSExprFail:
         return None
-
-
 
 
 def _js_parse_f891_method_literal(text, i, depth, state):
@@ -83136,8 +83108,6 @@ def _js_parse_f812_sealed_iife(text, i, depth, state):
         return None
 
 
-
-
 def _js_parse_f812_create_assign_iife(text, i, depth, state):
     """Parse `(function(){DECL o=Object.create(PROTO[,PROPS]);
     o.K='LIT';...;return ADD;})()` (F812).
@@ -83306,8 +83276,6 @@ def _js_parse_f812_create_assign_iife(text, i, depth, state):
         return total, j
     except _JSExprFail:
         return None
-
-
 
 
 def _js_parse_f697_object(text, i, depth, state):
@@ -86576,7 +86544,6 @@ def _js_parse_f651_array_iter_forof_iife(text, i, depth, state):
                                         "".join(parts))
     except _JSExprFail:
         return None
-
 
 
 def _js_parse_f624_slicebound_iife(text, i, depth, state):
@@ -92580,7 +92547,6 @@ def _js_f747_parse_augassign_target(stmts, q, env):
     return (False, name, None), r
 
 
-
 def _js_parse_f778_iife_value(text, j, depth, state):
     """Parse `(function(){return 'LIT';})` or `(()=> 'LIT')` at text[j] (F778).
 
@@ -93097,7 +93063,6 @@ def _js_parse_f779_symbol_introspection_iife(text, i, depth, state):
         return val, j
     except _JSExprFail:
         return None
-
 
 
 def _js_parse_f647_nullish_right_iife(text, i, depth, state):
@@ -94952,7 +94917,6 @@ def _js_parse_f576_new_url(text, i, depth, state):
         _path = _raw_path
     return _JSURL(split.query, split.fragment, split.username,
                   split.password, split.scheme, _path), j + 1
-
 
 
 # Object integrity-level wrappers that return their argument unchanged (the
@@ -119055,7 +119019,6 @@ def _try_js_expr_decode_all(text):
     return whole if whole != text else None
 
 
-
 # -- F996/F997/F998 (wave-393 lane 3) ------------------------------------------
 
 def _js_f996_parse_digit_string(text, j, what):
@@ -120193,7 +120156,6 @@ def _js_f1012_stmt_decode(text):
         return None
 
 # -- end F1009/F1010/F1011/F1012 ------------------------------------------------
-
 
 
 # -- F1013/F1014/F1015/F1016 (wave-394 lane 3) ----------------------------------
@@ -122592,7 +122554,6 @@ def _js_f1072_stmt_decode(text):
         return None
 
 
-
 # -- F1074/F1075 (wave-399 lane 1) -------------------------------------------
 # Narrow whole-text statement-sequence decoders, hooked in the _decode_layer
 # _stmtdec loop after F1072. Each parses a strict whole-text grammar;
@@ -123124,6 +123085,340 @@ def _js_f1075_stmt_decode(text):
 
 
 # -- end F1074/F1075 ----------------------------------------------------
+
+
+# -- F1078/F1080/F1081/F1082 (wave-399 lane 3) -----------------------------
+# Narrow whole-text statement-sequence decoders, hooked in the
+# _decode_layer _stmtdec loop alongside F961-F1072. Each parses a strict
+# whole-text grammar; anything outside the grammar fails closed (returns
+# None -- a miss, never a mis-decode). All shapes node-verified (v24.20.0).
+# Like the wave-395/396/397/398 lane hooks these are pure text-to-string
+# scans and charge no F452 scan budget; staged items are charged to a
+# per-attempt local state via _js_f96x_charge and results bounded by
+# _MAX_DECODE_BYTES, so there is nothing to snapshot/restore on miss
+# (wave-383 rule). No new decision codes, no new re.compile (pin tests
+# unchanged). Never evals.
+
+
+_F1078_SHADOW = frozenset((
+    "RESULT", "String", "queueMicrotask", "setTimeout", "setImmediate",
+    "process", "arguments",
+))
+
+
+def _js_f1078_parse_int_array(text, k, state):
+    """Parse `[INT, ...]` at text[k] (F1078); values are
+    `_js_parse_fcc_number` ints. A trailing comma is node-exact.
+    Returns (list, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_expect(text, k, "[")
+    arr = []
+    k = _js_skip_ws(text, k)
+    if k < n and text[k] == "]":
+        return arr, k + 1
+    while True:
+        v, k = _js_parse_fcc_number(text, _js_skip_ws(text, k))
+        arr.append(v)
+        _js_f96x_charge(state, "F1078 too many parts")
+        if len(arr) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail("F1078 array too long")
+        k = _js_skip_ws(text, k)
+        if k < n and text[k] == ",":
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] == "]":  # trailing comma, node-exact
+                return arr, k + 1
+            continue
+        if k < n and text[k] == "]":
+            return arr, k + 1
+        raise _JSExprFail("F1078 array not closed")
+
+
+def _js_f1078_parse_accum(text, j, acc, aname, ivar, state):
+    """Parse the F1078 loop body at text[j].
+
+    `ACC+=String.fromCharCode(ARR[IVAR]);` or `ACC=ACC+...`.
+    Returns next_index past the `;`. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    a2, j = _js_parse_ident(text, j)
+    if a2 != acc:
+        raise _JSExprFail("F1078 accum target mismatch")
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j] == "+" and text[j + 1] == "=":
+        j += 2
+    elif j < n and text[j] == "=" \
+            and not text.startswith(("==", "=>"), j):
+        j += 1
+        j = _js_skip_ws(text, j)
+        a3, j = _js_parse_ident(text, j)
+        if a3 != acc:
+            raise _JSExprFail("F1078 accum self mismatch")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+" or text.startswith("++", j):
+            raise _JSExprFail("F1078 accum not plus")
+        j += 1
+    else:
+        raise _JSExprFail("F1078 accum not modeled")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail("F1078 not fromCharCode")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, j, "fromCharCode")
+    if m is None:
+        raise _JSExprFail("F1078 not fromCharCode")
+    j = _js_expect(text, m, "(")
+    an2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if an2 != aname:
+        raise _JSExprFail("F1078 accum arr mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "[")
+    iv2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iv2 != ivar:
+        raise _JSExprFail("F1078 accum var mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "]")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    _js_f96x_charge(state, "F1078 too many parts")
+    return j
+
+
+def _js_f1078_parse_for(text, j, aname, arr, acc, state):
+    """Parse the F1078 accumulation for-loop at text[j].
+
+    `for ([var|let|const] I=0|1; I<ARR.length|I<=ARR.length|I<N|I<=N;
+    I++|++I|I+=1|I=I+1) BODY` where BODY is the braced or braceless
+    `ACC+=String.fromCharCode(ARR[I]);` (or `ACC=ACC+...`).
+    Returns (value, next_index) with the node-exact simulated
+    accumulation (out-of-range reads decode as "\\0", the
+    `String.fromCharCode(undefined)` value). Anything outside the
+    grammar fails closed. Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+    if m is None:
+        raise _JSExprFail("F1078 not for")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    kw, k2 = _js_match_decl_kw(text, j)
+    if kw is not None:
+        j = _js_skip_ws(text, k2)
+    ivar, j = _js_parse_ident(text, j)
+    if ivar in _F1078_SHADOW or ivar in _F611_RESERVED \
+            or ivar == aname or ivar == acc:
+        raise _JSExprFail("F1078 bad loop var")
+    j = _js_expect(text, _js_skip_ws(text, j), "=")
+    start, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+    if start not in (0, 1):
+        raise _JSExprFail("F1078 bad loop start")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    iv2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iv2 != ivar:
+        raise _JSExprFail("F1078 cond var mismatch")
+    j = _js_skip_ws(text, j)
+    if text.startswith("<=", j):
+        lte = True
+        j += 2
+    elif j < n and text[j] == "<" and not text.startswith("<<", j):
+        lte = False
+        j += 1
+    else:
+        raise _JSExprFail("F1078 cond not modeled")
+    j = _js_skip_ws(text, j)
+    use_length = False
+    bound = 0
+    if j < n and text[j] in _JS_IDENT_START:
+        an2, j = _js_parse_ident(text, j)
+        if an2 != aname:
+            raise _JSExprFail("F1078 cond arr mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail("F1078 cond not length")
+        j = m
+        use_length = True
+    else:
+        bound, j = _js_parse_fcc_number(text, j)
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_skip_ws(text, j)
+    if text.startswith("++", j):
+        iv3, j = _js_parse_ident(text, j + 2)
+    else:
+        iv3, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if text.startswith("++", j):
+            j += 2
+        elif text.startswith("+=", j):
+            j += 2
+            one, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+            if one != 1:
+                raise _JSExprFail("F1078 incr not +=1")
+        elif j < n and text[j] == "=" \
+                and not text.startswith(("==", "=>"), j):
+            j += 1
+            iv4, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if iv4 != ivar:
+                raise _JSExprFail("F1078 incr var mismatch")
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "+" or text.startswith("++", j):
+                raise _JSExprFail("F1078 incr not plus-one")
+            j += 1
+            one, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+            if one != 1:
+                raise _JSExprFail("F1078 incr not +1")
+            iv3 = ivar
+        else:
+            raise _JSExprFail("F1078 incr not modeled")
+    if iv3 != ivar:
+        raise _JSExprFail("F1078 incr var mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_skip_ws(text, j)
+    braced = j < n and text[j] == "{"
+    if braced:
+        j += 1
+    j = _js_f1078_parse_accum(text, j, acc, aname, ivar, state)
+    j = _js_skip_ws(text, j)
+    if braced:
+        j = _js_expect(text, j, "}")
+    # Node-exact loop simulation: the modeled increments all step +1
+    # per iteration; the array cap bounds iterations.
+    length = len(arr)
+    codes = []
+    i = start
+    while True:
+        lim = length if use_length else bound
+        if lte:
+            if not (i <= lim):
+                break
+        elif not (i < lim):
+            break
+        codes.append(arr[i] if 0 <= i < length else 0)
+        if len(codes) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail("F1078 too many iterations")
+        i += 1
+    return _js_f996f997_fcc_chr(codes, "F1078"), j
+
+
+def _js_f1078_stmt_decode(text):
+    """Decode F1078/F1080/F1081/F1082 top-level scheduling-primitive
+    accumulation (whole-text, _decode_layer hook).
+
+    `var|let|const ARR=[INT,...];`
+    `queueMicrotask(CB);` | `setTimeout(CB[, DELAY]);` |
+    `setImmediate(CB);` | `process.nextTick(CB);`
+    where CB is `()=>{` or `function(){` with body
+    `var|let|const ACC='';`
+    `for ([var|let|const] I=0|1; I<ARR.length|I<=ARR.length|I<N|I<=N;`
+    `I++|++I|I+=1|I=I+1)`
+    `{ACC+=String.fromCharCode(ARR[I]);}` (or `ACC=ACC+...`; braces
+    optional)
+    `var|let|const RESULT=ACC;`
+    then end-of-text. DELAY is a non-negative integer literal.
+
+    Node-exact (v24.20.0): each primitive runs the callback before
+    process exit (verified via the callback's own output); the
+    accumulation is simulated exactly, including OOB "\\0" and the
+    ToUint16 discipline. Disjoint from F641 (which requires the
+    async-arrow-IIFE wrapper -- this hook requires the text to open
+    with a declaration, so a wrapped shape fails here at position 0
+    and the filed top-level shapes fail F641's IIFE anchor) and from
+    every other _stmtdec hook by the scheduling-call anchor.
+    Anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
+    """
+    if "queueMicrotask(" not in text and "setTimeout(" not in text \
+            and "setImmediate(" not in text \
+            and "process.nextTick(" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    shadow = set(_F1078_SHADOW)
+    try:
+        j = _js_skip_ws(text, 0)
+        _, aname, j = _js_f96x_decl(text, j)
+        if aname in shadow:
+            raise _JSExprFail("F1078 bad arr name")
+        arr, j = _js_f1078_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail("F1078 empty arr")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        # --- scheduling call head ---
+        j = _js_skip_ws(text, j)
+        is_timer = False
+        mk = _js_match_kw(text, j, "queueMicrotask")
+        if mk is None:
+            mk = _js_match_kw(text, j, "setTimeout")
+            if mk is not None:
+                is_timer = True
+            else:
+                mk = _js_match_kw(text, j, "setImmediate")
+                if mk is None:
+                    mk = _js_match_kw(text, j, "process")
+                    if mk is not None:
+                        k2 = _js_expect(text, mk, ".")
+                        mk2 = _js_match_kw(text, k2, "nextTick")
+                        if mk2 is None:
+                            raise _JSExprFail("F1078 not nextTick")
+                        mk = mk2
+        if mk is None:
+            raise _JSExprFail("F1078 not a scheduling call")
+        j = _js_expect(text, mk, "(")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            raise _JSExprFail("F1078 string-code callback unmodeled")
+        if _js_match_kw(text, j, "async") is not None:
+            raise _JSExprFail("F1078 async callback unmodeled")
+        mf = _js_match_kw(text, j, "function")
+        j = _js_expect(text, j if mf is None else mf, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        if mf is None:
+            if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+                raise _JSExprFail("F1078 not an arrow callback")
+            j = _js_skip_ws(text, j + 2)
+        if j >= n or text[j] != "{":
+            raise _JSExprFail("F1078 callback not braced")
+        j += 1
+        _js_f96x_charge(state, "F1078 too many parts")
+        # --- body: accumulator decl ---
+        _, acc, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if acc in shadow or acc == aname:
+            raise _JSExprFail("F1078 bad acc name")
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1078 acc not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        # --- body: for loop ---
+        val, j = _js_f1078_parse_for(text, j, aname, arr, acc, state)
+        # --- body: RESULT decl ---
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1078 not RESULT")
+        r2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if r2 != acc:
+            raise _JSExprFail("F1078 RESULT not acc")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        # --- call tail ---
+        j = _js_skip_ws(text, j)
+        if is_timer:
+            if j < n and text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                _delay, j = _js_f641_parse_delay(text, j)
+                j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                raise _JSExprFail("F1078 setTimeout extra args")
+        elif j < n and text[j] == ",":
+            raise _JSExprFail("F1078 scheduling call extra args")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1078/F1080/F1081/F1082 ----------------------------------------
 
 
 # -- F1048/F1049/F1050/F1051 (wave-397 lane 1) --------------------------
@@ -124386,7 +124681,6 @@ def _js_f1063_stmt_decode(text):
 
 
 # -- end F1061/F1062/F1063 ----------------------------------------------
-
 
 
 # -- F1017/F1018/F1019/F1020 (wave-394 lane 4) ----------------------------
@@ -128923,6 +129217,22 @@ def _decode_layer(text):
     # F964 (return-body) and F959d (string-literal defaults) by
     # grammar (documented per hook). Additive, in F-number order.
     for _stmtdec in (_js_f1076_stmt_decode, _js_f1077_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1078/F1080/F1081/F1082: top-level scheduling-primitive
+    # accumulation (wave-399 lane 3) -- `var ARR=[INT,...];` then a
+    # top-level `queueMicrotask(CB)` / `setTimeout(CB[,DELAY])` /
+    # `setImmediate(CB)` / `process.nextTick(CB)` whose zero-arg
+    # `()=>{}` / `function(){}` callback accumulates
+    # `String.fromCharCode(ARR[I])` into `var RESULT`. Distinct
+    # production from F641 (which requires the async-arrow-IIFE
+    # wrapper -- the filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved). Additive, in F-number order.
+    for _stmtdec in (_js_f1078_stmt_decode,):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)

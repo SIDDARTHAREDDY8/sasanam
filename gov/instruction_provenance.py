@@ -1207,6 +1207,145 @@ def _has_hidden_xml_pi(text):
     return False
 
 
+# F1079: six further hidden-instruction carriers beyond F1024 / F1034 /
+# F1047 / F1064 / F1073. Same construction: substantive PROSE-SHAPED
+# text in a carrier never rendered to the human reader is
+# instruction-shaped by construction (the F1024 rationale); machine
+# tokens, short labels, and empty carriers are honest text, quiet. No
+# re.compile() here (module-level count stays as audited); patterns
+# ride the re module's cache. All detectors run on the
+# zero-width-stripped norm (F1024) so ZWSP mangling of the carrier
+# markup cannot evade them.
+
+
+def _has_hidden_details_collapsed(text):
+    """True when prose hides in a `<details>` without the `open`
+    attribute (F1079). Collapsed details content is hidden until
+    clicked; `<details open>` is rendered and stays quiet. Never
+    evals.
+    """
+    for open_tag, region in _f1064_tag_regions(text, "details"):
+        if re.search(r"(?<![\w-])open(?![\w-])", open_tag, re.I):
+            continue
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+            return True
+    return False
+
+
+def _has_hidden_datalist_option(text):
+    """True when *text* carries prose-shaped text in a `<datalist>`
+    `<option>`.
+
+    F1079: datalist options are completion suggestions -- never
+    rendered inline -- so prose there is hidden from the human
+    reader (the F1024 rationale). Real options are short labels
+    (`<option value="Chrome">`), not prose-shaped, and stay quiet.
+    Distinct from F1064's `<option hidden>` (the visibility
+    attribute) and F1073's `<option value>` (the value attribute):
+    this is the option's element text inside a datalist. Never
+    evals.
+    """
+    for region in _scan_element_regions(text, "datalist"):
+        for m in re.finditer(r"<option\b[^>]*>(.*?)</option\s*>",
+                             region, re.I | re.S):
+            if _is_prose_shaped(m.group(1)):
+                return True
+    return False
+
+
+def _has_hidden_media_fallback(text):
+    """True when *text* carries prose-shaped text as `<video>` /
+    `<audio>` fallback content.
+
+    F1079: fallback content renders only when the media element is
+    unsupported, so on any modern agent/host it is hidden from the
+    human reader (the F1024 rationale). The canonical no-support
+    boilerplate ("Your browser does not support the video tag.") is
+    honest text, quiet -- matched whole (fail-closed: boilerplate
+    with appended prose still flags); markup-only fallbacks are
+    quiet. Never evals.
+    """
+    for tag in ("video", "audio"):
+        for region in _scan_element_regions(text, tag):
+            inner = re.sub(r"<[^>]*>", "", region)
+            if not _is_prose_shaped(inner):
+                continue
+            norm = re.sub(r"\s+", " ", inner).strip()
+            if re.fullmatch(r"your browser does not support( the)?"
+                            r"( html5?)? (video|audio)( tag)?\.?",
+                            norm, re.I):
+                continue
+            return True
+    return False
+
+
+def _has_hidden_maction_toggle(text):
+    """True when *text* carries prose-shaped text in a non-first
+    `<mtext>` child of `<maction actiontype="toggle">`.
+
+    F1079: a toggle maction renders only its first child; the rest
+    are hidden until toggled (the F1024 rationale). The visible
+    first child and short labels stay quiet. Distinct from F1073's
+    `<annotation>` carrier. Never evals.
+    """
+    for m in re.finditer(r"<maction\b[^>]*>", text, re.I):
+        atype, has_atype = _f1047_attr_value(m.group(0), "actiontype")
+        if not has_atype or atype.lower() != "toggle":
+            continue
+        start = m.end()
+        close = re.search(r"</maction\s*>", text[start:], re.I)
+        region = text[start:start + close.start()] if close \
+            else text[start:]
+        mtexts = list(re.finditer(r"<mtext\b[^>]*>(.*?)</mtext\s*>",
+                                  region, re.I | re.S))
+        for mm in mtexts[1:]:
+            if _is_prose_shaped(mm.group(1)):
+                return True
+    return False
+
+
+def _f1079_tag_end(text, start):
+    """Index just past the `>` closing the tag open at *start* (F1079).
+
+    Honors single/double quotes so a `>` inside a quoted attribute
+    value (common in `srcdoc`) does not end the tag early. An
+    unterminated tag scans to end of text (the F1024 fail-closed
+    rule). Never evals.
+    """
+    i = start
+    n = len(text)
+    quote = None
+    while i < n:
+        ch = text[i]
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == ">":
+            return i + 1
+        i += 1
+    return n
+
+
+def _has_hidden_iframe_srcdoc(text):
+    """True when *text* carries prose-shaped text in an `<iframe>`
+    `srcdoc` attribute.
+
+    F1079: in the inbox threat model email clients strip iframes,
+    so srcdoc content is hidden from the human reader (the F1024
+    rationale) -- documented scope boundary (renders in full
+    browsers). Machine tokens, empty srcdoc, and iframes without
+    srcdoc are honest text, quiet. Never evals.
+    """
+    for m in re.finditer(r"<iframe(?=[\s>])", text, re.I):
+        tag = text[m.start():_f1079_tag_end(text, m.end())]
+        srcdoc, has_srcdoc = _f1047_attr_value(tag, "srcdoc")
+        if has_srcdoc and _is_prose_shaped(srcdoc):
+            return True
+    return False
+
+
 def instruction_shaped(text):
     """Deterministic heuristic: does this unit read like an instruction
     to the agent? A stand-in for the plan-trace / intent-slicing
@@ -1272,14 +1411,26 @@ def instruction_shaped(text):
     # attributes, <option value>, <canvas> fallback content,
     # <script type="text/plain">, CSS comments in <style>,
     # <object><param value>, and XML processing instructions.
-    return (_has_hidden_mathml_annotation(norm)
+    if (_has_hidden_mathml_annotation(norm)
             or _has_hidden_rdfa_microdata_content(norm)
             or _has_hidden_option_value(norm)
             or _has_hidden_canvas_fallback(norm)
             or _has_hidden_script_text_plain(norm)
             or _has_hidden_style_comment(norm)
             or _has_hidden_object_param(norm)
-            or _has_hidden_xml_pi(norm))
+            or _has_hidden_xml_pi(norm)):
+        return True
+    # F1079: the same construction for six further hidden-from-human
+    # carriers -- collapsed <details> (no `open`), <datalist> option
+    # text, <video>/<audio> fallback content, MathML <maction
+    # actiontype="toggle"> non-first <mtext>, and <iframe srcdoc>.
+    # The srcdoc carrier is scoped to the inbox threat model (email
+    # clients strip iframes; documented scope boundary).
+    return (_has_hidden_details_collapsed(norm)
+            or _has_hidden_datalist_option(norm)
+            or _has_hidden_media_fallback(norm)
+            or _has_hidden_maction_toggle(norm)
+            or _has_hidden_iframe_srcdoc(norm))
 
 
 class ActionRequest(object):
