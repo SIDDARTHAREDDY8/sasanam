@@ -42,6 +42,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143  # wave-395 merge (no code-count change)
 
 from gov import dlp  # noqa: E402
+from gov.instruction_provenance import instruction_shaped  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TESTS = []
@@ -228,11 +229,12 @@ def _redfirst_shapes(modname):
 
 @_t
 def test_p4_sibling_pins():
-    # Disjointness from the nearest closed/open neighbors. Quiet twins
+    # Disjointness from the nearest closed neighbors. Quiet twins
     # (credential-free) must stay quiet; already-CLOSED siblings must
     # stay blocked -- my hooks must neither over-block nor steal their
-    # productions. Still-OPEN neighbors must stay open (no incidental
-    # closures).
+    # productions. Wave-396 merge: the still-OPEN neighbors are now
+    # CLOSED -- their filed shapes must block (dlp seam) or route
+    # (F1047 provenance seam).
     quiet_twins = [
         'var u=new Set([...new Set([[0,65]])]);var all=[...u];all.sort(function(x,y){return x[0]-y[0];});var s="";for(var p of all){s+=String.fromCharCode(p[1]);}var RESULT=s;',
         'var b=new Int32Array(new SharedArrayBuffer(8));var c=[65,66];for(var i=0;i<2;i++){Atomics.store(b,i,c[i]);}var s="";for(var i=0;i<2;i++){s+=String.fromCharCode(Atomics.load(b,i));}var RESULT=s;',
@@ -253,19 +255,23 @@ def test_p4_sibling_pins():
         _redfirst_shapes("w395_f1026")[0],
         _redfirst_shapes("w395_f1027")[0],
     ]
-    still_open = []
+    now_closed_dlp = []
     for modname in ("w395_f1035", "w395_f1036", "w395_f1037",
                     "w395_f1041", "w395_f1042", "w395_f1043",
-                    "w395_f1044", "w395_f1045", "w395_f1046",
-                    "w395_f1047"):
-        still_open.extend(_redfirst_shapes(modname))
+                    "w395_f1044", "w395_f1045", "w395_f1046"):
+        now_closed_dlp.extend(_redfirst_shapes(modname))
+    now_closed_prov = _redfirst_shapes("w395_f1047")
     bad_open = [s for s in quiet_twins if _blocked(s)]
     bad_closed = [s for s in still_closed if not _blocked(s)]
-    bad_incidental = [s for s in still_open if _blocked(s)]
-    ok = not bad_open and not bad_closed and not bad_incidental
+    bad_now_closed = [s for s in now_closed_dlp if not _blocked(s)]
+    bad_prov = [s for s in now_closed_prov
+                if not instruction_shaped(s)]
+    ok = (not bad_open and not bad_closed and not bad_now_closed
+          and not bad_prov)
     return ("HELD" if ok else "BREAK",
-            "overblocked=%d lost_closed=%d incidental=%d"
-            % (len(bad_open), len(bad_closed), len(bad_incidental)))
+            "overblocked=%d lost_closed=%d unblocked=%d unrouted=%d"
+            % (len(bad_open), len(bad_closed), len(bad_now_closed),
+               len(bad_prov)))
 
 
 # ------------------------------------------------------ P5 honest text
@@ -334,10 +340,10 @@ def _green_check():
         for ln in lines:
             if ": BREAK" in ln:
                 broken.append(ln.split(":")[0])
-        # Only the 3 now-closed pins may BREAK (merge flips them,
-        # wave-395 precedent); everything else must hold.
-        expected = {"test_r63_f1038_open", "test_r63_f1039_open",
-                    "test_r63_f1040_open"}
+        # Wave-396 merge: all 13 round-63 pins are now CLOSED (the
+        # merge flipped them all to expect-blocked/routed), so the child
+        # battery must show 0 BREAK.
+        expected = set()
         ok = set(broken) == expected
         return (("HELD" if ok else "BREAK"),
                 "green(w395_attack): broken=%s" % sorted(broken))

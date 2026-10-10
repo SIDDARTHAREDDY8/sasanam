@@ -448,28 +448,28 @@ def test_p4_sibling_f1012_closed():
 
 
 @_t
-def test_p4_sibling_f1035_open():
-    """F1035 (OPEN): Object.assign staging -- nearest neighbor of F1041, still misses."""
+def test_p4_sibling_f1035_closed():
+    """F1035 CLOSED (wave-396 merge): Object.assign staging -- nearest neighbor of F1041, now blocked."""
     p = ('var o=Object.assign({},{a:[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,'
          '97,98,99,100,101,102]});var RESULT=String.fromCharCode(...o.a);')
-    return _check("sibling-f1035-open", _misses(p), "still misses")
+    return _check("sibling-f1035-closed", _blocked(p), "now blocked")
 
 
 @_t
-def test_p4_sibling_f1040_open():
-    """F1040 (OPEN): built-in iterator spread -- nearest neighbor of F1043, still misses."""
+def test_p4_sibling_f1040_closed():
+    """F1040 CLOSED (wave-396 merge): built-in iterator spread -- nearest neighbor of F1043, now blocked."""
     p = ('var RESULT=String.fromCharCode(...[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,'
          '97,98,99,100,101,102].values());')
-    return _check("sibling-f1040-open", _misses(p), "still misses")
+    return _check("sibling-f1040-closed", _blocked(p), "now blocked")
 
 
 @_t
-def test_p4_sibling_f1044_open():
-    """F1044 (OPEN): for-in over integer-keyed object, filed shape -- still misses."""
+def test_p4_sibling_f1044_closed():
+    """F1044 CLOSED (wave-396 merge): for-in over integer-keyed object, filed shape -- now blocked."""
     p = ('var o={0:120,1:111,2:120,3:98,4:45,5:48,6:49,7:50,8:51,9:52,10:53,11:54,'
          '12:55,13:56,14:57,15:97,16:98,17:99,18:100,19:101,20:102};var s="";'
          'for(var k in o){s+=String.fromCharCode(o[k]);}var RESULT=s;')
-    return _check("sibling-f1044-open", _misses(p), "still misses")
+    return _check("sibling-f1044-closed", _blocked(p), "now blocked")
 
 
 # --------------------------------------- p5: honest text stays quiet
@@ -548,8 +548,8 @@ def _run_battery(name):
 
 @_t
 def test_p7_green_check():
-    """Depth-1 green check: lane red-firsts 0 BREAK; attack battery breaks
-    ONLY the 3 now-closed pins (F1041/F1042/F1043 flip at merge)."""
+    """Depth-1 green check: lane red-firsts 0 BREAK; attack battery 0 BREAK
+    (wave-396 merge flipped all 13 round-63 pins to expect-blocked/routed)."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return _check("green-skip", True, "skipped (GOV_SKIP_GREEN=1)")
     bad_notes = []
@@ -563,15 +563,9 @@ def test_p7_green_check():
         if bad or nshapes == 0:
             bad_notes.append("%s: %d bad / %d shapes" % (battery, bad, nshapes))
     out = _run_battery("w395_attack_probes.py")
-    broke = [line.split()[0] for line in out.splitlines()
-             if re.match(r"^test_r63_f10(41|42|43)_open: BREAK", line)]
-    other_broke = [line for line in out.splitlines()
-                   if ": BREAK" in line and "f1041" not in line
-                   and "f1042" not in line and "f1043" not in line]
-    if len(broke) != 3:
-        bad_notes.append("attack battery: expected 3 now-closed pins BREAK, got %d" % len(broke))
-    if other_broke:
-        bad_notes.append("attack battery unexpected BREAKs: %s" % other_broke[:3])
+    broke = [line for line in out.splitlines() if ": BREAK" in line]
+    if broke:
+        bad_notes.append("attack battery unexpected BREAKs: %s" % broke[:3])
     ok = not bad_notes
     return _check("green", ok, "bad=[%s]" % "; ".join(bad_notes))
 

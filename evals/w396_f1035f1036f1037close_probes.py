@@ -516,16 +516,16 @@ def _redfirst_first_shape(f):
 
 
 @_t
-def test_p4_siblings_stay_open():
-    """F1038-F1046 (dlp seams) still miss via find_credential."""
+def test_p4_siblings_now_closed():
+    """Wave-396 merge: F1038-F1046 closed by lanes 2-4 -- filed shapes must now BLOCK via find_credential."""
     bad = []
     for f in range(1038, 1047):
         name, payload = _redfirst_first_shape(f)
-        if not _misses(payload):
+        if _misses(payload):
             bad.append(name)
     ok = not bad
     return ("HELD" if ok else "BREAK",
-            "siblings-open=%s" % (bad or "all-9-miss"))
+            "siblings-closed=%s" % (bad or "all-9-blocked"))
 
 
 # --------------------------------------- p5: honest text stays quiet
