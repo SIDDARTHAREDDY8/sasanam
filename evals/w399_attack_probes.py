@@ -91,11 +91,32 @@ def _open_pin(prefix, num):
     return _fn
 
 
+def _open_pin_filtered(prefix, num, keep):
+    """Subset of red-first shapes for an OPEN finding must still MISS."""
+    @_t
+    def _fn():
+        shapes = [(n, p) for n, p in _redfirst_shapes(prefix, num) if keep(n)]
+        bad = [name for name, payload in shapes if not _misses(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_open_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_open_%s_f%d" % (prefix, num)
+    return _fn
+
+
 # Round-67 pins (decoder seam) -- OPEN on the merged tree.
 # (F1086/F1087/F1088 are attack round 67's renumbered F1080/F1081/F1082;
 # F1089 is lane 1's renumbered F1080.)
-for _n in (1083, 1084, 1086, 1087, 1088, 1089):
+for _n in (1083, 1084, 1087, 1088, 1089):
     _open_pin("w399", _n)
+
+# F1086: partial incidental closure. Lane 1's F1074 hook blocks the 2
+# braced-while twins (same while-loop production, verified node-exact);
+# the 6 do...while + braceless-while shapes still MISS on the merged tree
+# (verified break-first: 8/8 MISS on base 1acdf8e71, 6/8 MISS on merged).
+# F1086 stays OPEN; pin the 6 still-open shapes.
+_open_pin_filtered("w399", 1086, lambda n: "dowhile" in n or "braceless" in n)
 
 
 def _closed_pin(prefix, num):
@@ -196,7 +217,10 @@ def test_c0_junk_quiet():
 
 @_t
 def test_green_w398():
-    """Depth-1 green check on w398's battery (carries F1065-F1079 pins)."""
+    """Depth-1 green check on w398's battery (carries F1065-F1079 pins).
+    On the merged tree exactly the 6 now-closed pins must flip
+    (F1074-F1078 decoder + F1079 provenance); anything else breaking is real.
+    """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         print("HELD  test_green_w398 (skipped: GOV_SKIP_GREEN=1)")
         return True
@@ -205,10 +229,18 @@ def test_green_w398():
         [sys.executable, os.path.join(REPO_ROOT, "evals", "w398_attack_probes.py")],
         capture_output=True, text=True, timeout=600, env=env,
         cwd=os.path.join(REPO_ROOT, "evals"))
-    ok = r.returncode == 0
-    print(("HELD " if ok else "BREAK") + " test_green_w398")
-    if not ok:
-        print((r.stdout or "")[-500:])
+    expected_flips = {"test_open_w398_f1074", "test_open_w398_f1075",
+                      "test_open_w398_f1076", "test_open_w398_f1077",
+                      "test_open_w398_f1078", "test_open_w398_f1079_provenance"}
+    flips, real = [], []
+    for line in (r.stdout or "").split("\n"):
+        s = line.strip()
+        if s.startswith("BREAK "):
+            nm = s.split(" ", 1)[1].split(" ", 1)[0]
+            (flips if nm in expected_flips else real).append(nm)
+    ok = (not real and set(flips) == expected_flips)
+    print(("HELD " if ok else "BREAK") + " test_green_w398 "
+          "(flips %d/6, real BREAK %s)" % (len(flips), real))
     return ok
 
 
