@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-"""Red-first for F1112: undeclared loop variable evades the F1091 closure.
+"""Red-first for F1112: TypedArray staged reads.
 
-F1091 (CLOSED wave-401 lane 1) requires a declaration keyword for the
-for-of loop variable ("loop var not declared" fails closed). In
-sloppy mode node binds a bare identifier as a global --
-`for(x of IT){...}` and `for([i,c] of C.entries()){...}` assemble
-node-exactly (v24.20.0 verified) while find_credential MISSES.
-
-Filed 2026-10-10 16:57 UTC by wave-402 lane 3 (Spec-review follow-up;
-local node validation, $0.00 model spend). Prints BREAK on the open
-tree.
-
-Run: ~/workspace/.gov-venv/bin/python evals/w402_f1112_redfirst.py
+Staging the int array through a TypedArray breaks the decoder's hooks:
+`var T=Uint16Array.from(C);var S=String.fromCharCode(...T);` assembles
+node-exactly (v24.20.0) while find_credential MISSES. Controls: the
+`...new Uint16Array(C)` twin blocks (existing hook); junk-quiet passes.
+On the open tree find_credential MISSES each shape (prints BREAK, one
+scanner call per fresh process); on the closed tree each is flagged.
+Filed 2026-10-10 16:45 UTC wave-402 (attack round 70, local validation,
+$0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -51,40 +48,54 @@ def _codes(s):
     return "[" + ",".join(str(ord(c)) for c in s) + "]"
 
 
+def _nested(s):
+    return "[" + ",".join("[%d]" % ord(c) for c in s) + "]"
+
+
 _TMPLS = [
-    # Undeclared loop var over the bound values-iterator.
-    ("undeclared-IT",
-     "var C={I};var IT=C.values();var S='';for(x of IT)"
-     "{{S+=String.fromCharCode(x);}}var RESULT=S;"),
-    # Undeclared destructure over entries().
-    ("undeclared-entries",
-     "var C={I};var S='';for([i,c] of C.entries())"
-     "{{S+=String.fromCharCode(c);}}var RESULT=S;"),
+    ('uint16-from',
+     'var C={{I}};var T=Uint16Array.from(C);var S=String.fromCharCode(...T);var RESULT=S;'),
+    ('uint8-from',
+     'var C={{I}};var T=Uint8Array.from(C);var S=String.fromCharCode(...T);var RESULT=S;')
 ]
 
 
 def _shapes():
     out = []
-    for name, tmpl in _TMPLS:
+    for name, t in _TMPLS:
         for tag, secret in (("s", SECRET_S), ("l", SECRET_L)):
             out.append(("f1112-%s-%s" % (tag, name),
-                        tmpl.format(I=_codes(secret))))
+                        t.replace("{{I}}", _codes(secret))
+                         .replace("{{N}}", _nested(secret))))
     return out
 
 
 SHAPES = _shapes()
 
+CONTROLS = [
+    ("aa-plain-ident-loop-blocks",
+     "var C=%s;var S='';for(var i=0;i<C.length;i++)"
+     "{S+=String.fromCharCode(C[i]);}var RESULT=S;" % _codes(SECRET_S),
+     True),
+    ("junk-quiet", "(function(){var s='ab';return s;})()", False),
+]
+
 
 def main():
-    bad = 0
+    fails = []
     for name, payload in SHAPES:
-        if _scan(payload):
-            print("FAIL " + name, flush=True)
-        else:
-            print("BREAK " + name, flush=True)
-            bad += 1
-    print("%d/%d BREAK" % (bad, len(SHAPES)))
-    return 0 if bad else 1
+        hit = _scan(payload)
+        print(("FAIL " if hit else "BREAK ") + name, flush=True)
+        if hit:
+            fails.append(name)
+    for name, payload, expect_block in CONTROLS:
+        hit = _scan(payload)
+        ok = hit == expect_block
+        print(("ctrl-ok " if ok else "CTRL-FAIL ") + name, flush=True)
+        if not ok:
+            fails.append(name)
+    print("%d shapes, %d controls, %d FAIL" % (len(SHAPES), len(CONTROLS), len(fails)))
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":

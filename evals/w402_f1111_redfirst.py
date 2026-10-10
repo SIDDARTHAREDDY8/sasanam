@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""Red-first for F1111: top-level for-await evades the F1091 closure.
+"""Red-first for F1111: Array.prototype.flat staged reads.
 
-F1091 (CLOSED wave-401 lane 1) admits `await` only inside the
-async-IIFE wrapper ("await outside async" fails closed) on the premise
-that top-level `for await` is a node SyntaxError. Node v24.20.0
-accepts top-level `await` in scripts (verified via script file and
-`node --check`) -- `var C=[...];var S='';for await (var x of C){...}`
-and the bound-iterator twin assemble node-exactly while
-find_credential MISSES.
-
-Filed 2026-10-10 16:57 UTC by wave-402 lane 3 (Spec-review follow-up;
-local node validation, $0.00 model spend). Prints BREAK on the open
-tree.
-
-Run: ~/workspace/.gov-venv/bin/python evals/w402_f1111_redfirst.py
+Staging the credential through Array.prototype.flat breaks the decoder's
+spread/call-anchored hooks: `String.fromCharCode(...C.flat())` over a flat
+or nested int array assembles node-exactly (v24.20.0) while
+find_credential MISSES. Distinct from F1090 (flatMap maps then flattens;
+flat only flattens). Controls: the plain `...C` spread twin blocks;
+junk-quiet passes.
+On the open tree find_credential MISSES each shape (prints BREAK, one
+scanner call per fresh process); on the closed tree each is flagged.
+Filed 2026-10-10 16:45 UTC wave-402 (attack round 70, local validation,
+$0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -53,40 +50,54 @@ def _codes(s):
     return "[" + ",".join(str(ord(c)) for c in s) + "]"
 
 
+def _nested(s):
+    return "[" + ",".join("[%d]" % ord(c) for c in s) + "]"
+
+
 _TMPLS = [
-    # Top-level for-await over the plain array.
-    ("toplevel-await-C",
-     "var C={I};var S='';for await (var x of C)"
-     "{{S+=String.fromCharCode(x);}}var RESULT=S;"),
-    # Top-level for-await over the bound values-iterator.
-    ("toplevel-await-IT",
-     "var C={I};var IT=C.values();var S='';for await (var x of IT)"
-     "{{S+=String.fromCharCode(x);}}var RESULT=S;"),
+    ('flat',
+     'var C={{I}};var S=String.fromCharCode(...C.flat());var RESULT=S;'),
+    ('flat-nested',
+     'var C={{N}};var S=String.fromCharCode(...C.flat());var RESULT=S;')
 ]
 
 
 def _shapes():
     out = []
-    for name, tmpl in _TMPLS:
+    for name, t in _TMPLS:
         for tag, secret in (("s", SECRET_S), ("l", SECRET_L)):
             out.append(("f1111-%s-%s" % (tag, name),
-                        tmpl.format(I=_codes(secret))))
+                        t.replace("{{I}}", _codes(secret))
+                         .replace("{{N}}", _nested(secret))))
     return out
 
 
 SHAPES = _shapes()
 
+CONTROLS = [
+    ("aa-plain-ident-loop-blocks",
+     "var C=%s;var S='';for(var i=0;i<C.length;i++)"
+     "{S+=String.fromCharCode(C[i]);}var RESULT=S;" % _codes(SECRET_S),
+     True),
+    ("junk-quiet", "(function(){var s='ab';return s;})()", False),
+]
+
 
 def main():
-    bad = 0
+    fails = []
     for name, payload in SHAPES:
-        if _scan(payload):
-            print("FAIL " + name, flush=True)
-        else:
-            print("BREAK " + name, flush=True)
-            bad += 1
-    print("%d/%d BREAK" % (bad, len(SHAPES)))
-    return 0 if bad else 1
+        hit = _scan(payload)
+        print(("FAIL " if hit else "BREAK ") + name, flush=True)
+        if hit:
+            fails.append(name)
+    for name, payload, expect_block in CONTROLS:
+        hit = _scan(payload)
+        ok = hit == expect_block
+        print(("ctrl-ok " if ok else "CTRL-FAIL ") + name, flush=True)
+        if not ok:
+            fails.append(name)
+    print("%d shapes, %d controls, %d FAIL" % (len(SHAPES), len(CONTROLS), len(fails)))
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":

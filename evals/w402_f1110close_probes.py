@@ -27,10 +27,11 @@ identifier; this hook requires the literal inline `C.values()` call)
 verified both directions: all 5 F1091 filed productions miss here,
 all 4 F1110 shapes miss the F1091 hook.
 
-Self-filed OPEN (16:57 UTC): F1111 (top-level for-await over plain C /
-bound IT -- F1091 residual), F1112 (undeclared loop var over bound IT /
+Self-filed OPEN (16:57 UTC): F1121 (top-level for-await over plain C /
+bound IT -- F1091 residual), F1122 (undeclared loop var over bound IT /
 entries -- F1091 residual). Both node-verified BREAK, red-firsts
-evals/w402_f1111_redfirst.py / evals/w402_f1112_redfirst.py.
+evals/w402_f1121_redfirst.py / evals/w402_f1122_redfirst.py
+(renumbered F1111->F1121, F1112->F1122 at wave-402 merge per wave-272).
 
 Green checks ON. $0-spend-by-construction.
 """
@@ -136,15 +137,15 @@ def test_p0_footer():
         src = f.read()
     ok = ("# Wave-402 lane 3 (2026-10-10)" in src
           and "F1110 CLOSED (1" in src
-          and "F1111-F1112 filed OPEN (2" in src
-          and "F1103-F1109, F1111-F1112 OPEN (9" in src
-          and "next free F1113" in src)
+          and "F1121-F1122 filed OPEN (2" in src
+          and "F1103-F1109, F1121-F1122 OPEN (9" in src
+          and "next free F1123" in src)
     # entry-count check: F1110 filed exactly once.
     ok = (ok and src.count("(F1110 filed") == 1)
     ok = (ok and "[CLOSED 2026-10-10 wave-402 lane 3" in src
           and src.count("[CLOSED 2026-10-10 wave-402 lane 3") == 1)
     # base footer lineage preserved (wave-393 lesson).
-    ok = (ok and "Next free finding: **F1113**" in src
+    ok = (ok and "Next free finding: **F1123**" in src
           and "F1103-F1110 OPEN (8" in src
           and "# Wave-401: F1090-F1102 CLOSED (13); F1103-F1110 OPEN (8); next free F1111" in src)
     return (ok, "lane-local footer present, base lineage preserved")
@@ -363,20 +364,20 @@ def test_p6_perf():
 # ---------------- p7: self-filed open pins ----------------
 
 @_t
-def test_p7_open_f1111():
-    # F1111 (top-level for-await, F1091 residual) must still MISS.
-    shapes = _redfirst_shapes("w402", 1111)
+def test_p7_open_f1121():
+    # F1121 (top-level for-await, F1091 residual; renumbered) must still MISS.
+    shapes = _redfirst_shapes("w402", 1121)
     bad = [n for n, p in shapes if not _misses(p)]
-    return (not bad, "%d/%d F1111 shapes still open"
+    return (not bad, "%d/%d F1121 shapes still open"
             % (len(shapes) - len(bad), len(shapes)))
 
 
 @_t
-def test_p7_open_f1112():
-    # F1112 (undeclared loop var, F1091 residual) must still MISS.
-    shapes = _redfirst_shapes("w402", 1112)
+def test_p7_open_f1122():
+    # F1122 (undeclared loop var, F1091 residual; renumbered) must still MISS.
+    shapes = _redfirst_shapes("w402", 1122)
     bad = [n for n, p in shapes if not _misses(p)]
-    return (not bad, "%d/%d F1112 shapes still open"
+    return (not bad, "%d/%d F1122 shapes still open"
             % (len(shapes) - len(bad), len(shapes)))
 
 
