@@ -122,7 +122,7 @@ def test_closed_w397_f1073_provenance():
         if not grant_check(req, lab).routed_to_approval:
             bad.append(name)
     ok = not bad
-    print(("HELD " if ok else "BREAK") + " test_open_w397_f1073_provenance (%d carriers%s)" % (
+    print(("HELD " if ok else "BREAK") + " test_closed_w397_f1073_provenance (%d carriers%s)" % (
         len(shapes), "" if ok else ": " + ",".join(bad)))
     return ok
 

@@ -45,7 +45,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143  # no new decision codes
 VERIFIER_PIN = 33  # VERIFIER_TAXONOMY_PIN, untouched
 RE_COMPILE_COUNT = 28  # zero new re.compile( in gov/dlp.py -- audited count
-STMTDEC_LOOPS = 19  # wave-398 lane 2: 18 -> 19 (real code-count change: this lane's F1068-F1071 dispatch loop, wave-385 rule)
+STMTDEC_LOOPS = 21  # wave-398 merge: three new dispatch loops (18 -> 21, real code-count change, wave-385 rule)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -127,8 +127,8 @@ def test_p0_pin_stmtdec_loops():
 
 @_t
 def test_p0_footer_state():
-    """F1068-F1071 stamped CLOSED (span-positional); lane-local footer:
-    F1065-F1067, F1072-F1073 open (5); next free F1074."""
+    """F1068-F1071 stamped CLOSED (span-positional); merged-tree footer:
+    F1065-F1073 closed (9); F1074-F1079 open (6); next free F1080."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     entries = [ln for ln in text.splitlines()
                if ln.startswith("(F1068 filed ")
@@ -137,8 +137,8 @@ def test_p0_footer_state():
                or ln.startswith("(F1071 filed ")]
     ok = (len(entries) == 4
           and all("[CLOSED" in e for e in entries)
-          and "Next free finding: **F1074**" in text
-          and "F1065-F1067, F1072-F1073 OPEN (5" in text)
+          and "Next free finding: **F1080**" in text
+          and "F1065-F1073 CLOSED (9" in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 
@@ -325,7 +325,7 @@ def test_p4_sibling_pins():
         # literal are not pins, wave-396 lesson).
         "var C=%s;function* g(){for(var i=0;i<C.length;i++)yield C[i];}"
         "var S='';for(var x of g())S+=String.fromCharCode(x);var RESULT=S;" % _codes(_CRED),
-        # F1072 JSON.parse plain property reads (wave-398 lane 3) still open.
+        # F1072 JSON.parse plain property reads (wave-398 lane 3, CLOSED at merge).
         'var o=JSON.parse(\'{"a":"%s","b":"%s"}\');var RESULT=o.a+o.b;' % (_F1, _F2),
     ]
     still_open = []

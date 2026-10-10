@@ -12429,5 +12429,13 @@ Next free finding: **F1074**. **F988-F1047 CLOSED (60, wave-393 lanes 1-5 + wave
 # Wave-397 merge: F1048-F1064 CLOSED (17); F1065-F1073 OPEN (9, wave-397 attack round 65, first-filing 2026-10-10 09:55 UTC, $0 spend); next free F1074
 
 Next free finding: **F1074**. **F988-F1064 CLOSED (77, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4 + wave-397 lanes 1-4).** **F1065-F1073 OPEN (9, wave-397 attack round 65).**
+# Wave-398 lane 1: F1065-F1067 CLOSED (3); F1068-F1073 OPEN (6); next free F1074
+Next free finding: **F1074**. **F988-F1067 CLOSED (80, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4 + wave-397 lanes 1-4 + wave-398 lane 1).** **F1068-F1073 OPEN (6, wave-397 attack round 65).**
+# Wave-398 lane 2: F1068-F1071 CLOSED (4); F1065-F1067, F1072-F1073 OPEN (5); next free F1074
+Next free finding: **F1074**. **F988-F1064, F1068-F1071 CLOSED (81, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4 + wave-397 lanes 1-4 + wave-398 lane 2).** **F1065-F1067, F1072-F1073 OPEN (5, wave-397 attack round 65).**
+# Wave-398 lane 3: F1072-F1073 CLOSED (2); F1065-F1071 OPEN (7); next free F1074
+Next free finding: **F1074**. **F988-F1064, F1072-F1073 CLOSED (79, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4 + wave-397 lanes 1-4 + wave-398 lane 3).** **F1065-F1071 OPEN (7, wave-397 attack round 65).**
+# Wave-398 merge (lanes 1+2+3): F1065-F1073 CLOSED (9); next free F1074
+Next free finding: **F1074**. **F988-F1073 CLOSED (86, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4 + wave-397 lanes 1-4 + wave-398 lanes 1-3).**
 # Wave-398: F1065-F1073 CLOSED (9); F1074-F1079 OPEN (6, wave-398 coverage analysis round 66, first-filing 2026-10-10 10:43 UTC, $0 spend); next free F1080
 Next free finding: **F1080**. **F988-F1073 CLOSED (86, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4 + wave-397 lanes 1-4 + wave-398 lanes 1-3).** **F1074-F1079 OPEN (6, wave-398 coverage analysis round 66).**

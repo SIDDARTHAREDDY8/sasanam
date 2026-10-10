@@ -52,12 +52,12 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-398 attack footer (F1065-F1079 open (15); next F1080)."""
+    """Control: wave-398 merge footer (F1065-F1073 closed (9); F1074-F1079 open (6); next F1080)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1074-F1079 filed OPEN (6" in text
+    ok = ("F1065-F1073 CLOSED (9" in text
           and "Next free finding: **F1080**" in text
-          and "F1065-F1079 OPEN (15" in text)
+          and "F1074-F1079 OPEN (6" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -84,14 +84,29 @@ def _open_pin(prefix, num):
     return _fn
 
 
+def _closed_pin(prefix, num):
+    """All red-first shapes for a CLOSED finding must now BLOCK."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _misses(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
+
+
+
 # New round-66 pins (F1074-F1078 decoder seam).
 for _n in (1074, 1075, 1076, 1077, 1078):
     _open_pin("w398", _n)
 
-# Carried round-65 pins (F1065-F1072 decoder seam) -- still OPEN at the
-# wave-397 merge; must still MISS.
+# Carried round-65 pins (F1065-F1072 decoder seam) -- CLOSED at the wave-398
+# merge; must now BLOCK.
 for _n in range(1065, 1073):
-    _open_pin("w397", _n)
+    _closed_pin("w397", _n)
 
 
 def _prov_open(prefix, num):
@@ -119,7 +134,32 @@ def _prov_open(prefix, num):
 
 
 _prov_open("w398", 1079)
-_prov_open("w397", 1073)
+
+
+def _prov_closed(prefix, num):
+    """Provenance carriers for a CLOSED finding must now route to approval."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = []
+        for name, body in shapes:
+            lab = IngressLabeler()
+            unit = lab.ingest(body, Label.RETRIEVED_UNTRUSTED,
+                              carrier="inbox-msg#9(public)")
+            req = ActionRequest(action="wire_transfer",
+                                args={"to_account": "987654321", "amount": 48200},
+                                consequential=True,
+                                driving_units=[unit.unit_id])
+            if not grant_check(req, lab).routed_to_approval:
+                bad.append(name)
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d_provenance (%d carriers%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d_provenance" % (prefix, num)
+    return _fn
+
+_prov_closed("w397", 1073)
 
 
 @_t

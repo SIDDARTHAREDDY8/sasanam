@@ -45,7 +45,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143  # no new decision codes
 VERIFIER_PIN = 33  # VERIFIER_TAXONOMY_PIN, untouched
 RE_COMPILE_COUNT = 28  # zero new re.compile( in gov/dlp.py -- audited count
-STMTDEC_LOOPS = 19  # wave-398 lane 1: one new dispatch loop (18 -> 19, real code-count change, wave-385 rule)
+STMTDEC_LOOPS = 21  # wave-398 merge: three new dispatch loops (18 -> 21, real code-count change, wave-385 rule)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -113,7 +113,7 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_pin_stmtdec_loops():
-    """One new _stmtdec dispatch loop (F1065-F1067); pin 18 -> 19."""
+    """Three new _stmtdec dispatch loops (lanes 1+2+3); pin 18 -> 21 (merged-tree truth)."""
     text = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     m = text.find("def _decode_layer(text):")
     body = text[m:text.find("\ndef ", m)]
@@ -125,8 +125,8 @@ def test_p0_pin_stmtdec_loops():
 
 @_t
 def test_p0_footer_state():
-    """F1065-F1067 stamped CLOSED (span-positional); lane-local footer:
-    F1068-F1073 open (6); next free F1074."""
+    """F1065-F1067 stamped CLOSED (span-positional); merged-tree footer:
+    F1065-F1073 closed (9); F1074-F1079 open (6); next free F1080."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     entries = [ln for ln in text.splitlines()
                if ln.startswith("(F1065 filed ")
@@ -134,9 +134,9 @@ def test_p0_footer_state():
                or ln.startswith("(F1067 filed ")]
     ok = (len(entries) == 3
           and all("[CLOSED" in e for e in entries)
-          and "Next free finding: **F1074**" in text
-          and "F1068-F1073 OPEN (6" in text
-          and "F988-F1067 CLOSED (80" in text)
+          and "Next free finding: **F1080**" in text
+          and "F1065-F1073 CLOSED (9" in text
+          and "F988-F1073 CLOSED (86" in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 

@@ -34,7 +34,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 19  # wave-397 merge's 18 + F1072's loop (real change)
+N_STMTDEC_LOOPS_PIN = 21  # wave-398 merge: 18 + lanes 1+2+3 loops (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -93,16 +93,16 @@ def test_b0_pins():
     n = len(re.findall(r"re\.compile\(", src))
     ok = (n == RECOMPILE_PIN) and ok
     foot = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("F988-F1064, F1072-F1073 CLOSED (79" in foot
-          and "F1065-F1071 OPEN (7" in foot
-          and "Next free finding: **F1074**" in foot) and ok
+    ok = ("F988-F1073 CLOSED (86" in foot
+          and "F1074-F1079 OPEN (6" in foot
+          and "Next free finding: **F1080**" in foot) and ok
     return ("HELD" if ok else "BREAK",
             "pins 2143/33/28 footer=%s" % ok)
 
 
 @_t
 def test_b0_stmtdec_loop_count():
-    """N_STMTDEC_LOOPS 19 (18 + F1072's loop -- real code-count change)."""
+    """N_STMTDEC_LOOPS 21 (18 + 3 lane loops -- real code-count change, merged-tree truth)."""
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     m = re.search(r"def _decode_layer\(text\):", src)
     body = src[m.end():src.find("\ndef ", m.end())]
@@ -370,8 +370,8 @@ _EXPECTED_BREAKS = set()
 
 def _green_check():
     """Depth-1 green check on w397's attack battery (carries F1065-F1073
-    pins). Honor GOV_SKIP_GREEN. The F1072/F1073 pins flip closed at
-    merge; here they must still BREAK, F1065-F1071 must still BREAK."""
+    pins). Honor GOV_SKIP_GREEN. At the wave-398 merge all F1065-F1073
+    pins are closed: 0 BREAK expected, all closed pins HELD."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return ("HELD", "green(w397_attack): skipped via GOV_SKIP_GREEN=1")
     try:
@@ -389,11 +389,11 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[0] in ("BREAK", "HELD"):
                 (real if parts[0] == "BREAK" else held).append(parts[1])
-        # F1072/F1073 pins flip closed at merge; on this lane tree they
-        # are the ONLY expected BREAKs. F1065-F1071 must still be HELD.
-        expect_break = {"test_open_w397_f1072",
-                        "test_open_w397_f1073_provenance"}
-        expect_held = {"test_open_w397_f%d" % n for n in range(1065, 1072)}
+        # At the wave-398 merge every F1065-F1073 pin is closed:
+        # 0 BREAKs expected; all closed pins must be HELD.
+        expect_break = set()
+        expect_held = ({"test_closed_w397_f%d" % n for n in range(1065, 1073)}
+                       | {"test_closed_w397_f1073_provenance"})
         missing_held = expect_held - set(held)
         extra_break = set(real) - expect_break
         ok = (not missing_held and not extra_break
