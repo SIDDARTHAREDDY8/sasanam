@@ -71254,6 +71254,396 @@ def _js_f1002_stmt_decode(text):
         return None
 
 
+# -- F1021 / F1022 / F1023 -------------------------------------------------
+# Wave-394 lane 5: with-statement reads, inline fromEntries
+# member-read assembly, and statement-position generalization of the
+# F974-class decoders. All three are narrow whole-text hooks in the
+# _stmtdec loop (after _js_f1004_stmt_decode); each returns the
+# decoded string or None. No new decision codes, no new re.compile
+# (pin tests unchanged). Never evals.
+
+
+def _js_f1021_stmt_decode(text):
+    """Decode F1021 with-statement reads (whole-text, _decode_layer hook).
+
+    `with({k1:'v1',...}){var|let|const RESULT=<ADD>;}` -- unqualified
+    identifier reads inside the with-body resolve through the
+    with-object's environment record (node v24.20.0). Filed
+    2026-10-10 by wave-393 attack round 61: no with-statement
+    production was modeled.
+
+    Node-exact (v24.20.0) for the modeled subset: the with-object is
+    an inline literal with string-literal values only (`__proto__`,
+    getters, methods fail closed via _js_f95x_parse_obj_lit); the
+    body is exactly one RESULT declaration (optionally preceded by
+    inert string-literal statements such as a block-level
+    `"use strict";`, which node evaluates as a no-op -- not a
+    directive inside a block); additive operands are
+    string literals or bare identifiers bound in the with-object
+    (member reads, calls, `this`, and unbound idents fail closed --
+    the engine would consult the outer scope or throw, which the
+    decoder refuses to guess). No strict-mode guard is needed: the
+    hook requires the text to start with `with(`, so a `"use strict"`
+    directive prologue is impossible, and a `"use strict"` string
+    statement inside the with-body is not a directive (directives
+    apply only to script/function bodies) -- node evaluates it
+    sloppy either way. At least one with-property and one
+    identifier operand are required, so the hook fires only on
+    genuinely with-laundered shapes (literal-only bodies already
+    decode elsewhere). Returns the decoded string, or None. Never
+    evals.
+    """
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        m = _js_match_kw(text, j, "with")
+        if m is None:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        props, j = _js_f95x_parse_obj_lit(text, _js_skip_ws(text, j),
+                                          state)
+        if not props:
+            return None
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_skip_ws(text, j)
+        # Leading inert string-literal statements (e.g. a
+        # block-level `"use strict";` -- not a directive inside a
+        # block, node evaluates it as a no-op): skip node-exactly.
+        # The `;` is required (no ASI guessing -- a missing
+        # semicolon on the same line is a SyntaxError in node).
+        # (2026-10-10, wave-394 spec-review.)
+        while j < n and text[j] in "'\"":
+            _, j2 = _js_parse_string(text, j)
+            k = _js_skip_ws(text, j2)
+            if k >= n or text[k] != ";":
+                break
+            j = _js_skip_ws(text, k + 1)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        used_ident = []
+
+        def _term(t, k, e, s):
+            k = _js_skip_ws(t, k)
+            if k < len(t) and t[k] in "'\"":
+                return _js_parse_string(t, k)
+            if k < len(t) and t[k] in _JS_IDENT_START:
+                nm, k2 = _js_parse_ident(t, k)
+                if nm in props and isinstance(props[nm], str):
+                    used_ident.append(nm)
+                    return props[nm], k2
+                raise _JSExprFail("F1021 unbound with-read")
+            raise _JSExprFail("F1021 term not modeled")
+
+        val, j = _js_f96x_parse_additive(text, j, {}, state, "F1021",
+                                         _term)
+        if not used_ident:
+            return None
+        # The RESULT declaration's `;` is optional before `}` (ASI --
+        # the filed shape omits it).
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j += 1
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j = _js_skip_ws(text, j + 1)
+        if j != n:
+            return None
+        state["ops"] += 1  # the with-read is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1022_fromentries(text, j, state):
+    """Parse `Object.fromEntries(Object.entries({k:'v',...}))` at text[j]
+    (F1022). Returns (dict, next_index); integer-like keys fail closed
+    (node sorts them numerically ahead of string keys -- the F968
+    residual, documented not hidden). Never evals."""
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "Object")
+    if m is None:
+        raise _JSExprFail("F1022 not Object.fromEntries")
+    j = _js_expect(text, _js_skip_ws(text, m), ".")
+    m = _js_match_kw(text, j, "fromEntries")
+    if m is None:
+        raise _JSExprFail("F1022 not Object.fromEntries")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    pairs, j = _js_f968_entries_init(text, j, state)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    return dict(pairs), j
+
+
+def _js_f1022_stmt_decode(text):
+    """Decode F1022 inline fromEntries member-read assembly (whole-text).
+
+    `var|let|const RESULT=<ADD>;` where each operand is
+    `Object.fromEntries(Object.entries({k:'v',...}))['k']` (or `.k`)
+    or a string literal. Filed 2026-10-10 by wave-393 attack round
+    61: F968 (wave-392 lane 1) models only the bound-intermediate
+    grammar `E=Object.entries({...});O=Object.fromEntries(E);
+    RESULT=<ADD>` -- the inline member-read form is a distinct
+    production.
+
+    Node-exact (v24.20.0): entries yields [k,v] string pairs in
+    insertion order; fromEntries rebuilds the dict (later-wins,
+    engine-exact via dict()); a missing key (engine undefined)
+    fails closed. Disjoint from F968 by grammar (no E/O binding
+    statements; the single statement heads on the RESULT
+    declarator). Returns the decoded string, or None. Never evals.
+    """
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+
+        def _term(t, k, e, s):
+            k = _js_skip_ws(t, k)
+            if k < len(t) and t[k] in "'\"":
+                return _js_parse_string(t, k)
+            d, k = _js_f1022_fromentries(t, k, s)
+            k = _js_skip_ws(t, k)
+            if k < len(t) and t[k] == "[":
+                k = _js_skip_ws(t, k + 1)
+                if k >= len(t) or t[k] not in "'\"":
+                    raise _JSExprFail("F1022 member key not literal")
+                key, k = _js_parse_string(t, k)
+                k = _js_skip_ws(t, k)
+                if k >= len(t) or t[k] != "]":
+                    raise _JSExprFail("F1022 member not closed")
+                k += 1
+            elif k < len(t) and t[k] == ".":
+                key, k = _js_parse_ident(t, _js_skip_ws(t, k + 1))
+            else:
+                raise _JSExprFail("F1022 not a member read")
+            if key not in d:
+                raise _JSExprFail("F1022 missing key")
+            _js_f96x_charge(s, "F1022 too many parts")
+            return d[key], k
+
+        val, j = _js_f96x_parse_additive(text, j, {}, state, "F1022",
+                                         _term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the inline round-trip is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+_F1023_MAX_JUNK = 64  # F452: bail out (fail closed) when more than this
+# many droppable junk statements precede the shape -- bounds the
+# hook's added decoding work; the statement walk itself stays linear.
+
+
+def _js_f1023_scan_with(text, i):
+    """Scan one `with(obj)body` statement at text[i] (F1023-local).
+
+    `_js_f949_scan_stmt` does not model `with`, so its
+    expression-statement fallback (scan to `;`) fails on a
+    `with`-statement with no trailing `;`. This F1023-local
+    fallback scans `with` + balanced `(...)` + body (a block via
+    balanced scan, else one statement via _js_f949_scan_stmt).
+    Linear; never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, i, "with")
+    if m is None:
+        return None
+    j = _js_skip_ws(text, m)
+    if j >= n or text[j] != "(":
+        return None
+    j = _js_f949_scan_balanced(text, j, "(", ")")
+    if j is None:
+        return None
+    j = _js_skip_ws(text, j)
+    if j >= n:
+        return None
+    if text[j] == "{":
+        return _js_f949_scan_balanced(text, j, "{", "}")
+    return _js_f949_scan_stmt(text, j)
+
+
+def _js_f1023_split_stmts(text):
+    """Split text into top-level statements, skipping comments (F1023).
+
+    Like _js_f949_split_topstmts but `//` and `/* */` comments
+    between (or before/after) statements are skipped -- comments are
+    no-ops in JS statement sequencing (node-exact). A `/` that
+    cannot start a comment (a possible regex-literal statement) and
+    an unterminated block comment fail closed via the statement
+    scanner. Returns (statements, saw_comment), or (None, saw) when
+    the text is not a clean statement sequence. Never evals.
+    """
+    stmts = []
+    saw_comment = False
+    i = 0
+    n = len(text)
+    while True:
+        w = _js_skip_ws(text, i)
+        c = _js_skip_ws_comments(text, i)
+        if c != w:
+            saw_comment = True
+        i = c
+        if i >= n:
+            break
+        j = _js_f949_scan_stmt(text, i)
+        if j is None:
+            # `_js_f949_scan_stmt` does not model `with` (its
+            # expression-statement fallback needs a `;`); try the
+            # F1023-local with-scan before failing closed.
+            j = _js_f1023_scan_with(text, i)
+        if j is None:
+            return None, saw_comment
+        stmts.append(text[i:j])
+        i = j
+    return (stmts if stmts else None), saw_comment
+
+
+def _js_f1023_inert_decl(stmt):
+    """If *stmt* is a droppable `var|let|const X=<literal>;`, return X.
+
+    Only side-effect-free declarations with string/number literal
+    RHS qualify; the caller additionally verifies X is not mentioned
+    in the kept window, so dropping the declaration is
+    semantics-preserving for the window's evaluation (node-exact).
+    Returns None otherwise. Never evals.
+    """
+    try:
+        _, name, j = _js_f96x_decl(stmt, 0)
+    except _JSExprFail:
+        return None
+    if name == "RESULT":
+        return None
+    n = len(stmt)
+    j = _js_skip_ws(stmt, j)
+    try:
+        if j < n and stmt[j] in "'\"":
+            _, j = _js_parse_string(stmt, j)
+        elif j < n and (stmt[j].isdigit() or (
+                stmt[j] == "." and j + 1 < n
+                and stmt[j + 1].isdigit())):
+            _, j = _js_parse_number(stmt, j)
+        else:
+            return None
+    except _JSExprFail:
+        return None
+    j = _js_skip_ws(stmt, j)
+    if j < n and stmt[j] == ";":
+        j = _js_skip_ws(stmt, j + 1)
+    if j != n:
+        return None
+    return name
+
+
+def _js_f1023_stmt_decode(text):
+    """Decode F974-class shapes at statement positions (whole-text hook).
+
+    Filed 2026-10-10 by wave-393 attack round 61 (F1023): the F974
+    getter/symbol-key decoders and the `__proto__`-literal production
+    are fullmatch-anchored -- any extra statement (a leading `var`,
+    a leading comment, a lone `;`, `"use strict"`, a trailing
+    statement) flips the verdict HIT->MISS, while
+    atob/concat-join/slice-join tolerate extra statements.
+
+    This hook strips inert statements and delegates the kept window
+    to the existing narrow routes:
+      - Symbol class: _js_f974_stmt_decode(window) (its own junk
+        discipline already tolerates extra statements; the
+        comment-skipping split is what is new here);
+      - getter / `__proto__` classes: _js_f949_rewrite_topstmt(window)
+        plus _try_js_expr_decode_all on the IIFE twin;
+      - F1021 (with-statement) and F1022 (inline fromEntries)
+        classes: their own hooks on the window (spec review: the
+        new F1021/F1022 hooks ship the same statement-position
+        fragility otherwise -- a one-token junk prefix re-opens
+        both closures).
+    A statement is inert (droppable) when it is empty (`;`), a
+    `"use strict"` directive (strictness does not change the
+    modeled F974/F1022 shapes' string values -- node-exact), or a
+    side-effect-free `var|let|const X=<literal>;` whose name is not
+    mentioned in the kept window. Comments are skipped by the
+    splitter. Anything else is kept, and the delegation then fails
+    closed exactly as before. A dropped `"use strict"` directive
+    additionally gates the F1021 route: `with` is a SyntaxError in
+    strict mode, so a strict window must not decode as a
+    with-read.
+
+    Strictly additive: when no comment was skipped and no statement
+    was dropped, returns None -- the clean shapes stay owned by the
+    earlier routes. Budget (F452): one linear split, one linear
+    mention check over the dropped names, and at most four decode
+    attempts on a strictly smaller window (each internally
+    bounded) -- no per-position scan-anchor multiplication.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ("Symbol" not in text and "__proto__" not in text
+            and "fromEntries" not in text
+            and "get " not in text and "get\t" not in text
+            and "get\n" not in text and "get\r" not in text
+            and "with(" not in text and "with " not in text
+            and "with\t" not in text and "with\n" not in text):
+        return None
+    stmts, saw_comment = _js_f1023_split_stmts(text)
+    if not stmts:
+        return None
+    kept = []
+    dropped_names = []
+    dropped_any = saw_comment
+    dropped_strict = False
+    for s in stmts:
+        st = s.strip()
+        if st in ("", ";"):
+            dropped_any = True
+            continue
+        if st in ('"use strict";', "'use strict';"):
+            dropped_any = True
+            dropped_strict = True
+            continue
+        nm = _js_f1023_inert_decl(st)
+        if nm is not None:
+            dropped_names.append(nm)
+            dropped_any = True
+            continue
+        kept.append(s)
+    if not dropped_any:
+        # Clean shape: the earlier narrow routes own it.
+        return None
+    if not kept:
+        return None
+    if len(dropped_names) > _F1023_MAX_JUNK:
+        return None
+    window = "\n".join(kept)
+    if dropped_names:
+        # Dropping a declaration whose name the window mentions
+        # would change the window's evaluation: fail closed.
+        stripped = _js_f97x_strip_strings(window)
+        if _js_f97x_stmt_mentions(stripped, set(dropped_names)):
+            return None
+    if "Symbol" in window:
+        r = _js_f974_stmt_decode(window)
+        if r is not None:
+            return r
+    if not dropped_strict:
+        # `with` is a SyntaxError in strict mode: a window whose
+        # strict directive was dropped must not take the F1021
+        # route.
+        r = _js_f1021_stmt_decode(window)
+        if r is not None:
+            return r
+    r = _js_f1022_stmt_decode(window)
+    if r is not None:
+        return r
+    twin = _js_f949_rewrite_topstmt(window)
+    if twin is not None:
+        return _try_js_expr_decode_all(twin)
+    return None
+
+
 def _js_f963_apply_cb(elements, cb, state):
     """Apply an F963 parsed callback to *elements* (F963).
 
@@ -118685,6 +119075,29 @@ def _decode_layer(text):
     # otherwise). Additive, in F-number order.
     for _stmtdec in (_js_f1017_stmt_decode, _js_f1018_stmt_decode,
                      _js_f1019_stmt_decode, _js_f1020_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1021/F1022/F1023: narrow whole-text statement-sequence decoders
+    # (wave-394 lane 5). F1021: with-statement reads -- disjoint by
+    # the leading `with(` keyword (no other hook models `with`).
+    # F1022: inline fromEntries member-read assembly -- disjoint from
+    # F968 by grammar (no E/O binding statements; the single
+    # statement heads on the RESULT declarator with an inline
+    # Object.fromEntries call). F1023: statement-position
+    # generalization of the F974-class decoders -- strictly additive
+    # (returns None when no comment was skipped and no statement was
+    # dropped, so clean shapes stay owned by the earlier routes).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1021_stmt_decode, _js_f1022_stmt_decode,
+                     _js_f1023_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
