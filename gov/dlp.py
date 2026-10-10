@@ -124215,6 +124215,827 @@ def _js_f1027_stmt_decode(text):
         return None
 
 
+# -- F1056/F1057/F1058/F1059/F1060 -------------------------------------------
+# Narrow whole-text statement-sequence decoders (wave-397 lane 3),
+# hooked in the _decode_layer _stmtdec loop after F1044/F1045/F1046.
+# Each parses a strict whole-text grammar; anything outside the
+# grammar fails closed (returns None -- a miss, never a mis-decode).
+# All shapes node-verified (v24.20.0). Per-attempt F452 budget: each
+# hook owns a local {"ops","parts"} state charged per element via
+# _js_f96x_charge (F967-F970 discipline); the state is discarded on
+# miss, so no shared budget is consumed speculatively (wave-383
+# rule). No new decision codes, no new re.compile (pin tests
+# unchanged). Never evals.
+
+
+# The exact set of code points matched by `\s` in the engine
+# (WhiteSpace + LineTerminator), verified against node v24.20.0 over
+# all 65536 BMP code points. Hand-rolled (no re) so the F1056
+# matcher is engine-exact without depending on Python's re `\s`,
+# which differs on exotic code points (U+FEFF is matched by JS
+# `\s` but not by Python's).
+_F1056_JS_WHITESPACE = frozenset((
+    0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x00A0, 0x1680,
+    0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007,
+    0x2008, 0x2009, 0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000,
+    0xFEFF,
+))
+
+_F1056_MATCH_BUDGET = 200000  # backtracking step cap per hook attempt
+
+
+def _js_f1056_parse_pattern(text, i):
+    """Parse a narrow `/source/` regex literal at text[i] (F1056).
+
+    Returns (tokens, ngroups, next_index). Tokens: ("lit", ch),
+    ("sp",) for `\\s`, ("ns",) for `\\S`, ("nsplus",) for `\\S+`,
+    ("grp", n, subtokens) for one-level capture groups. Modeled
+    escapes: `\\/`, `\\\\`, `\\n`, `\\t`, `\\r`, `\\s`, `\\S`, `\\S+`.
+    Anything else -- character classes, quantifiers, anchors,
+    alternation, nested/non-capturing/lookaround groups, flags --
+    fails closed (a miss, never a mis-decode). Non-BMP chars fail
+    closed: the engine matches UTF-16 code units while Python chars
+    are code points, so class matching would diverge. Never evals.
+    """
+    n = len(text)
+    if i >= n or text[i] != "/":
+        raise _JSExprFail("F1056 not a regex literal")
+    i += 1
+    toks = []
+    groups = 0
+    depth = 0
+    sub = None
+    while True:
+        if i >= n:
+            raise _JSExprFail("F1056 unterminated regex")
+        c = text[i]
+        cur = sub if depth else toks
+        if c == "/":
+            if depth:
+                raise _JSExprFail("F1056 unbalanced group")
+            i += 1
+            break
+        if c == "\\":
+            if i + 1 >= n:
+                raise _JSExprFail("F1056 bad escape")
+            e = text[i + 1]
+            if e == "S":
+                if i + 2 < n and text[i + 2] == "+":
+                    cur.append(("nsplus",))
+                    i += 3
+                else:
+                    cur.append(("ns",))
+                    i += 2
+            elif e == "s":
+                cur.append(("sp",))
+                i += 2
+            elif e == "/":
+                cur.append(("lit", "/"))
+                i += 2
+            elif e == "\\":
+                cur.append(("lit", "\\"))
+                i += 2
+            elif e == "n":
+                cur.append(("lit", "\n"))
+                i += 2
+            elif e == "t":
+                cur.append(("lit", "\t"))
+                i += 2
+            elif e == "r":
+                cur.append(("lit", "\r"))
+                i += 2
+            else:
+                raise _JSExprFail("F1056 regex escape not modeled")
+            continue
+        if c == "(":
+            if depth:
+                raise _JSExprFail("F1056 nested group")
+            if i + 1 < n and text[i + 1] == "?":
+                raise _JSExprFail("F1056 group modifier")
+            groups += 1
+            sub = []
+            toks.append(("grp", groups, sub))
+            depth = 1
+            i += 1
+            continue
+        if c == ")":
+            if not depth:
+                raise _JSExprFail("F1056 unbalanced paren")
+            depth = 0
+            sub = None
+            i += 1
+            continue
+        if c in "[]^$*+?|.{}":
+            raise _JSExprFail("F1056 regex char not modeled")
+        if ord(c) > 0xFFFF:
+            raise _JSExprFail("F1056 non-BMP pattern char")
+        cur.append(("lit", c))
+        i += 1
+    if not toks:
+        raise _JSExprFail("F1056 empty pattern")
+    return toks, groups, i
+
+
+def _js_f1056_gen(toks, subj, pos, gm, budget):
+    """Yield (end, groupmap) over all backtracking matches (F1056).
+
+    Greedy `\\S+` tries longest-first; the caller takes the first
+    yield, which is the engine's greedy-with-backtracking match.
+    budget[0] caps total steps (fail closed on adversarial input).
+    Groups always participate in this grammar (no optionals), so
+    every recorded group has text. Never evals.
+    """
+    budget[0] -= 1
+    if budget[0] < 0:
+        raise _JSExprFail("F1056 match budget")
+    if not toks:
+        yield pos, gm
+        return
+    t = toks[0]
+    rest = toks[1:]
+    kind = t[0]
+    if kind == "lit":
+        if pos < len(subj) and subj[pos] == t[1]:
+            yield from _js_f1056_gen(rest, subj, pos + 1, gm, budget)
+    elif kind == "sp":
+        if pos < len(subj) and ord(subj[pos]) in _F1056_JS_WHITESPACE:
+            yield from _js_f1056_gen(rest, subj, pos + 1, gm, budget)
+    elif kind == "ns":
+        if pos < len(subj) and ord(subj[pos]) not in _F1056_JS_WHITESPACE:
+            yield from _js_f1056_gen(rest, subj, pos + 1, gm, budget)
+    elif kind == "nsplus":
+        end = pos
+        while end < len(subj) and ord(subj[end]) not in _F1056_JS_WHITESPACE:
+            end += 1
+        for e in range(end, pos, -1):
+            yield from _js_f1056_gen(rest, subj, e, gm, budget)
+    elif kind == "grp":
+        gnum = t[1]
+        for e, gm2 in _js_f1056_gen(t[2], subj, pos, gm, budget):
+            gm3 = dict(gm2)
+            gm3[gnum] = (pos, e)
+            yield from _js_f1056_gen(rest, subj, e, gm3, budget)
+
+
+def _js_f1056_first_match(toks, subj):
+    """Leftmost first match of toks in subj (F1056).
+
+    Returns (start, end, {n: (s, e)}) or None. The engine tries
+    start positions left to right; the first greedy match wins
+    (node v24.20.0 verified). Never evals.
+    """
+    budget = [_F1056_MATCH_BUDGET]
+    for start in range(len(subj) + 1):
+        for end, gm in _js_f1056_gen(toks, subj, start, {}, budget):
+            return start, end, gm
+    return None
+
+
+def _js_f1056_apply_repl(repl, groups, matched, before, after):
+    """Apply a JS replacement string (F1056), node-exact.
+
+    `$$` -> `$`; `$&` -> matched substring; `` $` `` -> portion
+    before the match; `$'` -> portion after; `$n`/`$nn` -> capture
+    group n (missing group -> the engine's literal/`$d`-rest
+    fallback); `$` + other char -> literal `$` + char; trailing
+    `$` -> literal `$`. Verified against node v24.20.0. Never evals.
+    """
+    out = []
+    i = 0
+    n = len(repl)
+    while i < n:
+        c = repl[i]
+        if c != "$":
+            out.append(c)
+            i += 1
+            continue
+        if i + 1 >= n:
+            out.append("$")
+            i += 1
+            continue
+        d = repl[i + 1]
+        if d == "$":
+            out.append("$")
+            i += 2
+            continue
+        if d == "&":
+            out.append(matched)
+            i += 2
+            continue
+        if d == "`":
+            out.append(before)
+            i += 2
+            continue
+        if d == "'":
+            out.append(after)
+            i += 2
+            continue
+        if d in "0123456789":
+            num = d
+            j = i + 2
+            if j < n and repl[j] in "0123456789":
+                num += repl[j]
+                j += 1
+            val = int(num)
+            if 1 <= val <= len(groups):
+                out.append(groups[val - 1])
+            elif int(num[0]) in range(1, len(groups) + 1):
+                out.append(groups[int(num[0]) - 1])
+                out.append(num[1:])
+            else:
+                out.append("$" + num)
+            i = j
+            continue
+        out.append("$")
+        out.append(d)
+        i += 2
+    return "".join(out)
+
+
+def _js_f1056_stmt_decode(text):
+    """Decode F1056 String.replace capture-group assembly (whole-text).
+
+    `var|let|const RESULT="SUBJ".replace(/PAT/,"REPL");` -- the
+    replacement string's `$1`..`$9` capture substitutions reassemble
+    fragments node-exactly (attack round 64; no replace-capture
+    production was modeled -- distinct from F1054's match-group
+    reads and from F1033's replace-callback, whose second argument
+    is a function and fails this grammar).
+
+    Node-exact (v24.20.0) for the modeled subset: leftmost match,
+    greedy `\\S+` with backtracking, engine-exact `\\s`, the
+    replacement-string `$` grammar above. No-match replaces
+    nothing (the subject itself, still decoded). Flags, `new
+    RegExp`, non-BMP chars, unmodeled pattern escapes/classes, and
+    anything outside the strict statement grammar fail closed -- a
+    miss, never a mis-decode. The `.replace(/` anchor is unique to
+    this production. Returns the decoded string, or None. Never
+    evals.
+    """
+    if ".replace(/" not in text:
+        return None
+    try:
+        j = _js_skip_ws(text, 0)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        subj, j = _js_parse_string(text, _js_skip_ws(text, j))
+        if any(ord(c) > 0xFFFF for c in subj):
+            raise _JSExprFail("F1056 non-BMP subject")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "replace")
+        if m is None:
+            raise _JSExprFail("F1056 no replace")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        toks, ngroups, j = _js_f1056_parse_pattern(
+            text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ",")
+        repl, j = _js_parse_string(text, _js_skip_ws(text, j))
+        if any(ord(c) > 0xFFFF for c in repl):
+            raise _JSExprFail("F1056 non-BMP replacement")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        found = _js_f1056_first_match(toks, subj)
+        if found is None:
+            out = subj
+        else:
+            start, end, gm = found
+            groups = [subj[gm[g][0]:gm[g][1]]
+                      for g in range(1, ngroups + 1)]
+            out = (subj[:start]
+                   + _js_f1056_apply_repl(repl, groups, subj[start:end],
+                                          subj[:start], subj[end:])
+                   + subj[end:])
+        if len(out) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1056 result too long")
+        return out
+    except _JSExprFail:
+        return None
+
+
+def _js_f1057_parse_str_array(text, j, state, what):
+    """Parse `["lit",...]` (1+ string literals) at text[j] (F1057).
+
+    Trailing commas allowed (node). Holes, non-string elements,
+    and empty arrays fail closed. Element count is F452-charged.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "[")
+    frags = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            lit, j = _js_parse_string(text, j)
+            frags.append(lit)
+            _js_f96x_charge(state, what + " too many fragments")
+        elif j < n and text[j] == "]" and frags:
+            j += 1
+            break
+        else:
+            raise _JSExprFail(what + " array element not a string")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        if j < n and text[j] == "]":
+            j += 1
+            break
+        raise _JSExprFail(what + " bad array")
+    return frags, j
+
+
+def _js_f1057_parse_mapfn(text, j):
+    """Parse the F1057 identity mapFn at text[j].
+
+    `function(x){return x;}` or `x=>x` (param names must agree).
+    Anything else fails closed. Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if p1 in _F611_RESERVED or p1 == "arguments":
+            raise _JSExprFail("F1057 bad mapfn param")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        m2 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m2 is None:
+            raise _JSExprFail("F1057 mapfn no return")
+        p2, j = _js_parse_ident(text, _js_skip_ws(text, m2))
+        if p2 != p1:
+            raise _JSExprFail("F1057 mapfn param mismatch")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        return j
+    p1, j = _js_parse_ident(text, j)
+    if p1 in _F611_RESERVED or p1 == "arguments":
+        raise _JSExprFail("F1057 bad mapfn param")
+    j = _js_skip_ws(text, j)
+    if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+        raise _JSExprFail("F1057 mapfn not identity arrow")
+    p2, j = _js_parse_ident(text, _js_skip_ws(text, j + 2))
+    if p2 != p1:
+        raise _JSExprFail("F1057 mapfn param mismatch")
+    return j
+
+
+def _js_f1057_stmt_decode(text):
+    """Decode F1057 Array.from mapFn fragment reads (whole-text).
+
+    `[var|let|const F=["f1","f2",...];]`
+    `var|let|const RESULT=Array.from(F|["f1",...],MAPFN).join("SEP");`
+    where MAPFN is the identity `function(x){return x;}` or `x=>x`
+    (attack round 64; no Array.from-mapFn production was modeled --
+    distinct from F1011's forEach accumulation and F1016's push
+    assembly by the `Array.from(` anchor).
+
+    Node-exact (v24.20.0) for the modeled subset: identity mapFn
+    over a string array, joined with the literal separator. A
+    non-identity mapFn, non-string elements, holes, or anything
+    outside the strict grammar fails closed -- a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "Array.from(" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "Array"}
+    bound = set()
+    try:
+        j = _js_skip_ws(text, 0)
+        _, name1, j = _js_f96x_decl(text, j)
+        j = _js_skip_ws(text, j)
+        env = {}
+        if j < n and text[j] == "[":
+            _js_f1028f1029_check_fresh_name(name1, bound, shadow, "F1057")
+            frags, j = _js_f1057_parse_str_array(text, j, state, "F1057")
+            j = _js_expect(text, j, ";")
+            env[name1] = frags
+            bound.add(name1)
+            _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        else:
+            rname = name1
+        if rname != "RESULT":
+            return None
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Array")
+        if m is None:
+            raise _JSExprFail("F1057 no Array")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "from")
+        if m is None:
+            raise _JSExprFail("F1057 no from")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in _JS_IDENT_START:
+            aname, j = _js_parse_ident(text, j)
+            if aname not in env:
+                raise _JSExprFail("F1057 array unbound")
+            frags = env[aname]
+        elif j < n and text[j] == "[":
+            frags, j = _js_f1057_parse_str_array(text, j, state, "F1057")
+        else:
+            raise _JSExprFail("F1057 from arg not modeled")
+        j = _js_expect(text, j, ",")
+        j = _js_f1057_parse_mapfn(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail("F1057 no join")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        sep, j = _js_parse_string(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        out = sep.join(frags)
+        if len(out) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1057 result too long")
+        state["ops"] += 1  # the from/join staging is obfuscation-shaped
+        return out
+    except _JSExprFail:
+        return None
+
+
+def _js_f1058_decode_term(text, j, env, state, what, dname, pname, frags):
+    """One F1058 RESULT additive term: `D.decode(P[i])` or a literal."""
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    d2, j = _js_parse_ident(text, j)
+    if d2 != dname:
+        raise _JSExprFail(what + " term decoder mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "decode")
+    if m is None:
+        raise _JSExprFail(what + " term not decode")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if p2 != pname:
+        raise _JSExprFail(what + " term staged mismatch")
+    j = _js_expect(text, j, "[")
+    idx, j = _js_f997_parse_int(text, _js_skip_ws(text, j), what)
+    if idx < 0 or idx >= len(frags):
+        raise _JSExprFail(what + " term index out of range")
+    j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, ")")
+    return frags[idx], j
+
+
+def _js_f1058_stmt_decode(text):
+    """Decode F1058 TextEncoder/TextDecoder fragment staging (whole-text).
+
+    `var|let|const E=new TextEncoder();`
+    `var|let|const P=[E.encode("f1"),E.encode("f2"),...];`
+    `var|let|const D=new TextDecoder();`
+    `var|let|const RESULT=<additive of D.decode(P[i]) and literals>;`
+    (attack round 64; no TextEncoder/TextDecoder production was
+    modeled -- the `new TextEncoder(` anchor is unique).
+
+    Node-exact (v24.20.0) for the modeled subset: the default
+    encoder/decoder pair round-trips each fragment (encode to
+    UTF-8 bytes, decode back), so each staged part IS its literal.
+    Fragments containing lone surrogates fail closed -- the engine
+    replaces them with U+FFFD on encode, breaking the identity.
+    Constructor arguments, decode options, non-literal encode
+    args, out-of-range indices, and anything outside the strict
+    grammar fail closed -- a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "new TextEncoder(" not in text or "new TextDecoder(" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "TextEncoder", "TextDecoder"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, ename, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(ename, set(), shadow, "F1058")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail("F1058 no new encoder")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "TextEncoder")
+        if m is None:
+            raise _JSExprFail("F1058 no TextEncoder")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, pname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, {ename}, shadow, "F1058")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        frags = []
+        while True:
+            j = _js_skip_ws(text, j)
+            e2, j = _js_parse_ident(text, j)
+            if e2 != ename:
+                raise _JSExprFail("F1058 staged encoder mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "encode")
+            if m is None:
+                raise _JSExprFail("F1058 no encode")
+            j = _js_expect(text, _js_skip_ws(text, m), "(")
+            lit, j = _js_parse_string(text, _js_skip_ws(text, j))
+            if any(0xD800 <= ord(c) <= 0xDFFF for c in lit):
+                raise _JSExprFail("F1058 surrogate breaks identity")
+            j = _js_expect(text, j, ")")
+            frags.append(lit)
+            _js_f96x_charge(state, "F1058 too many fragments")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            raise _JSExprFail("F1058 bad staged array")
+        if not frags:
+            raise _JSExprFail("F1058 empty staged array")
+        j = _js_expect(text, j, ";")
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, {ename, pname}, shadow,
+                                       "F1058")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail("F1058 no new decoder")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "TextDecoder")
+        if m is None:
+            raise _JSExprFail("F1058 no TextDecoder")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            return None
+
+        def _term(t, k, e, s):
+            return _js_f1058_decode_term(t, k, e, s, "F1058", dname,
+                                        pname, frags)
+
+        val, j = _js_f96x_parse_additive(text, j, {}, state, "F1058",
+                                         _term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the encode/decode staging is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1059_parse_get_trap(text, j):
+    """Parse the F1059 identity get-trap handler at text[j].
+
+    `{get:function(o,k){return o[k];}}` or `{get:(o,k)=>o[k]}`
+    (param names must agree between head and body). Exactly one
+    trap; any other trap fails closed. Returns next_index. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    gk, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if gk != "get":
+        raise _JSExprFail("F1059 trap not get")
+    j = _js_expect(text, j, ":")
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        o1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ",")
+        k1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        m2 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m2 is None:
+            raise _JSExprFail("F1059 trap no return")
+        o2, j = _js_parse_ident(text, _js_skip_ws(text, m2))
+        if o2 != o1:
+            raise _JSExprFail("F1059 trap target mismatch")
+        j = _js_expect(text, j, "[")
+        k2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if k2 != k1:
+            raise _JSExprFail("F1059 trap key mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+    else:
+        j = _js_expect(text, j, "(")
+        o1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ",")
+        k1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+            raise _JSExprFail("F1059 trap not identity arrow")
+        o2, j = _js_parse_ident(text, _js_skip_ws(text, j + 2))
+        if o2 != o1:
+            raise _JSExprFail("F1059 trap target mismatch")
+        j = _js_expect(text, j, "[")
+        k2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if k2 != k1:
+            raise _JSExprFail("F1059 trap key mismatch")
+        j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_f1059_proxy_term(text, j, env, state):
+    """One F1059 RESULT additive term: a literal or `P.k`/`P["k"]`."""
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    return _js_f96x_dict_read(text, j, env, "F1059")
+
+
+def _js_f1059_stmt_decode(text):
+    """Decode F1059 Proxy named-target get-trap reads (whole-text).
+
+    `var|let|const T={<strlit obj>};`
+    `var|let|const P=new Proxy(T,{get:function(o,k){return o[k];}});`
+    `var|let|const RESULT=<additive>;`
+    (attack round 64; F990's residual -- F990 models the get trap
+    only over an INLINE object-literal target and fails closed on
+    a named target, so the productions are disjoint by the target
+    form).
+
+    Node-exact (v24.20.0) for the modeled subset: the identity
+    get-trap forwards `P.k` to the target's own property, so each
+    read IS the staged literal (unknown keys fail closed -- the
+    engine yields undefined there). An inline-literal target is
+    F990's production and fails closed here; extra handler traps,
+    non-identity trap bodies, and anything outside the strict
+    grammar fail closed -- a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "new Proxy(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "Proxy", "Object"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, tname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(tname, set(), shadow, "F1059")
+        props, j = _js_f95x_parse_obj_lit(text, _js_skip_ws(text, j),
+                                          state)
+        j = _js_expect(text, j, ";")
+        _, pname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, {tname}, shadow, "F1059")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail("F1059 no new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Proxy")
+        if m is None:
+            raise _JSExprFail("F1059 no Proxy")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == "{":
+            raise _JSExprFail("F1059 inline target is F990")
+        t2, j = _js_parse_ident(text, j)
+        if t2 != tname:
+            raise _JSExprFail("F1059 target not bound")
+        j = _js_expect(text, j, ",")
+        j = _js_f1059_parse_get_trap(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            return None
+        env = {tname: props, pname: props}
+        val, j = _js_f96x_parse_additive(text, j, env, state, "F1059",
+                                         _js_f1059_proxy_term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the proxy indirection is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1060_parse_getter_desc(text, j, props, dkey):
+    """Parse `{get:function(){return "lit";}}` at text[j] (F1060).
+
+    Installs the getter's literal under dkey in props. Exactly the
+    `get` member (a `value` member is F970's production and fails
+    closed here); duplicate keys fail closed (the engine throws
+    redefining a non-configurable accessor). Returns next_index.
+    Never evals.
+    """
+    j = _js_expect(text, j, "{")
+    gk, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if gk != "get":
+        raise _JSExprFail("F1060 descriptor not getter")
+    j = _js_expect(text, j, ":")
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        m2 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m2 is None:
+            raise _JSExprFail("F1060 getter no return")
+        lit, j = _js_parse_string(text, _js_skip_ws(text, m2))
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+    else:
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        n = len(text)
+        j = _js_skip_ws(text, j)
+        if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+            raise _JSExprFail("F1060 getter not arrow")
+        lit, j = _js_parse_string(text, _js_skip_ws(text, j + 2))
+    j = _js_expect(text, j, "}")
+    if dkey in props:
+        raise _JSExprFail("F1060 redefine")
+    props[dkey] = lit
+    return j
+
+
+def _js_f1060_getter_term(text, j, env, state):
+    """One F1060 RESULT additive term: a literal or `O.k`/`O["k"]`."""
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        return _js_parse_string(text, j)
+    return _js_f96x_dict_read(text, j, env, "F1060")
+
+
+def _js_f1060_stmt_decode(text):
+    """Decode F1060 defineProperty getter-descriptor reads (whole-text).
+
+    `var|let|const O={};`
+    `Object.defineProperty(O,"k",{get:function(){return "lit";}});` (1+)
+    `var|let|const RESULT=<additive>;`
+    (attack round 64; F970's residual -- F970 models
+    defineProperty-installed VALUES and explicitly fails closed on
+    accessor descriptors, so the productions are disjoint by the
+    descriptor kind).
+
+    Node-exact (v24.20.0) for the modeled subset: each getter
+    returns its literal, so each `O.k` read IS that literal
+    (unknown keys fail closed -- the engine yields undefined).
+    Value-descriptors are F970's production and fail closed here;
+    redefining an installed key, setter descriptors, and anything
+    outside the strict grammar fail closed -- a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "Object.defineProperty(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    shadow = {"String", "Object"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, oname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(oname, set(), shadow, "F1060")
+        props, j = _js_f95x_parse_obj_lit(text, _js_skip_ws(text, j),
+                                          state)
+        j = _js_expect(text, j, ";")
+        env = {oname: props}
+        installed = 0
+        while True:
+            save = _js_skip_ws(text, j)
+            try:
+                m = _js_match_kw(text, save, "Object")
+                if m is None:
+                    raise _JSExprFail("F1060 not defineProperty")
+                k = _js_expect(text, _js_skip_ws(text, m), ".")
+                dm = _js_match_kw(text, k, "defineProperty")
+                if dm is None:
+                    raise _JSExprFail("F1060 not defineProperty")
+                k = _js_expect(text, _js_skip_ws(text, dm), "(")
+                tname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+                if tname != oname:
+                    raise _JSExprFail("F1060 target")
+                k = _js_expect(text, k, ",")
+                dkey, k = _js_parse_string(text, _js_skip_ws(text, k))
+                k = _js_expect(text, k, ",")
+                k = _js_f1060_parse_getter_desc(text, _js_skip_ws(text, k),
+                                                env[oname], dkey)
+                k = _js_expect(text, k, ")")
+                k = _js_expect(text, k, ";")
+                _js_f96x_charge(state, "F1060 too many descriptors")
+                installed += 1
+                j = k
+            except _JSExprFail:
+                j = save
+                break
+        if installed == 0:
+            return None
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        val, j = _js_f96x_parse_additive(text, j, env, state, "F1060",
+                                         _js_f1060_getter_term)
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the descriptor install is obfuscation-shaped
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1056/F1057/F1058/F1059/F1060 -----------------------------------------
+
 # -- end F1025/F1026/F1027 ---------------------------------------------------
 
 
@@ -124725,6 +125546,31 @@ def _decode_layer(text):
     # F-number order.
     for _stmtdec in (_js_f1052_stmt_decode, _js_f1053_stmt_decode,
                      _js_f1054_stmt_decode, _js_f1055_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1056/F1057/F1058/F1059/F1060: narrow whole-text
+    # statement-sequence decoders (wave-397 lane 3). F1056:
+    # String.replace capture-group assembly (disjoint from F1054's
+    # match-group reads -- string replacement, not group reads --
+    # and from F1033's replace-callback, whose second argument is a
+    # function). F1057: Array.from mapFn fragment reads (disjoint
+    # from F1011/F1016 by the `Array.from(` anchor). F1058:
+    # TextEncoder/TextDecoder fragment staging (the `new
+    # TextEncoder(` anchor is unique). F1059: Proxy named-target
+    # get-trap reads (disjoint from F990 -- F990 requires an inline
+    # literal target and fails closed on a named target). F1060:
+    # defineProperty getter-descriptor reads (disjoint from F970 --
+    # F970 models value-descriptors and fails closed on accessors).
+    # Each returns the decoded string or None; all filed shapes BREAK
+    # on the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1056_stmt_decode, _js_f1057_stmt_decode,
+                     _js_f1058_stmt_decode, _js_f1059_stmt_decode,
+                     _js_f1060_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
