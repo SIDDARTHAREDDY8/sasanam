@@ -111555,6 +111555,590 @@ def _js_f974_stmt_decode(text):
 # binding the array to a var/const first misses node-exactly.
 #
 # F986 is a narrow whole-text statement-sequence decoder
+# F988/F989/F990/F991: narrow whole-text statement decoders (wave-393
+# lane 1), hooked in the _stmtdec loop alongside F961-F986. Each
+# parses a strict whole-text grammar; anything outside the grammar
+# fails closed (returns None -- a miss, never a mis-decode). All
+# shapes node-verified (v24.20.0). No new decision codes, no new
+# re.compile (pin tests unchanged). Never evals.
+
+
+def _js_f99x_ident(text, i):
+    """Scan one identifier at text[i] (F988-F991); returns (name, next)."""
+    n = len(text)
+    if i >= n or text[i] not in _JS_IDENT_START:
+        raise _JSExprFail("F99x not an ident")
+    j = i + 1
+    while j < n and text[j] in _JS_IDENT_CONT:
+        j += 1
+    return text[i:j], j
+
+
+def _js_f99x_parse_str(text, i):
+    """Parse a '...' or "..." literal at text[i] (F988-F991); returns (value, next).
+
+    Wraps _js_parse_string but fails closed on Annex-B octal escapes
+    (`\\1`-`\\7`, e.g. `"\\141"`): the shared parser cooks those to
+    the digit string ("141") while node (sloppy mode) yields "a" --
+    substituting the mis-cooked value would be a mis-decode (Spec
+    review H-1). `\\0` (NUL) and `\\8`/`\\9` (literal "8"/"9") are
+    already node-exact via _JS_SIMPLE_ESCAPES. Never evals.
+    """
+    v, k = _js_parse_string(text, i)
+    j = i
+    while True:
+        j = text.find("\\", j, k)
+        if j == -1:
+            break
+        if j + 1 < k and text[j + 1] in "1234567":
+            raise _JSExprFail("F99x octal escape")
+        j += 2
+    return v, k
+
+
+def _js_f99x_additive(text, i, resolve):
+    """Parse `OP (+ OP)*` at text[i] (F988-F991); returns (value, next).
+
+    *resolve(j)* maps one non-literal operand start to (value, next);
+    quoted literals are handled here via _js_f99x_parse_str (octal
+    escapes fail closed). Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, i)
+    if j < n and text[j] in "'\"":
+        v, j = _js_f99x_parse_str(text, j)
+    else:
+        v, j = resolve(j)
+    while True:
+        k = _js_skip_ws(text, j)
+        if k < n and text[k] == "+" and text[k + 1:k + 2] != "+":
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] in "'\"":
+                w, k = _js_f99x_parse_str(text, k)
+            else:
+                w, k = resolve(k)
+            v += w
+            if len(v) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F99x additive too long")
+            j = k
+            continue
+        return v, j
+
+
+def _js_f988_stmt_decode(text):
+    """Decode F988 `new String()` boxing reads (whole-text).
+
+    Grammar: `var|let|const NAME = new String([<q-lit>]);` decls*
+    then `var|let|const RESULT = <additive>;` then end-of-text.
+    Additive operands are quoted literals or boxed NAMEs (a boxed
+    name coerces via ToPrimitive/valueOf in `+` -- node v24.20.0).
+    `new String()` (no arg) models ""; a multi-arg or non-literal
+    arg fails closed. A boxed name literally `String` fails closed
+    (it would shadow the global constructor). Returns the RESULT
+    string, or None. Never evals.
+    """
+    if "new String(" not in text:
+        return None
+    try:
+        boxed = {}
+        j = _js_skip_ws(text, 0)
+        while True:
+            j = _js_skip_ws(text, j)
+            kw, k = _js_match_decl_kw(text, j)
+            if kw is None:
+                return None
+            k = _js_skip_ws(text, k)
+            name, k = _js_f99x_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if name == "RESULT":
+                k = _js_expect(text, k, "=")
+
+                def _res(p, _boxed=boxed):
+                    nm, q = _js_f99x_ident(text, p)
+                    if nm not in _boxed:
+                        raise _JSExprFail("F988 unboxed name")
+                    return _boxed[nm], q
+
+                v, k = _js_f99x_additive(text, k, _res)
+                k = _js_expect(text, k, ";")
+                k = _js_skip_ws(text, k)
+                if k != len(text):
+                    return None
+                return v
+            if name == "String":
+                return None
+            while True:
+                k = _js_expect(text, k, "=")
+                k = _js_skip_ws(text, k)
+                m = _js_match_kw(text, k, "new")
+                if m is None:
+                    return None
+                k = _js_skip_ws(text, m)
+                m2 = _js_match_kw(text, k, "String")
+                if m2 is None:
+                    return None
+                k = _js_expect(text, m2, "(")
+                k = _js_skip_ws(text, k)
+                if k < len(text) and text[k] in "'\"":
+                    lit, k = _js_f99x_parse_str(text, k)
+                elif k < len(text) and text[k] == ")":
+                    lit = ""
+                else:
+                    return None
+                k = _js_expect(text, k, ")")
+                if name in boxed:
+                    return None  # rebind: engine-visible, fail closed
+                boxed[name] = lit
+                k = _js_skip_ws(text, k)
+                if k < len(text) and text[k] == ",":
+                    # `var a=new String("x"), b=new String("y");`
+                    k = _js_skip_ws(text, k + 1)
+                    name, k = _js_f99x_ident(text, k)
+                    if name in ("String", "RESULT"):
+                        return None
+                    k = _js_skip_ws(text, k)
+                    continue
+                k = _js_expect(text, k, ";")
+                break
+            j = k
+    except _JSExprFail:
+        return None
+
+
+def _js_f989_stmt_decode(text):
+    """Decode F989 for-of Map-entry accumulation (whole-text).
+
+    Grammar: `var|let S = <q-lit>; var|let M = new Map([ [K,V], ... ]);`
+    `for (var|let K of M) { S += K[1]; }` (or `S = S + K[1];`)
+    `var|let|const RESULT = <additive>;` end-of-text, where the
+    additive's S operand is the accumulator. Pairs are string
+    literals; duplicate keys collapse with latest-value-wins in
+    first-insertion order (node v24.20.0, verified). Anything else
+    fails closed. Returns the accumulated string, or None. Never
+    evals.
+    """
+    if "new Map(" not in text:
+        return None
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        sname, k = _js_f99x_ident(text, k)
+        k = _js_expect(text, k, "=")
+        k = _js_skip_ws(text, k)
+        if k >= len(text) or text[k] not in "'\"":
+            return None
+        init, k = _js_f99x_parse_str(text, k)
+        k = _js_expect(text, k, ";")
+        j = _js_skip_ws(text, k)
+        kw2, k = _js_match_decl_kw(text, j)
+        if kw2 is None:
+            return None
+        k = _js_skip_ws(text, k)
+        mname, k = _js_f99x_ident(text, k)
+        k = _js_expect(text, k, "=")
+        k = _js_skip_ws(text, k)
+        m = _js_match_kw(text, k, "new")
+        if m is None:
+            return None
+        k = _js_skip_ws(text, m)
+        m2 = _js_match_kw(text, k, "Map")
+        if m2 is None or mname == "Map":
+            return None
+        k = _js_expect(text, m2, "(")
+        k = _js_skip_ws(text, k)
+        if k >= len(text) or text[k] != "[":
+            return None
+        k += 1
+        pairs = []
+        while True:
+            k = _js_skip_ws(text, k)
+            if k < len(text) and text[k] == "]":
+                k += 1
+                break
+            k = _js_expect(text, k, "[")
+            k = _js_skip_ws(text, k)
+            if k >= len(text) or text[k] not in "'\"":
+                return None
+            kk, k = _js_f99x_parse_str(text, k)
+            k = _js_expect(text, k, ",")
+            k = _js_skip_ws(text, k)
+            if k >= len(text) or text[k] not in "'\"":
+                return None
+            vv, k = _js_f99x_parse_str(text, k)
+            k = _js_expect(text, k, "]")
+            pairs.append((kk, vv))
+            k = _js_skip_ws(text, k)
+            if k < len(text) and text[k] == ",":
+                k += 1
+                continue
+            if k < len(text) and text[k] == "]":
+                k += 1
+                break
+            return None
+        k = _js_expect(text, k, ")")
+        k = _js_expect(text, k, ";")
+        j = _js_skip_ws(text, k)
+        mf = _js_match_kw(text, j, "for")
+        if mf is None:
+            return None
+        j = _js_expect(text, mf, "(")
+        j = _js_skip_ws(text, j)
+        kw3, k3 = _js_match_decl_kw(text, j)
+        if kw3 is None:
+            return None
+        j = _js_skip_ws(text, k3)
+        kname, j = _js_f99x_ident(text, j)
+        j = _js_skip_ws(text, j)
+        mo = _js_match_kw(text, j, "of")
+        if mo is None:
+            return None
+        j = _js_skip_ws(text, mo)
+        mref, j = _js_f99x_ident(text, j)
+        if mref != mname:
+            return None
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        bref, j = _js_f99x_ident(text, j)
+        if bref != sname:
+            return None
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == "+":
+            if text[j + 1:j + 2] != "=":
+                return None
+            j += 2
+        elif j < len(text) and text[j] == "=":
+            j += 1
+            j = _js_skip_ws(text, j)
+            sref, j = _js_f99x_ident(text, j)
+            if sref != sname:
+                return None
+            j = _js_skip_ws(text, j)
+            if not (j < len(text) and text[j] == "+" and
+                    text[j + 1:j + 2] != "+"):
+                return None
+            j += 1
+        else:
+            return None
+        j = _js_skip_ws(text, j)
+        kref, j = _js_f99x_ident(text, j)
+        if kref != kname:
+            return None
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "1":
+            return None
+        j += 1
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_skip_ws(text, j)
+        kw4, k4 = _js_match_decl_kw(text, j)
+        if kw4 is None:
+            return None
+        k4 = _js_skip_ws(text, k4)
+        rname, k4 = _js_f99x_ident(text, k4)
+        if rname != "RESULT":
+            return None
+        k4 = _js_expect(text, k4, "=")
+        seen = {}
+        order = []
+        for kk, vv in pairs:
+            if kk not in seen:
+                order.append(kk)
+            seen[kk] = vv
+        acc = init + "".join(seen[kk] for kk in order)
+        if len(acc) > _MAX_DECODE_BYTES:
+            return None
+
+        def _res(p, _s=sname, _acc=acc):
+            nm, q = _js_f99x_ident(text, p)
+            if nm != _s:
+                raise _JSExprFail("F989 bad operand")
+            return _acc, q
+
+        v, k4 = _js_f99x_additive(text, k4, _res)
+        k4 = _js_expect(text, k4, ";")
+        k4 = _js_skip_ws(text, k4)
+        if k4 != len(text):
+            return None
+        return v
+    except _JSExprFail:
+        return None
+
+
+def _js_f990_stmt_decode(text):
+    """Decode F990 Proxy get-trap reads (whole-text).
+
+    Grammar: `var|let P = new Proxy({ <obj> },
+    { get: function(T,K){ return T[K]; } });`
+    `var|let|const RESULT = <additive>;` end-of-text. <obj> is
+    identifier/string-literal keys with string-literal values (no
+    getters, spreads, or computed keys; `__proto__` fails closed --
+    in node it sets the prototype, not an own property). The get
+    trap must be exactly `return T[K];` with matching param names;
+    any other handler trap fails closed. Additive operands are
+    quoted literals or `P.name` / `P["lit"]` reads of modeled keys
+    (unknown keys fail closed). Returns the RESULT string, or
+    None. Never evals.
+    """
+    if "new Proxy(" not in text:
+        return None
+    try:
+        j = _js_skip_ws(text, 0)
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is None:
+            return None
+        k = _js_skip_ws(text, k)
+        pname, k = _js_f99x_ident(text, k)
+        k = _js_expect(text, k, "=")
+        k = _js_skip_ws(text, k)
+        m = _js_match_kw(text, k, "new")
+        if m is None:
+            return None
+        k = _js_skip_ws(text, m)
+        m2 = _js_match_kw(text, k, "Proxy")
+        if m2 is None or pname == "Proxy":
+            return None
+        k = _js_expect(text, m2, "(")
+        k = _js_skip_ws(text, k)
+        if k >= len(text) or text[k] != "{":
+            return None
+        k += 1
+        obj = {}
+        while True:
+            k = _js_skip_ws(text, k)
+            if k >= len(text):
+                return None  # truncated input: fail closed, never throw (H1)
+            if text[k] == "}":
+                k += 1
+                break
+            if text[k] in "'\"":
+                key, k = _js_f99x_parse_str(text, k)
+            elif text[k] in _JS_IDENT_START:
+                key, k = _js_f99x_ident(text, k)
+            else:
+                return None
+            if key == "__proto__":
+                return None
+            k = _js_expect(text, k, ":")
+            k = _js_skip_ws(text, k)
+            if k >= len(text) or text[k] not in "'\"":
+                return None
+            val, k = _js_f99x_parse_str(text, k)
+            obj[key] = val  # node: later duplicate wins
+            k = _js_skip_ws(text, k)
+            if k < len(text) and text[k] == ",":
+                k += 1
+                continue
+            if k < len(text) and text[k] == "}":
+                k += 1
+                break
+            return None
+        k = _js_expect(text, k, ",")
+        k = _js_skip_ws(text, k)
+        if k >= len(text) or text[k] != "{":
+            return None
+        k += 1
+        k = _js_skip_ws(text, k)
+        gk, k = _js_f99x_ident(text, k)
+        if gk != "get":
+            return None
+        k = _js_expect(text, k, ":")
+        k = _js_skip_ws(text, k)
+        fk = _js_match_kw(text, k, "function")
+        if fk is None:
+            return None
+        k = _js_expect(text, fk, "(")
+        k = _js_skip_ws(text, k)
+        tname, k = _js_f99x_ident(text, k)
+        k = _js_expect(text, k, ",")
+        k = _js_skip_ws(text, k)
+        kname, k = _js_f99x_ident(text, k)
+        k = _js_expect(text, k, ")")
+        k = _js_expect(text, k, "{")
+        k = _js_skip_ws(text, k)
+        rk = _js_match_kw(text, k, "return")
+        if rk is None:
+            return None
+        k = _js_skip_ws(text, rk)
+        rt, k = _js_f99x_ident(text, k)
+        if rt != tname:
+            return None
+        k = _js_expect(text, k, "[")
+        k = _js_skip_ws(text, k)
+        rkk, k = _js_f99x_ident(text, k)
+        if rkk != kname:
+            return None
+        k = _js_expect(text, k, "]")
+        k = _js_expect(text, k, ";")
+        k = _js_expect(text, k, "}")
+        k = _js_skip_ws(text, k)
+        if k >= len(text) or text[k] != "}":
+            return None  # extra handler traps fail closed
+        k += 1
+        k = _js_expect(text, k, ")")
+        k = _js_expect(text, k, ";")
+        j = _js_skip_ws(text, k)
+        kw2, k2 = _js_match_decl_kw(text, j)
+        if kw2 is None:
+            return None
+        k2 = _js_skip_ws(text, k2)
+        rname, k2 = _js_f99x_ident(text, k2)
+        if rname != "RESULT":
+            return None
+        k2 = _js_expect(text, k2, "=")
+
+        def _res(p, _p=pname, _obj=obj):
+            nm, q = _js_f99x_ident(text, p)
+            if nm != _p:
+                raise _JSExprFail("F990 bad base")
+            q = _js_skip_ws(text, q)
+            if q < len(text) and text[q] == ".":
+                key, q = _js_f99x_ident(text, q + 1)
+            elif q < len(text) and text[q] == "[":
+                q = _js_skip_ws(text, q + 1)
+                if q >= len(text) or text[q] not in "'\"":
+                    raise _JSExprFail("F990 bad subscript")
+                key, q = _js_f99x_parse_str(text, q)
+                q = _js_expect(text, q, "]")
+            else:
+                raise _JSExprFail("F990 bad read")
+            if key not in _obj:
+                raise _JSExprFail("F990 unknown key")
+            return _obj[key], q
+
+        v, k2 = _js_f99x_additive(text, k2, _res)
+        k2 = _js_expect(text, k2, ";")
+        k2 = _js_skip_ws(text, k2)
+        if k2 != len(text):
+            return None
+        return v
+    except _JSExprFail:
+        return None
+
+
+def _js_f991_stmt_decode(text):
+    """Decode F991 WeakRef deref reads (whole-text).
+
+    Grammar: `var|let W = new WeakRef({ v: <q-lit>, ... });` decls*
+    then `var|let|const RESULT = <additive>;` end-of-text. The
+    object literal's props must all be `name: <q-lit>` (no getters,
+    spreads, or computed keys); only `.v` reads are modeled
+    (`W.deref().v`). Additive operands are quoted literals or
+    `W.deref().v`. Returns the RESULT string, or None.
+
+    Modeling note: deref() is synchronous here (the decl is
+    immediately followed by the reads with no intervening
+    allocation), so the target cannot be collected in between --
+    the substitution is node-exact for the filed shapes
+    (v24.20.0). Never evals.
+    """
+    if "new WeakRef(" not in text or ".deref()" not in text:
+        return None
+    try:
+        vals = {}
+        j = _js_skip_ws(text, 0)
+        while True:
+            j = _js_skip_ws(text, j)
+            kw, k = _js_match_decl_kw(text, j)
+            if kw is None:
+                return None
+            k = _js_skip_ws(text, k)
+            name, k = _js_f99x_ident(text, k)
+            k = _js_skip_ws(text, k)
+            if name == "RESULT":
+                k = _js_expect(text, k, "=")
+
+                def _res(p, _vals=vals):
+                    nm, q = _js_f99x_ident(text, p)
+                    if nm not in _vals:
+                        raise _JSExprFail("F991 unbound ref")
+                    q = _js_skip_ws(text, q)
+                    if q >= len(text) or text[q] != ".":
+                        raise _JSExprFail("F991 not deref")
+                    dm, q = _js_f99x_ident(text, q + 1)
+                    if dm != "deref":
+                        raise _JSExprFail("F991 not deref")
+                    q = _js_expect(text, q, "(")
+                    q = _js_expect(text, q, ")")
+                    q = _js_skip_ws(text, q)
+                    if q >= len(text) or text[q] != ".":
+                        raise _JSExprFail("F991 not .v")
+                    vm, q = _js_f99x_ident(text, q + 1)
+                    if vm != "v":
+                        raise _JSExprFail("F991 not .v")
+                    return _vals[nm], q
+
+                v, k = _js_f99x_additive(text, k, _res)
+                k = _js_expect(text, k, ";")
+                k = _js_skip_ws(text, k)
+                if k != len(text):
+                    return None
+                return v
+            if name == "WeakRef":
+                return None
+            k = _js_expect(text, k, "=")
+            k = _js_skip_ws(text, k)
+            m = _js_match_kw(text, k, "new")
+            if m is None:
+                return None
+            k = _js_skip_ws(text, m)
+            m2 = _js_match_kw(text, k, "WeakRef")
+            if m2 is None:
+                return None
+            k = _js_expect(text, m2, "(")
+            k = _js_skip_ws(text, k)
+            if k >= len(text) or text[k] != "{":
+                return None
+            k += 1
+            vval = None
+            while True:
+                k = _js_skip_ws(text, k)
+                if k >= len(text):
+                    return None  # truncated input: fail closed, never throw (S1)
+                if text[k] == "}":
+                    k += 1
+                    break
+                if text[k] in "'\"":
+                    key, k = _js_f99x_parse_str(text, k)
+                elif text[k] in _JS_IDENT_START:
+                    key, k = _js_f99x_ident(text, k)
+                else:
+                    return None
+                if key == "__proto__":
+                    return None
+                k = _js_expect(text, k, ":")
+                k = _js_skip_ws(text, k)
+                if k >= len(text) or text[k] not in "'\"":
+                    return None
+                val, k = _js_f99x_parse_str(text, k)
+                if key == "v":
+                    vval = val
+                k = _js_skip_ws(text, k)
+                if k < len(text) and text[k] == ",":
+                    k += 1
+                    continue
+                if k < len(text) and text[k] == "}":
+                    k += 1
+                    break
+                return None
+            if vval is None:
+                return None
+            k = _js_expect(text, k, ")")
+            k = _js_expect(text, k, ";")
+            if name in vals:
+                return None
+            vals[name] = vval
+            j = k
+    except _JSExprFail:
+        return None
+
+
 # (_js_f986_stmt_decode, hooked in the _stmtdec loop): decls,
 # `+=`/`=` accumulations, `if (G) {..} [else {..}]` with decidable
 # guards, and a final `var RESULT = <additive>;`. F987 is a narrow
@@ -113157,8 +113741,9 @@ def _decode_layer(text):
                 _add(decoded)
                 if len(variants) >= _MAX_CANDIDATES:
                     return variants
-    # F961/F962/F964/F967/F968/F969/F970/F971/F972/F973/F974: narrow whole-text
-    # statement-sequence decoders. Each returns the decoded string
+    # F961/F962/F964/F967/F968/F969/F970/F971/F972/F973/F974/
+    # F988/F989/F990/F991: narrow whole-text statement-sequence
+    # decoders. Each returns the decoded string
     # or None; all filed shapes BREAK on the open tree, so no
     # earlier production decoded them and the pre-existing variant
     # order (F441) is preserved. Ordered after the F501 rewrite for
@@ -113168,7 +113753,9 @@ def _decode_layer(text):
                      _js_f968_stmt_decode, _js_f969_stmt_decode,
                      _js_f970_stmt_decode, _js_f971_stmt_decode,
                      _js_f972_stmt_decode, _js_f973_stmt_decode,
-                     _js_f974_stmt_decode, _js_f986_stmt_decode):
+                     _js_f974_stmt_decode, _js_f986_stmt_decode,
+                     _js_f988_stmt_decode, _js_f989_stmt_decode,
+                     _js_f990_stmt_decode, _js_f991_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
