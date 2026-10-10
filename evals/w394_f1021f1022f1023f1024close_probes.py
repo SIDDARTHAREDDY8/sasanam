@@ -88,11 +88,11 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_state():
-    """Merged footer: F1005-F1024 stamped CLOSED; F1025-F1033 open; next F1034."""
+    """Merged footer: F1005-F1024 stamped CLOSED; F1025-F1034 open; next F1035."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F1034**" in text
+    ok = ("Next free finding: **F1035**" in text
           and "F1005-F1024 CLOSED (20" in text
-          and "F1025-F1033 OPEN (9" in text)
+          and "F1025-F1034 OPEN (10" in text)
     return ("HELD" if ok else "BREAK", "footer-ok=%s" % ok)
 
 
