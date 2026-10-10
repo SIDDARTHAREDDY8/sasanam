@@ -12526,3 +12526,7 @@ Next free finding: **F1123** (F1121-F1122 renumbered at wave-402 merge). **F988-
 Next free finding: **F1111**. **F988-F1102 + F1109 CLOSED (116, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4 + wave-397 lanes 1-4 + wave-398 lanes 1-3 + wave-399 lanes 1-3 + wave-400 lanes 1-3 + wave-401 lanes 1-5 + wave-402 lane 4).** **F1103-F1108, F1110 OPEN (7, wave-401 attack round 69 + merge Spec-review F1110).**
 # Wave-402 attack round 70: F1111-F1120 filed OPEN (10, first-filing 2026-10-10 16:52 UTC, $0 model spend)
 Next free finding: **F1121**. **F988-F1102 CLOSED (115).** **F1103-F1120 OPEN (18, wave-401 attack round 69 + wave-401 merge Spec-review F1110 + wave-402 attack round 70).**
+
+
+# Wave-402: F1103-F1110 CLOSED (8); F1111-F1122 OPEN (12); next free F1123
+Next free finding: **F1123**. **F988-F1110 CLOSED (123, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4 + wave-397 lanes 1-4 + wave-398 lanes 1-3 + wave-399 lanes 1-3 + wave-400 lanes 1-3 + wave-401 lanes 1-5 + wave-402 lanes 1-4).** **F1111-F1122 OPEN (12, wave-402 attack round 70 (F1111-F1120, first-filing 2026-10-10 16:52 UTC) + wave-402 lane 3 self-files renumbered F1121-F1122 (16:57 UTC)).**

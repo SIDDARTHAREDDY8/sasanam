@@ -48,7 +48,7 @@ def _codes(s):
 
 _TMPLS = [
     ("slice-apply-loop",
-     "var C={{I}};var S='';for(var i=0;i<C.length;i++){{S+=String.fromCharCode.apply(null,C.slice(i,i+1));}}var RESULT=S;"),
+     "var C={I};var S='';for(var i=0;i<C.length;i++){{S+=String.fromCharCode.apply(null,C.slice(i,i+1));}}var RESULT=S;"),
 ]
 
 

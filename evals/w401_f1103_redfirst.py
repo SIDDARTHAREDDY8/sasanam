@@ -49,9 +49,9 @@ def _codes(s):
 
 _TMPLS = [
     ("map-then-raw",
-     "var C={{I}};var O={{raw:C.map(function(c){{return String.fromCharCode(c);}})}};var S=String.raw(O);var RESULT=S;"),
+     "var C={I};var O={{raw:C.map(function(c){{return String.fromCharCode(c);}})}};var S=String.raw(O);var RESULT=S;"),
     ("raw-prebuilt",
-     "var C={{I}};var A=C.map(function(c){{return String.fromCharCode(c);}});var S=String.raw({{raw:A}});var RESULT=S;"),
+     "var C={I};var A=C.map(function(c){{return String.fromCharCode(c);}});var S=String.raw({{raw:A}});var RESULT=S;"),
 ]
 
 

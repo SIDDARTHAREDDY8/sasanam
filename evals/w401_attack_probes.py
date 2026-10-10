@@ -99,22 +99,24 @@ def _closed_pin(prefix, num):
     return _fn
 
 
-# New round-69 pins (F1103-F1108 decoder seam) -- still OPEN.
+# New round-69 pins (F1103-F1108 decoder seam) -- CLOSED on the
+# merged tree (wave-402 lanes 1-2).
 for _n in (1103, 1104, 1105, 1106, 1107, 1108):
-    _open_pin("w401", _n)
+    _closed_pin("w401", _n)
 
-# Merge Spec-review residual (F1110 inline C.values() of-source) -- OPEN.
-_open_pin("w401", 1110)
+# Merge Spec-review residual (F1110 inline C.values() of-source) -- CLOSED
+# on the merged tree (wave-402 lane 3).
+_closed_pin("w401", 1110)
 
 
 @_t
-def test_open_w401_f1109_provenance():
-    """F1109 carriers must still evade the seam (instruction_shaped harness,
-    matching w401_f1109_redfirst.py)."""
+def test_closed_w401_f1109_provenance():
+    """F1109 carriers must now be flagged by the seam (CLOSED wave-402 lane 4;
+    instruction_shaped harness, matching w401_f1109_redfirst.py)."""
     shapes = _redfirst_shapes("w401", 1109)
-    bad = [name for name, payload in shapes if instruction_shaped(payload)]
+    bad = [name for name, payload in shapes if not instruction_shaped(payload)]
     ok = not bad
-    print(("HELD " if ok else "BREAK") + " test_open_w401_f1109_provenance (%d carriers%s)" % (
+    print(("HELD " if ok else "BREAK") + " test_closed_w401_f1109_provenance (%d carriers%s)" % (
         len(shapes), "" if ok else ": " + ",".join(bad)))
     return ok
 

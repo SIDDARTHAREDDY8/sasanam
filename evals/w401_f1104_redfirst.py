@@ -49,7 +49,7 @@ def _codes(s):
 
 _TMPLS = [
     ("symbol-key-loop",
-     "var K=Symbol('k');var O={{}};O[K]={{I}};var S='';for(var i=0;i<O[K].length;i++){{S+=String.fromCharCode(O[K][i]);}}var RESULT=S;"),
+     "var K=Symbol('k');var O={{}};O[K]={I};var S='';for(var i=0;i<O[K].length;i++){{S+=String.fromCharCode(O[K][i]);}}var RESULT=S;"),
 ]
 
 
