@@ -316,7 +316,6 @@ def c_sibling_disjointness():
 # repoint is justified by the added loops; asserted by counting the
 # dispatch loops on the merged tree).
 N_STMTDEC_LOOPS = 21
-N_STMTDEC_LOOPS = 19
 
 
 def d_tail_guards():

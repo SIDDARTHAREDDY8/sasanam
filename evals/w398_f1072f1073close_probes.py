@@ -329,19 +329,20 @@ def test_p5_f1073_generalizations():
 
 @_t
 def test_p6_siblings():
-    """F1055 still blocked; still-OPEN F1065-F1071 still BREAK on decoder."""
+    """F1055 still blocked; now-CLOSED F1065-F1071 BLOCK on decoder (wave-398 merge)."""
     f1055_shapes = _redfirst_shapes(1055, prefix="w396")
     f1055_ok = all(_blocked(p) for _, p in f1055_shapes)
-    open_shapes = []
+    closed_shapes = []
     for n in (1065, 1066, 1067, 1068, 1069, 1070, 1071):
         shapes = _redfirst_shapes(n, prefix="w397")
-        open_shapes += [(n, p) for _, p in shapes]
-    still_break = [(n, p) for n, p in open_shapes if not _blocked(p)]
-    ok = f1055_ok and len(still_break) == len(open_shapes)
+        closed_shapes += [(n, p) for _, p in shapes]
+    bad = [(n, p) for n, p in closed_shapes if not _blocked(p)]
+    ok = f1055_ok and not bad
     return ("HELD" if ok else "BREAK",
-            "f1055_blocked=%s (%d shapes) open_still_break=%d/%d"
-            % (f1055_ok, len(f1055_shapes), len(still_break),
-               len(open_shapes)))
+            "f1055_blocked=%s (%d shapes) closed_blocked=%d/%d%s"
+            % (f1055_ok, len(f1055_shapes),
+               len(closed_shapes) - len(bad), len(closed_shapes),
+               "" if ok else " BAD=" + ",".join(str(n) for n, _ in bad)))
 
 
 # --------------------------------------- p7: perf

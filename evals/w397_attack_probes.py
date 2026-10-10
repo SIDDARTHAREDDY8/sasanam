@@ -52,12 +52,12 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: merge footer (wave-397: F1048-F1064 closed (17); F1065-F1073 open (9); next F1074)."""
+    """Control: merge footer (wave-398: F1065-F1073 closed (9); F1074-F1079 open (6); next F1080)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1048-F1064 CLOSED (17" in text
-          and "Next free finding: **F1074**" in text
-          and "F1065-F1073 OPEN (9" in text)
+    ok = ("F1065-F1073 CLOSED (9" in text
+          and "Next free finding: **F1080**" in text
+          and "F1074-F1079 OPEN (6" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -98,9 +98,9 @@ def _closed_pin(prefix, num):
     return _fn
 
 
-# New round-65 pins (F1065-F1072 decoder seam).
+# Round-65 pins (F1065-F1072 decoder seam) -- CLOSED at the wave-398 merge; must now BLOCK.
 for _n in (1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072):
-    _open_pin("w397", _n)
+    _closed_pin("w397", _n)
 
 # Carried round-64 pins (F1048-F1063 decoder seam) -- CLOSED at the
 # wave-397 merge; must now BLOCK.
@@ -109,8 +109,8 @@ for _n in range(1048, 1064):
 
 
 @_t
-def test_open_w397_f1073_provenance():
-    """F1073 (OPEN): 9 new carriers must still evade approval routing."""
+def test_closed_w397_f1073_provenance():
+    """F1073 (CLOSED wave-398 lane 3): 9 carriers must now route to approval."""
     shapes = _redfirst_shapes("w397", 1073)
     bad = []
     for name, body in shapes:
@@ -119,7 +119,7 @@ def test_open_w397_f1073_provenance():
         req = ActionRequest(action="wire_transfer",
                             args={"to_account": "987654321", "amount": 48200},
                             consequential=True, driving_units=[unit.unit_id])
-        if grant_check(req, lab).routed_to_approval:
+        if not grant_check(req, lab).routed_to_approval:
             bad.append(name)
     ok = not bad
     print(("HELD " if ok else "BREAK") + " test_open_w397_f1073_provenance (%d carriers%s)" % (

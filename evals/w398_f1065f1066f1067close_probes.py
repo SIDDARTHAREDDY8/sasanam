@@ -424,30 +424,31 @@ def test_p4_sibling_pins():
         ("f1036",
          "var RESULT=String.fromCharCode(...structuredClone([120,111,120,98,45,48,49,50,51,"
          "52,53,54,55,56,57,97,98,99,100,101,102]));"),
-    ]
-    still_open = [
-        # F1068 (OPEN): Proxy set-trap accumulation -- true filed shape.
+        # --- merged-tree reconciliation: now-CLOSED siblings (wave-398 merge) ---
+        # F1068 (CLOSED at wave-398 merge): Proxy set-trap accumulation -- true filed shape.
         ("f1068",
          "var o={};var p=new Proxy(o,{set(t,k,v){t[k]=String.fromCharCode(v);return true;}});"
          "%s.forEach((cc,i)=>{p[i]=cc;});var RESULT=Object.values(o).join('');" % c),
-        # F1069 (OPEN): non-identifier fromCharCode spread receivers.
+        # F1069 (CLOSED at wave-398 merge): non-identifier fromCharCode spread receivers.
         ("f1069-weakref",
          "var r=new WeakRef({c:%s});var RESULT=String.fromCharCode(...r.deref().c);" % c),
         ("f1069-globalthis",
          "globalThis.K=%s;var RESULT=String.fromCharCode(...globalThis.K);" % c),
         ("f1069-rest",
          "var f=(...a)=>String.fromCharCode(...a);var RESULT=f(...%s);" % c),
-        # F1070 (OPEN): Intl.Segmenter ZWSP-filter reassembly.
+        # F1070 (CLOSED at wave-398 merge): Intl.Segmenter ZWSP-filter reassembly.
         ("f1070",
          "var parts=[\"%s\",\"%s\"];var RESULT=[...new Intl.Segmenter().segment(parts.join(\"\\u200b\"))]"
          ".filter(s=>s.segment!==\"\\u200b\").map(s=>s.segment).join(\"\");" % (f1, f2)),
-        # F1071 (OPEN): Object.getOwnPropertyNames loop accumulation.
+        # F1071 (CLOSED at wave-398 merge): Object.getOwnPropertyNames loop accumulation.
         ("f1071",
          "var O={a:\"%s\",b:\"%s\"};var S=\"\";for(var k of Object.getOwnPropertyNames(O))S+=O[k];"
          "var RESULT=S;" % (f1, f2)),
-        # F1072 (OPEN): JSON.parse plain property reads.
+        # F1072 (CLOSED at wave-398 merge): JSON.parse plain property reads.
         ("f1072",
          "var O=JSON.parse('{\"a\":\"%s\",\"b\":\"%s\"}');var RESULT=O.a+O.b;" % (f1, f2)),
+    ]
+    still_open = [
         # F1073 (OPEN): one hidden-instruction carrier (instruction_provenance
         # seam -- find_credential must not flag the HTML itself).
         ("f1073",

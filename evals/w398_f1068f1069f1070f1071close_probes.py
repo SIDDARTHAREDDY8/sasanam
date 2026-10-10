@@ -318,10 +318,9 @@ def test_p4_sibling_pins():
         'var o={0:120,1:111,2:120,3:98,4:45};var s="";for(var k in o){s+=String.fromCharCode(o[k]);}var RESULT=s+"0123456789abcdef";',
         # F1062 Set.forEach (wave-397 lane 4, now CLOSED) blocks.
         'var s=new Set(["%s","%s"]);var acc="";s.forEach(function(v){acc+=v;});var RESULT=acc;' % (_F1, _F2),
-    ]
-    still_open = [
+        # --- merged-tree reconciliation: now-CLOSED siblings (wave-398 merge) ---
         # F1065 generator function-declaration accumulation (wave-398
-        # lane 1, still OPEN -- true filed shape from the w397
+        # lane 1, CLOSED at wave-398 merge -- true filed shape from the w397
         # red-first; stale invented shapes that embed a credential
         # literal are not pins, wave-396 lesson).
         "var C=%s;function* g(){for(var i=0;i<C.length;i++)yield C[i];}"
@@ -329,6 +328,7 @@ def test_p4_sibling_pins():
         # F1072 JSON.parse plain property reads (wave-398 lane 3) still open.
         'var o=JSON.parse(\'{"a":"%s","b":"%s"}\');var RESULT=o.a+o.b;' % (_F1, _F2),
     ]
+    still_open = []
     bad_blocked = [s for s in blocked if not _blocked(s)]
     bad_open = [s for s in still_open if not _misses(s)]
     ok = not bad_blocked and not bad_open
