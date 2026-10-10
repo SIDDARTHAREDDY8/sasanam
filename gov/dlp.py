@@ -71644,6 +71644,586 @@ def _js_f1023_stmt_decode(text):
     return None
 
 
+# -- F1031 / F1032 / F1033 -------------------------------------------------
+# Wave-395 lane 3: async-iterator accumulation (for-await over an inline
+# async generator), Intl-intrinsic code re-derivation
+# (new Intl.NumberFormat("en").format(n)), and RegExp replace-callback
+# code mapping ("###".replace(/./g, function(m,i){...codes[i]...})).
+# All three are narrow whole-text statement-sequence decoders, hooked in
+# the _decode_layer _stmtdec loop after _js_f1023_stmt_decode; each
+# returns the decoded string or None. Like every other _stmtdec hook
+# these charge no F452 scan budget (pure text-to-string scans; element
+# counts capped at _JS_EXPR_MAX_CODEPOINTS and results at
+# _MAX_DECODE_BYTES), so there is nothing to snapshot/restore on miss
+# (wave-383 rule). No new decision codes, no new re.compile (pin tests
+# unchanged). Never evals.
+
+
+def _js_f103x_skip_st(text, j):
+    """Skip spaces/tabs only (no line terminators).
+
+    For [no LineTerminator here] grammar spots (yield argument, return
+    value, async arrow head, `=>`): a `\\n`/`\\r` there changes node
+    semantics (ASI) or is a SyntaxError, so the general _js_skip_ws
+    would mis-decode. Never evals.
+    """
+    n = len(text)
+    while j < n and text[j] in " \t":
+        j += 1
+    return j
+
+
+def _js_f103x_fcc(cps, what):
+    """fromCharCode ToUint16 decode of integer code points (F1031/F1032/F1033).
+
+    String.fromCharCode applies ToUint16 to every argument: any integer
+    v becomes the code unit v mod 2**16 (node v24.20.0) -- negatives,
+    out-of-range values, and lone surrogates are all exactly
+    reproducible in Python via v & 0xFFFF, so unlike the conservative
+    _js_f996f997_fcc_chr this never fail-closes on a value node would
+    decode. Surrogate pairs are combined into single code points for
+    Python-side equality (note: this differs from node's UTF-16 length
+    semantics -- node counts code units -- but is identical for the
+    credential-pattern scanning this feeds). Counts are capped at
+    _JS_EXPR_MAX_CODEPOINTS and the result at _MAX_DECODE_BYTES.
+    Raises _JSExprFail. Never evals.
+    """
+    out = []
+    for cp in cps:
+        out.append(chr(cp & 0xFFFF))
+        if len(out) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail(what + " too many codepoints")
+    # Combine surrogate pairs into single code points: JS strings are
+    # UTF-16 (node: "𐀀".length === 2); without combining, the Python
+    # string holds two lone-surrogate chars where node holds one astral
+    # code point. Combining is node-exact for equality and length
+    # semantics downstream.
+    combined = []
+    i = 0
+    while i < len(out):
+        o = ord(out[i])
+        if 0xD800 <= o <= 0xDBFF and i + 1 < len(out):
+            o2 = ord(out[i + 1])
+            if 0xDC00 <= o2 <= 0xDFFF:
+                combined.append(chr(0x10000 + ((o - 0xD800) << 10)
+                                    + (o2 - 0xDC00)))
+                i += 2
+                continue
+        combined.append(out[i])
+        i += 1
+    val = "".join(combined)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " result too long")
+    return val
+
+
+def _js_f1031_stmt_decode(text):
+    """Decode F1031 async-iterator accumulation (whole-text, _decode_layer hook).
+
+    `(async()=>{var|let|const ACC="";async function*GEN(){(yield INT;)+}for await(var|let|const LV of GEN()){ACC+=String.fromCharCode(LV);}globalThis.RESULT=ACC;})();`
+    (the tail may also be `var|let|const RESULT=ACC;`; the accumulation
+    body may also be `ACC=ACC+String.fromCharCode(LV);`).
+
+    Node-exact (v24.20.0) for the modeled subset: the async arrow IIFE
+    provides the async context `for await` requires; the inline async
+    generator yields integer literals in order; each `for await`
+    iteration binds the yielded number to LV and appends
+    String.fromCharCode(LV) (ToUint16 per argument). The accumulator
+    must start as `""` (filed shape). Anything else -- a non-empty
+    accumulator, generator params, non-integer yields, a loop body
+    other than the two modeled forms, name collisions, extra statements
+    -- fails closed: a miss, never a mis-decode. Returns the assembled
+    string, or None. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "async")
+        if m is None:
+            return None
+        # `async(` -- [no LineTerminator here]: `async\n()=>` is a
+        # SyntaxError in node (verified v24.20.0). Space/tab only.
+        j = _js_f103x_skip_st(text, m)
+        if j >= n or text[j] != "(":
+            raise _JSExprFail("F1031 no async params")
+        j += 1
+        # `)=>` -- [no LineTerminator here]: `()\n=>` is a SyntaxError,
+        # and `=>` must be contiguous. Space/tab only.
+        j = _js_f103x_skip_st(text, j)
+        if j >= n or text[j] != ")":
+            raise _JSExprFail("F1031 no async params")
+        j = _js_f103x_skip_st(text, j + 1)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F1031 no arrow")
+        j = _js_expect(text, j + 2, "{")
+        # Accumulator: var|let|const ACC = "";
+        _, acc_name, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if acc_name == "RESULT":
+            raise _JSExprFail("F1031 bad accumulator name")
+        acc_init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if acc_init != "":
+            raise _JSExprFail("F1031 accumulator not empty")
+        j = _js_expect(text, j, ";")
+        # async function*GEN(){(yield INT;)+}
+        m = _js_match_kw(text, _js_skip_ws(text, j), "async")
+        if m is None:
+            raise _JSExprFail("F1031 no async generator")
+        # `async function` -- [no LineTerminator here]: `async\nfunction`
+        # parses as identifier `async` (ReferenceError at runtime), not
+        # an async generator (verified v24.20.0). Space/tab only.
+        m2 = _js_match_kw(text, _js_f103x_skip_st(text, m), "function")
+        if m2 is None:
+            raise _JSExprFail("F1031 no async generator")
+        j = _js_expect(text, m2, "*")
+        gen_name, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if gen_name in ("RESULT", acc_name):
+            raise _JSExprFail("F1031 bad generator name")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        yields = []
+        j = _js_skip_ws(text, j)
+        while True:
+            m = _js_match_kw(text, j, "yield")
+            if m is None:
+                raise _JSExprFail("F1031 expected yield")
+            # `yield` argument -- [no LineTerminator here]: `yield\n120`
+            # yields undefined (ASI), i.e. fromCharCode(0), not 120
+            # (verified v24.20.0). Space/tab only.
+            v, j = _js_f997_parse_int(text, _js_f103x_skip_st(text, m),
+                                      "F1031")
+            yields.append(v)
+            if len(yields) > _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail("F1031 too many yields")
+            j = _js_expect(text, j, ";")
+            # `}` ends the generator body; anything else must be
+            # another yield (fail closed on stray tokens).
+            jj = _js_skip_ws(text, j)
+            if jj < n and text[jj] == "}":
+                j = jj + 1
+                break
+            j = jj
+        if not yields:
+            raise _JSExprFail("F1031 no yields")
+        # for await(var|let|const LV of GEN()){
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail("F1031 no for-await")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "await")
+        if m is None:
+            raise _JSExprFail("F1031 no for-await")
+        j = _js_expect(text, m, "(")
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail("F1031 no loop decl")
+        lv_name, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        if lv_name == "arguments" or lv_name in _F611_RESERVED:
+            raise _JSExprFail("F1031 bad loop name")
+        if lv_name in ("RESULT", acc_name, gen_name):
+            raise _JSExprFail("F1031 loop name collision")
+        m = _js_match_kw(text, _js_skip_ws(text, k), "of")
+        if m is None:
+            raise _JSExprFail("F1031 no of")
+        g2, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if g2 != gen_name:
+            raise _JSExprFail("F1031 generator mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        # Body: ACC+=String.fromCharCode(LV); or ACC=ACC+String.fromCharCode(LV);
+        aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if aname != acc_name:
+            raise _JSExprFail("F1031 accumulator mismatch")
+        j = _js_skip_ws(text, j)
+        if text.startswith("+=", j):
+            j += 2
+        elif j < n and text[j] == "=" and not text.startswith(("==", "=>"), j):
+            j += 1
+            a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if a2 != acc_name:
+                raise _JSExprFail("F1031 accumulator mismatch")
+            j = _js_expect(text, j, "+")
+        else:
+            raise _JSExprFail("F1031 bad accumulation")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1031 no String")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1031 no fromCharCode")
+        j = _js_expect(text, m, "(")
+        vname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if vname != lv_name:
+            raise _JSExprFail("F1031 fromCharCode arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        # Tail: globalThis.RESULT=ACC; or var|let|const RESULT=ACC;
+        jj = _js_skip_ws(text, j)
+        m = _js_match_kw(text, jj, "globalThis")
+        if m is not None:
+            j = _js_expect(text, _js_skip_ws(text, m), ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "RESULT")
+            if m is None:
+                raise _JSExprFail("F1031 bad tail")
+            j = _js_expect(text, m, "=")
+            tname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if tname != acc_name:
+                raise _JSExprFail("F1031 tail mismatch")
+            j = _js_expect(text, j, ";")
+        else:
+            _, rname, j = _js_f96x_decl(text, jj)
+            if rname != "RESULT":
+                raise _JSExprFail("F1031 bad tail")
+            tname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if tname != acc_name:
+                raise _JSExprFail("F1031 tail mismatch")
+            j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        return _js_f103x_fcc(yields, "F1031")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1032_stmt_decode(text):
+    """Decode F1032 Intl-intrinsic code re-derivation (whole-text, _decode_layer hook).
+
+    `var|let|const F=new Intl.NumberFormat("en");var|let|const ACC="";for(var|let|const N of [INT,...]){ACC+=String.fromCharCode(Number(F.format(N).replace(/REG/g,"")));}var|let|const RESULT=ACC;`
+    (the accumulation body may also be `ACC=ACC+...;`; REG is `\\D` or
+    `\\\\D`, the two filed variants).
+
+    Node-exact (v24.20.0) for the modeled subset: the codes are
+    restricted to 0..999, where `new Intl.NumberFormat("en").format(n)`
+    returns exactly the ASCII digit string (no grouping separator --
+    node-verified), so both filed replace patterns match nothing and
+    `Number(...)` returns n unchanged. Outside 0..999 the two filed
+    patterns DIVERGE (node-verified: 1000 formats as "1,000"; the `\\D`
+    class strips the comma and the sign while the `\\\\D` literal
+    matches nothing, so Number yields 1000 vs NaN): codes outside 0..999
+    fail closed. The NumberFormat locale must be exactly "en" (the
+    default locale is implementation-defined -- fail closed). Anything
+    else -- a non-empty accumulator, a non-literal codes array, a loop
+    body other than the two modeled forms, name collisions, extra
+    statements -- fails closed: a miss, never a mis-decode. Returns the
+    assembled string, or None. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        # var|let|const F=new Intl.NumberFormat("en");
+        _, f_name, j = _js_f96x_decl(text, j)
+        if f_name == "RESULT":
+            raise _JSExprFail("F1032 bad format name")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail("F1032 no new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Intl")
+        if m is None:
+            raise _JSExprFail("F1032 no Intl")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "NumberFormat")
+        if m is None:
+            raise _JSExprFail("F1032 no NumberFormat")
+        j = _js_expect(text, m, "(")
+        loc, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if loc != "en":
+            raise _JSExprFail("F1032 bad locale")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        # var|let|const ACC="";
+        _, acc_name, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if acc_name in ("RESULT", f_name):
+            raise _JSExprFail("F1032 bad accumulator name")
+        acc_init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if acc_init != "":
+            raise _JSExprFail("F1032 accumulator not empty")
+        j = _js_expect(text, j, ";")
+        # for(var|let|const N of [INT,...]){
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail("F1032 no for")
+        j = _js_expect(text, m, "(")
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail("F1032 no loop decl")
+        n_name, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        if n_name == "arguments" or n_name in _F611_RESERVED:
+            raise _JSExprFail("F1032 bad loop name")
+        if n_name in ("RESULT", f_name, acc_name):
+            raise _JSExprFail("F1032 loop name collision")
+        m = _js_match_kw(text, _js_skip_ws(text, k), "of")
+        if m is None:
+            raise _JSExprFail("F1032 no of")
+        j = _js_expect(text, m, "[")
+        codes = []
+        while True:
+            v, j = _js_f997_parse_int(text, _js_skip_ws(text, j), "F1032")
+            if v < 0 or v > 999:
+                raise _JSExprFail("F1032 code out of range")
+            codes.append(v)
+            if len(codes) > _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail("F1032 too many codes")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            raise _JSExprFail("F1032 bad array")
+        if not codes:
+            raise _JSExprFail("F1032 empty array")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        # Body: ACC+=String.fromCharCode(Number(F.format(N).replace(/REG/g,"")));
+        #   or ACC=ACC+String.fromCharCode(Number(F.format(N).replace(/REG/g,"")));
+        aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if aname != acc_name:
+            raise _JSExprFail("F1032 accumulator mismatch")
+        j = _js_skip_ws(text, j)
+        if text.startswith("+=", j):
+            j += 2
+        elif j < n and text[j] == "=" and not text.startswith(("==", "=>"), j):
+            j += 1
+            a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if a2 != acc_name:
+                raise _JSExprFail("F1032 accumulator mismatch")
+            j = _js_expect(text, j, "+")
+        else:
+            raise _JSExprFail("F1032 bad accumulation")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1032 no String")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1032 no fromCharCode")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Number")
+        if m is None:
+            raise _JSExprFail("F1032 no Number")
+        j = _js_expect(text, m, "(")
+        fname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if fname != f_name:
+            raise _JSExprFail("F1032 format receiver mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "format")
+        if m is None:
+            raise _JSExprFail("F1032 no format")
+        j = _js_expect(text, m, "(")
+        vname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if vname != n_name:
+            raise _JSExprFail("F1032 format arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "replace")
+        if m is None:
+            raise _JSExprFail("F1032 no replace")
+        j = _js_expect(text, m, "(")
+        # Regex literal /REG/g -- only the two filed sources; on the
+        # 0..999 domain both match nothing (node-verified no-op).
+        j = _js_expect(text, j, "/")
+        k = j
+        while k < n and text[k] != "/":
+            k += 1
+        if k >= n:
+            raise _JSExprFail("F1032 bad regex")
+        reg_src = text[j:k]
+        if reg_src not in ("\\D", "\\\\D"):
+            raise _JSExprFail("F1032 bad regex source")
+        j = k + 1
+        m = _js_match_kw(text, j, "g")
+        if m is None:
+            raise _JSExprFail("F1032 regex not /REG/g")
+        j = _js_expect(text, m, ",")
+        rep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if rep != "":
+            raise _JSExprFail("F1032 bad replacement")
+        j = _js_expect(text, j, ")")  # close replace(
+        j = _js_expect(text, j, ")")  # close Number(
+        j = _js_expect(text, j, ")")  # close fromCharCode(
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        # var|let|const RESULT=ACC;
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1032 bad tail")
+        tname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if tname != acc_name:
+            raise _JSExprFail("F1032 tail mismatch")
+        _js_f96x_expect_semi_end(text, j)
+        return _js_f103x_fcc(codes, "F1032")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1033_stmt_decode(text):
+    """Decode F1033 RegExp replace-callback code mapping (whole-text, _decode_layer hook).
+
+    `var|let|const CODES=[INT,...];var|let|const RESULT="STR".replace(/./g,CALLBACK);`
+    where CALLBACK is `function(P1,P2){return String.fromCharCode(CODES[P2]);}`
+    or `(P1,P2)=>String.fromCharCode(CODES[P2])`.
+
+    Node-exact (v24.20.0) for the modeled subset: String.replace with
+    `/./g` (no `u` flag) matches each UTF-16 code unit except the line
+    terminators `\\n \\r \\u2028 \\u2029` (node-verified); the callback's
+    second argument is the match *offset*, so `CODES[P2]` reads the
+    offset-th code (undefined past the end -> fromCharCode(0),
+    node-verified); fromCharCode applies ToUint16 to every argument.
+    The subject is a cooked string literal; astral characters are
+    walked per UTF-16 code unit exactly as the engine does
+    (node-verified: "A\\U0001F600B" matches at offsets 0,1,2,3). The
+    replacer-function return value is used literally (no `$`-pattern
+    substitution on function returns). Anything else -- a non-literal
+    codes array, a different regex, a callback body other than the
+    single modeled return, name mismatches, extra statements -- fails
+    closed: a miss, never a mis-decode. Returns the mapped string, or
+    None. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        # var|let|const CODES=[INT,...];
+        _, codes_name, j = _js_f96x_decl(text, j)
+        if codes_name == "RESULT":
+            raise _JSExprFail("F1033 bad codes name")
+        j = _js_expect(text, j, "[")
+        codes = []
+        while True:
+            v, j = _js_f997_parse_int(text, _js_skip_ws(text, j), "F1033")
+            codes.append(v)
+            if len(codes) > _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail("F1033 too many codes")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            raise _JSExprFail("F1033 bad array")
+        if not codes:
+            raise _JSExprFail("F1033 empty array")
+        j = _js_expect(text, j, ";")
+        # var|let|const RESULT="STR".replace(/./g,CALLBACK);
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1033 not RESULT")
+        subj, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "replace")
+        if m is None:
+            raise _JSExprFail("F1033 no replace")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, "/")
+        j = _js_expect(text, j, ".")
+        j = _js_expect(text, j, "/")
+        m = _js_match_kw(text, j, "g")
+        if m is None:
+            raise _JSExprFail("F1033 regex not /./g")
+        j = _js_expect(text, m, ",")
+        # CALLBACK: function(P1,P2){return String.fromCharCode(CODES[P2]);}
+        #       or (P1,P2)=>String.fromCharCode(CODES[P2])
+        j = _js_skip_ws(text, j)
+        is_function = False
+        m = _js_match_kw(text, j, "function")
+        if m is not None:
+            is_function = True
+            j = _js_expect(text, m, "(")
+            p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ",")
+            p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, "{")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+            if m is None:
+                raise _JSExprFail("F1033 bad callback")
+            # `return` value -- [no LineTerminator here]: `return\nX`
+            # returns undefined (ASI), so the replacement would be the
+            # literal "undefined" (verified v24.20.0). Space/tab only.
+            j = _js_f103x_skip_st(text, m)
+        else:
+            j = _js_expect(text, j, "(")
+            p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ",")
+            p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ")")
+            # `=>` -- [no LineTerminator here]: `)\n=>` is a
+            # SyntaxError, and `=>` must be contiguous (verified
+            # v24.20.0). Space/tab only.
+            j = _js_f103x_skip_st(text, j)
+            if not text.startswith("=>", j):
+                raise _JSExprFail("F1033 bad arrow")
+            j = _js_skip_ws(text, j + 2)
+        if p1 == p2:
+            raise _JSExprFail("F1033 callback param collision")
+        if p1 == codes_name or p2 == codes_name:
+            # The params shadow the outer codes array: node resolves
+            # CODES to the param (a number/string), not the array --
+            # outside the modeled subset, fail closed (2026-10-10,
+            # wave-395 standards review).
+            raise _JSExprFail("F1033 callback param shadowing")
+        if p1 in _F611_RESERVED or p2 in _F611_RESERVED:
+            # Node rejects reserved words as binding names outright;
+            # decoding such text would be a false positive.
+            raise _JSExprFail("F1033 bad callback param")
+        # Shared tail: String.fromCharCode(CODES[P2]). j is already
+        # positioned by the branch above (space/tab-only after `return`;
+        # full skip after `=>`): no further skipping here, or the
+        # [no LineTerminator here] guard would be undone.
+        m = _js_match_kw(text, j, "String")
+        if m is None:
+            raise _JSExprFail("F1033 no String")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1033 no fromCharCode")
+        j = _js_expect(text, m, "(")
+        cname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if cname != codes_name:
+            raise _JSExprFail("F1033 codes mismatch")
+        j = _js_expect(text, j, "[")
+        iname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if iname != p2:
+            raise _JSExprFail("F1033 index mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        if is_function:
+            j = _js_expect(text, j, ";")
+            j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")  # close replace(
+        j = _js_expect(text, j, ";")
+        if _js_skip_ws(text, j) != n:
+            raise _JSExprFail("F1033 trailing input")
+        # Node-exact replace simulation over UTF-16 code units: without
+        # the `u` flag `.` matches each code unit except \\n \\r \\u2028
+        # \\u2029; the callback index is the unit offset; out-of-range
+        # codes read undefined -> fromCharCode(0).
+        raw = subj.encode("utf-16-le")
+        units = [raw[k] | (raw[k + 1] << 8) for k in range(0, len(raw), 2)]
+        out = []
+        for u, unit in enumerate(units):
+            if unit in (0x0A, 0x0D, 0x2028, 0x2029):
+                out.append(unit)
+            elif u < len(codes):
+                out.append(codes[u] & 0xFFFF)
+            else:
+                out.append(0)
+        val = b"".join(v.to_bytes(2, "little") for v in out).decode("utf-16-le")
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1033 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+
 def _js_f963_apply_cb(elements, cb, state):
     """Apply an F963 parsed callback to *elements* (F963).
 
@@ -118930,6 +119510,19 @@ def _decode_layer(text):
     # Additive, in F-number order.
     for _stmtdec in (_js_f1021_stmt_decode, _js_f1022_stmt_decode,
                      _js_f1023_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1031/F1032/F1033: narrow whole-text statement-sequence decoders --
+    # async-iterator accumulation, Intl-intrinsic code re-derivation,
+    # RegExp replace-callback code mapping. Each returns the decoded
+    # string or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1031_stmt_decode, _js_f1032_stmt_decode,
+                     _js_f1033_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
