@@ -113001,6 +113001,337 @@ def _try_js_expr_decode_all(text):
     return whole if whole != text else None
 
 
+
+# -- F996/F997/F998 (wave-393 lane 3) ------------------------------------------
+
+def _js_f996_parse_digit_string(text, j, what):
+    """Parse a quoted all-digit string literal at text[j] (F996).
+
+    Returns (digits, next_index). Only `'...'` / `"..."` with 1-6
+    ASCII digits and NO backslash are accepted -- escapes fail closed
+    (a miss, never a mis-decode). Raises _JSExprFail otherwise. Never
+    evals.
+    """
+    n = len(text)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail(what + " not a string")
+    q = text[j]
+    k = j + 1
+    while k < n and text[k] != q:
+        if text[k] == "\\":
+            raise _JSExprFail(what + " backslash fails closed")
+        k += 1
+    if k >= n:
+        raise _JSExprFail(what + " unterminated")
+    digits = text[j + 1:k]
+    if not digits or len(digits) > 6 or not digits.isdigit():
+        raise _JSExprFail(what + " not all digits")
+    return digits, k + 1
+
+
+def _js_f996f997_fcc_chr(cps, what):
+    """fromCharCode ToUint16 decode of integer code points (F996/F997).
+
+    Mirrors the F967 discipline: `_safe_chr` rejects out-of-range /
+    surrogate code points (fail closed), then ToUint16 masking. The
+    result is charged to _MAX_DECODE_BYTES. Raises _JSExprFail.
+    Never evals.
+    """
+    out = []
+    for cp in cps:
+        ch = _safe_chr(cp)
+        if ch is None:
+            raise _JSExprFail(what + " bad codepoint")
+        out.append(chr(ord(ch) & 0xFFFF))
+        if len(out) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail(what + " too many codepoints")
+    val = "".join(out)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " result too long")
+    return val
+
+
+def _js_f996_stmt_decode(text):
+    """Decode F996 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const RESULT=String.fromCharCode.apply(null,`
+    `["120","111",...].map(Number));` -- .map(Number) over
+    string-code arrays (attack round 60, F952 residual).
+
+    Node-exact (v24.20.0): `Array.prototype.map` invokes the callback
+    as `Number(value, index, array)`; `Number` ignores the extra args,
+    so `.map(Number)` maps each string element through `Number()`.
+    The grammar is strict: 1-6 ASCII digits per element, no backslash,
+    non-empty, and the receiver/thisArg/callback are exactly
+    `String.fromCharCode.apply(null, ...map(Number))`. Anything else
+    (`.map(String)`, non-digit elements, non-null thisArg, empty
+    arrays) fails closed -- a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F996 no String")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F996 no fromCharCode")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "apply")
+        if m is None:
+            raise _JSExprFail("F996 no apply")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "null")
+        if m is None:
+            raise _JSExprFail("F996 thisarg not null")
+        j = _js_expect(text, _js_skip_ws(text, m), ",")
+        j = _js_expect(text, j, "[")
+        elems = []
+        while True:
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            digits, j = _js_f996_parse_digit_string(text, j, "F996")
+            elems.append(int(digits))
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            raise _JSExprFail("F996 bad array")
+        if not elems:
+            raise _JSExprFail("F996 empty array")
+        if len(elems) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail("F996 too many elements")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+        if m is None:
+            raise _JSExprFail("F996 no map")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Number")
+        if m is None:
+            raise _JSExprFail("F996 callback not Number")
+        j = _js_expect(text, m, ")")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        # Number(digits) === int(digits) for all-digit strings
+        # (node v24.20.0); then fromCharCode ToUint16.
+        return _js_f996f997_fcc_chr(elems, "F996")
+    except _JSExprFail:
+        return None
+
+
+def _js_f997_parse_int(text, j, what):
+    """Parse an optional-`-` ASCII integer literal (F997).
+
+    Returns (value, next_index). 1-6 digits; a bare `-` or any
+    non-digit fails closed. Never evals.
+    """
+    n = len(text)
+    neg = False
+    if j < n and text[j] == "-":
+        neg = True
+        j += 1
+    k = j
+    while k < n and text[k] in _ASCII_DIGITS:
+        k += 1
+    digits = text[j:k]
+    if not digits or len(digits) > 6:
+        raise _JSExprFail(what + " bad int")
+    return (-int(digits) if neg else int(digits)), k
+
+
+def _js_f997_stmt_decode(text):
+    """Decode F997 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const RESULT=String.fromCharCode.apply(null,`
+    `[0,120,111,...,0].slice(1,-1));` -- slice-trimmed code arrays
+    (attack round 60; no slice-trim production was modeled).
+
+    Node-exact (v24.20.0): `slice(1,-1)` on the literal array yields
+    `arr[1:len-1]` (start/end clamped exactly as the engine does for
+    literal bounds, which are in-range by construction); then
+    fromCharCode ToUint16 per element (F967 discipline). The slice
+    arguments are strictly `(1,-1)` -- other trims fail closed
+    (documented scope boundary). Returns the decoded string, or None.
+    Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F997 no String")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F997 no fromCharCode")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "apply")
+        if m is None:
+            raise _JSExprFail("F997 no apply")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "null")
+        if m is None:
+            raise _JSExprFail("F997 thisarg not null")
+        j = _js_expect(text, _js_skip_ws(text, m), ",")
+        j = _js_expect(text, j, "[")
+        elems = []
+        while True:
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            cp, j = _js_f997_parse_int(text, j, "F997")
+            elems.append(cp)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            raise _JSExprFail("F997 bad array")
+        if len(elems) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail("F997 too many elements")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "slice")
+        if m is None:
+            raise _JSExprFail("F997 no slice")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("1", j) or (j + 1 < n and
+                                           text[j + 1] in _JS_IDENT_CONT):
+            raise _JSExprFail("F997 slice start not 1")
+        j += 1
+        j = _js_expect(text, j, ",")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("-1", j) or (j + 2 < n and
+                                           text[j + 2] in _JS_IDENT_CONT):
+            raise _JSExprFail("F997 slice end not -1")
+        j += 2
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        trimmed = elems[1:len(elems) - 1]
+        return _js_f996f997_fcc_chr(trimmed, "F997")
+    except _JSExprFail:
+        return None
+
+
+def _js_f998_parse_literal_nobs(text, j, what):
+    """Parse a backslash-free '...' / "..." literal (F998).
+
+    Returns (value, next_index). Any backslash inside the literal
+    fails closed -- a miss, never a mis-decode (the escape layer is
+    outside the modeled F998 grammar; documented scope boundary).
+    Never evals.
+    """
+    n = len(text)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail(what + " not a string")
+    k = _js_skip_quoted(text, j)
+    raw = text[j:k]
+    if "\\" in raw:
+        raise _JSExprFail(what + " backslash fails closed")
+    val, end = _js_parse_string(text, j)
+    if end != k:
+        raise _JSExprFail(what + " literal span mismatch")
+    return val, k
+
+
+def _js_f998_stmt_decode(text):
+    """Decode F998 statement sequences (whole-text, _decode_layer hook).
+
+    `globalThis.x="frag1";globalThis.y="frag2";...;`
+    `var|let|const RESULT=globalThis.x+globalThis.y+...;` -- fragments
+    stashed on globalThis and re-read via member reads (attack round
+    60; no global-stash production was modeled).
+
+    Node-exact (v24.20.0): each `globalThis.NAME = "LIT"` creates a
+    global own property (top-level script scope); reads concatenate
+    in term order. `__proto__` fails closed (assignment does NOT
+    create an own property -- node-verified); reserved-word member
+    names, `RESULT` as a stash name, bracket-key reads, unbound reads,
+    and any extra statement fail closed. Backslash-bearing literals
+    fail closed (documented scope boundary). Disjoint from F947
+    (which is IIFE-scoped with object literals). Returns the decoded
+    string, or None. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        env = {}
+        while True:
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, _js_skip_ws(text, j), "globalThis")
+            if m is None:
+                break
+            j = _js_expect(text, _js_skip_ws(text, m), ".")
+            name, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if name == "__proto__" or name in _F611_RESERVED \
+                    or name == "RESULT":
+                raise _JSExprFail("F998 bad stash name")
+            if len(env) >= _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail("F998 too many stashes")
+            j = _js_expect(text, j, "=")
+            j = _js_skip_ws(text, j)
+            val, j = _js_f998_parse_literal_nobs(text, j, "F998")
+            env[name] = val  # later-wins, matching the engine
+            j = _js_expect(text, j, ";")
+        if not env:
+            return None
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        parts = []
+        saw_member = False
+        while True:
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, _js_skip_ws(text, j), "globalThis")
+            if m is not None:
+                j = _js_expect(text, _js_skip_ws(text, m), ".")
+                name, j = _js_parse_ident(text, _js_skip_ws(text, j))
+                if name not in env:
+                    raise _JSExprFail("F998 unbound read")
+                parts.append(env[name])
+                saw_member = True
+            else:
+                val, j = _js_f998_parse_literal_nobs(text, j, "F998")
+                parts.append(val)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "+":
+                j += 1
+                continue
+            break
+        if not saw_member:
+            raise _JSExprFail("F998 no member reads")
+        _js_f96x_expect_semi_end(text, j)
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F998 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+# -- end F996/F997/F998 ------------------------------------------------
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -113276,6 +113607,21 @@ def _decode_layer(text):
     # requires a pop-accumulation loop. Additive, in F-number order.
     for _stmtdec in (_js_f977_stmt_decode, _js_f978_stmt_decode,
                      _js_f980_stmt_decode, _js_f981_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F996/F997/F998: narrow whole-text statement-sequence decoders
+    # (wave-393 lane 3). Each returns the decoded string or None; all
+    # filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint by leading form: F996 requires a
+    # string-code array literal + .map(Number), F997 an int array
+    # literal + .slice(1,-1), F998 a leading globalThis assignment
+    # statement. Additive, in F-number order.
+    for _stmtdec in (_js_f996_stmt_decode, _js_f997_stmt_decode,
+                     _js_f998_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
