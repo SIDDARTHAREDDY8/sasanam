@@ -125489,6 +125489,562 @@ def _js_f1060_stmt_decode(text):
 
 # -- end F1056/F1057/F1058/F1059/F1060 -----------------------------------------
 
+# -- F1065/F1066/F1067 (wave-398 lane 1) --------------------------------
+# Narrow whole-text statement-sequence decoders (wave-398 lane 1),
+# hooked in the _decode_layer _stmtdec loop after F1061/F1062/F1063.
+# Each parses a strict whole-text grammar; anything outside the
+# grammar fails closed (returns None -- a miss, never a mis-decode).
+# All shapes node-verified (v24.20.0). Like every other _stmtdec hook
+# these charge no F452 scan budget (pure text-to-string scans). No new
+# decision codes, no new re.compile (pin 28). Never evals.
+
+
+def _js_f1065_parse_gen_loop(text, j, arr_name, bound, shadow, what):
+    """Parse the F1065 generator-body loop at text[j].
+
+    `for([var|let] I=0;I<ARR.length;(++)I|I++){yield ARR[I];}` -- also
+    the braceless single-yield body `for(... )yield ARR[I];` (node).
+    The yield argument must be exactly `ARR[I]`; `yield` and `ARR`
+    are separated by space/tab only (a line terminator there is ASI
+    and yields undefined, verified v24.20.0). A `const` counter fails
+    closed (node throws on `i++`). Returns the next index. Never
+    evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "for")
+    if m is None:
+        raise _JSExprFail(what + " no for")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    kw, k = _js_match_decl_kw(text, j)
+    if kw is not None:
+        if kw == "const":
+            raise _JSExprFail(what + " const loop var")
+        j = k
+    loop_name, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    _js_f1028f1029_check_fresh_name(loop_name, bound, shadow, what)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "=")
+    zero, j = _js_f997_parse_int(text, _js_skip_ws(text, j), what)
+    if zero != 0:
+        raise _JSExprFail(what + " loop not from 0")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    iname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iname != loop_name:
+        raise _JSExprFail(what + " loop var mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "<")
+    aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if aname != arr_name:
+        raise _JSExprFail(what + " loop array mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+    if m is None:
+        raise _JSExprFail(what + " no length")
+    j = _js_expect(text, _js_skip_ws(text, m), ";")
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j] == "+" and text[j + 1] == "+":
+        j = _js_skip_ws(text, j + 2)
+        iname, j = _js_parse_ident(text, j)
+    else:
+        iname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if not (j + 1 < n and text[j] == "+" and text[j + 1] == "+"):
+            raise _JSExprFail(what + " no incr")
+        j = _js_skip_ws(text, j + 2)
+    if iname != loop_name:
+        raise _JSExprFail(what + " incr var mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    braced = j < n and text[j] == "{"
+    if braced:
+        j = _js_skip_ws(text, j + 1)
+    m = _js_match_kw(text, j, "yield")
+    if m is None:
+        raise _JSExprFail(what + " no yield")
+    j = _js_f103x_skip_st(text, m)
+    aname2, j = _js_parse_ident(text, j)
+    if aname2 != arr_name:
+        raise _JSExprFail(what + " yield array mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "[")
+    iname2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iname2 != loop_name:
+        raise _JSExprFail(what + " yield index mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "]")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    if braced:
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return j
+
+
+def _js_f1065_stmt_decode(text):
+    """Decode F1065 generator-declaration accumulation (whole-text,
+    _decode_layer hook).
+
+    Sync:
+    `var|let|const C=[<int codes>];`
+    `function* G(){for([var|let] I=0;I<C.length;(++)I|I++){yield C[I];}}`
+    `var|let|const S="<init>";`
+    `for(var|let|const X of G()){S[+]=String.fromCharCode(X);}`
+    `var|let|const RESULT=S;`
+    Async:
+    `var|let|const C=[<int codes>];`
+    `(async function(){`
+    `async function* G(){for([var|let] I=0;I<C.length;(++)I|I++){yield C[I];}}`
+    `var|let|const S="<init>";`
+    `for await(var|let|const X of G()){S[+]=String.fromCharCode(X);}`
+    `return S;`
+    `})().then(V=>{globalThis.RESULT=V;});`
+
+    F1026 residual: F1026 models only the inline-int-literal
+    expression-assignment generator (`var|let G=function*(){yield
+    <ints>;}`); F1031 models only inline-int-literal async generators
+    inside an async arrow IIFE. The named-DECLARATION form iterating
+    an external int array misses both grammars. Disjoint: F1026's
+    text cannot start with `var|let|const C=[ints];` followed by a
+    `function` declaration (its first declarator initializes to
+    `function*(){...}`), and F1031's text starts with `(` (no leading
+    C declaration) -- both fail fast here, and this hook fails fast
+    on theirs (no leading int-array C declaration).
+
+    Node-exact (v24.20.0): the generator yields C[0..n-1] in order;
+    the for-of/for-await consumer appends String.fromCharCode(x)
+    (ToUint16 per argument, F967 discipline via
+    _js_f996f997_fcc_chr); the async IIFE provides the async context
+    `for await` requires and the `.then` assigns the resolved value
+    to globalThis.RESULT. The accumulator must start empty; name
+    collisions, non-empty inits, a `const` loop counter, extra
+    statements, or a non-RESULT tail fail closed -- a miss, never a
+    mis-decode. Returns the assembled string (bounded by
+    _MAX_DECODE_BYTES), or None. Never evals.
+    """
+    if "function*" not in text:
+        return None
+    n = len(text)
+    shadow = {"String"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, c_name, j = _js_f96x_decl(text, j)
+        bound = set()
+        _js_f1028f1029_check_fresh_name(c_name, bound, shadow, "F1065")
+        bound.add(c_name)
+        codes, j = _js_f1028f1030_parse_code_array(
+            text, _js_skip_ws(text, j), "F1065")
+        j = _js_expect(text, j, ";")
+        # Sync declaration or async IIFE head.
+        jj = _js_skip_ws(text, j)
+        is_async = jj < n and text[jj] == "("
+        if is_async:
+            # Async: `(async function(){` then `async function* G(){`.
+            j = jj + 1
+            m = _js_match_kw(text, _js_skip_ws(text, j), "async")
+            if m is None:
+                raise _JSExprFail("F1065 no async")
+            # `async function` -- [no LineTerminator here] (F1031
+            # discipline): `async\\nfunction` parses as an identifier.
+            m2 = _js_match_kw(text, _js_f103x_skip_st(text, m), "function")
+            if m2 is None:
+                raise _JSExprFail("F1065 no async function")
+            j = _js_expect(text, m2, "(")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, "{")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "async")
+            if m is None:
+                raise _JSExprFail("F1065 no async gen")
+            m2 = _js_match_kw(text, _js_f103x_skip_st(text, m), "function")
+            if m2 is None:
+                raise _JSExprFail("F1065 no async gen")
+            j = _js_expect(text, m2, "*")
+        else:
+            # Sync: `function* G(){`.
+            m = _js_match_kw(text, jj, "function")
+            if m is None:
+                raise _JSExprFail("F1065 no function decl")
+            j = _js_expect(text, m, "*")
+        g_name, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(g_name, bound, shadow, "F1065")
+        bound.add(g_name)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        j = _js_f1065_parse_gen_loop(text, j, c_name, bound, shadow,
+                                     "F1065")
+        j = _js_expect(text, j, "}")
+        # Accumulator: var|let|const S="";
+        _, s_name, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(s_name, bound, shadow, "F1065")
+        bound.add(s_name)
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1065 accumulator not empty")
+        j = _js_expect(text, j, ";")
+        # for[-await](var|let|const X of G()) then the accumulation body.
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "for")
+        if m is None:
+            raise _JSExprFail("F1065 no for")
+        j = m
+        if is_async:
+            m = _js_match_kw(text, _js_skip_ws(text, j), "await")
+            if m is None:
+                raise _JSExprFail("F1065 no for-await")
+            j = m
+        j = _js_expect(text, j, "(")
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail("F1065 no loop decl")
+        x_name, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(x_name, bound, shadow, "F1065")
+        bound.add(x_name)
+        m = _js_match_kw(text, _js_skip_ws(text, k), "of")
+        if m is None:
+            raise _JSExprFail("F1065 no of")
+        j = _js_skip_ws(text, m)
+        nm, j = _js_parse_ident(text, j)
+        if nm != g_name:
+            raise _JSExprFail("F1065 of other")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_f1026f1027_acc_body(text, j, s_name, x_name, False,
+                                    "F1065")
+        if is_async:
+            # `return S;})().then(V=>{globalThis.RESULT=V;});`
+            m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+            if m is None:
+                raise _JSExprFail("F1065 no return")
+            # `return` value -- [no LineTerminator here]: `return\\nS`
+            # returns undefined (ASI). Space/tab only.
+            j = _js_f103x_skip_st(text, m)
+            nm, j = _js_parse_ident(text, j)
+            if nm != s_name:
+                raise _JSExprFail("F1065 return other")
+            j = _js_expect(text, j, ";")
+            j = _js_expect(text, j, "}")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, "(")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "then")
+            if m is None:
+                raise _JSExprFail("F1065 no then")
+            j = _js_expect(text, m, "(")
+            v_name, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            _js_f1028f1029_check_fresh_name(v_name, bound, shadow,
+                                           "F1065")
+            j = _js_skip_ws(text, j)
+            # `=>` matched literally (_js_match_kw's trailing ident
+            # boundary check would wrongly reject `v=>{`).
+            if not text.startswith("=>", j):
+                raise _JSExprFail("F1065 no then arrow")
+            j = _js_expect(text, j + 2, "{")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "globalThis")
+            if m is None:
+                raise _JSExprFail("F1065 no globalThis")
+            j = _js_expect(text, m, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "RESULT")
+            if m is None:
+                raise _JSExprFail("F1065 no RESULT member")
+            j = _js_skip_ws(text, m)
+            if j >= n or text[j] != "=" or \
+                    text.startswith(("==", "=>"), j):
+                raise _JSExprFail("F1065 bad RESULT assign")
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+            if nm != v_name:
+                raise _JSExprFail("F1065 RESULT other")
+            j = _js_expect(text, j, ";")
+            j = _js_expect(text, j, "}")
+            j = _js_expect(text, j, ")")
+            _js_f96x_expect_semi_end(text, j)
+        else:
+            _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            if rname != "RESULT":
+                raise _JSExprFail("F1065 not RESULT")
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if nm != s_name:
+                raise _JSExprFail("F1065 RESULT other")
+            _js_f96x_expect_semi_end(text, j)
+        return _js_f996f997_fcc_chr(codes, "F1065")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1066_stmt_decode(text):
+    """Decode F1066 String.fromCharCode.bind invocation (whole-text,
+    _decode_layer hook).
+
+    `var|let|const C=[<int codes>];`
+    `var|let|const F=String.fromCharCode.bind(null,...C);`
+    `var|let|const RESULT=F();`
+    then end-of-text.
+
+    The decoder models the Reflect.apply/call/apply invocation twins
+    (all block coded) but has no bound-function invocation production;
+    `var F=String.fromCharCode.bind(null,...C);var RESULT=F();`
+    assembles node-exactly but misses. Disjoint: the
+    `String.fromCharCode.bind(` anchor is unique -- no other hook
+    models `.bind(` on fromCharCode.
+
+    Node-exact (v24.20.0): `String.fromCharCode.bind(null, ...C)`
+    binds thisArg null and the codes as bound arguments; calling the
+    bound function with zero arguments invokes fromCharCode with
+    exactly those arguments (ToUint16 per argument, F967 discipline
+    via _js_f996f997_fcc_chr). Any other thisArg (undefined, 0, ...),
+    extra bound args, a non-`...C` spread, or a non-RESULT tail fails
+    closed -- a miss, never a mis-decode. Returns the decoded string
+    (bounded by _MAX_DECODE_BYTES), or None. Never evals.
+    """
+    if "String.fromCharCode.bind(" not in text:
+        return None
+    shadow = {"String"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, c_name, j = _js_f96x_decl(text, j)
+        bound = set()
+        _js_f1028f1029_check_fresh_name(c_name, bound, shadow, "F1066")
+        bound.add(c_name)
+        codes, j = _js_f1028f1030_parse_code_array(
+            text, _js_skip_ws(text, j), "F1066")
+        j = _js_expect(text, j, ";")
+        _, f_name, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(f_name, bound, shadow, "F1066")
+        bound.add(f_name)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1066 no String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1066 no fromCharCode")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "bind")
+        if m is None:
+            raise _JSExprFail("F1066 no bind")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "null")
+        if m is None:
+            raise _JSExprFail("F1066 thisarg not null")
+        j = _js_expect(text, m, ",")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail("F1066 no spread")
+        cname2, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        if cname2 != c_name:
+            raise _JSExprFail("F1066 spread other")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1066 not RESULT")
+        fname2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if fname2 != f_name:
+            raise _JSExprFail("F1066 call other")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        return _js_f996f997_fcc_chr(codes, "F1066")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1067_parse_clone_object(text, j, bound, shadow, what):
+    """Parse `structuredClone({P:[ints](,P:[ints])*})` at text[j] (F1067a).
+
+    Returns (props, codes, next_index) with props in declaration order
+    and codes concatenated in prop order. `__proto__` keys, duplicate
+    props, and non-int-array values fail closed. Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, j, "structuredClone")
+    if m is None:
+        raise _JSExprFail(what + " no structuredClone")
+    j = _js_expect(text, m, "(")
+    j = _js_expect(text, j, "{")
+    props = []
+    codes = []
+    seen = set()
+    while True:
+        j = _js_skip_ws(text, j)
+        pname, j = _js_parse_ident(text, j)
+        if pname == "__proto__" or pname in seen:
+            raise _JSExprFail(what + " bad prop")
+        _js_f1028f1029_check_fresh_name(pname, bound, shadow, what)
+        seen.add(pname)
+        j = _js_expect(text, j, ":")
+        pcodes, j = _js_f1028f1030_parse_code_array(
+            text, _js_skip_ws(text, j), what)
+        props.append(pname)
+        codes.extend(pcodes)
+        if len(codes) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail(what + " too many codes")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        j = _js_expect(text, j, "}")
+        break
+    if not props:
+        raise _JSExprFail(what + " empty object")
+    j = _js_expect(text, j, ")")
+    return props, codes, j
+
+
+def _js_f1067_parse_clone_string(text, j, what):
+    """Parse `structuredClone("<f>"(+"<f>")*)` at text[j] (F1067b).
+
+    String-literal operands only (node-exact via _js_f99x_parse_str);
+    anything else fails closed. Returns (value, next_index). Never
+    evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, j, "structuredClone")
+    if m is None:
+        raise _JSExprFail(what + " no structuredClone")
+    j = _js_expect(text, m, "(")
+    v, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    while True:
+        k = _js_skip_ws(text, j)
+        if k < n and text[k] == "+" and text[k + 1:k + 2] != "+":
+            w, k = _js_f99x_parse_str(text, _js_skip_ws(text, k + 1))
+            v += w
+            if len(v) > _MAX_DECODE_BYTES:
+                raise _JSExprFail(what + " string too long")
+            j = k
+            continue
+        break
+    j = _js_expect(text, j, ")")
+    return v, j
+
+
+def _js_f1067_stmt_decode(text):
+    """Decode F1067 structuredClone non-flat argument forms (whole-text,
+    _decode_layer hook).
+
+    Form (a) -- nested object:
+    `var|let|const O=structuredClone({P1:[<ints>],P2:[<ints>],...});`
+    `var|let|const RESULT=String.fromCharCode(...O.P1,...O.P2,...);`
+    Form (b) -- fragment string:
+    `var|let|const S=structuredClone("<f1>"+"|"+"<f2>"[+"<f3>"...]);`
+    `var|let|const RESULT=S.split("|").join("");`
+    then end-of-text.
+
+    F1036 residual: F1036 models only the flat int-array form
+    `String.fromCharCode(...structuredClone([codes]))`. Cloning a
+    nested object (read back via spread of named props in declaration
+    order) or a fragment string (reassembled via split/join) assembles
+    node-exactly but misses that grammar. Disjoint: F1036 requires
+    the RESULT declarator to head the text with the clone directly
+    inside the fromCharCode spread; this requires a leading
+    `var|let|const O|S=structuredClone(...)` staging statement --
+    each fails fast on the other's shape.
+
+    Node-exact (v24.20.0): structuredClone deep-clones the object
+    (int arrays clone element-identical); spreading `...O.Pi` in
+    declaration order passes each code to fromCharCode (ToUint16 per
+    argument, F967 discipline via _js_f996f997_fcc_chr). A string
+    primitive clones to itself; `V.split("|").join("")` removes every
+    literal "|" (Python str.split/join is engine-identical for string
+    separators, empty fragments included). `__proto__`/duplicate
+    props, non-int-array values, a missing "|", prop reads out of
+    declaration order, or a non-RESULT tail fail closed -- a miss,
+    never a mis-decode. Returns the assembled string (bounded by
+    _MAX_DECODE_BYTES), or None. Never evals.
+    """
+    if "structuredClone(" not in text:
+        return None
+    n = len(text)
+    shadow = {"String"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, sname, j = _js_f96x_decl(text, j)
+        bound = set()
+        _js_f1028f1029_check_fresh_name(sname, bound, shadow, "F1067")
+        bound.add(sname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "structuredClone")
+        if m is None:
+            raise _JSExprFail("F1067 no structuredClone")
+        # Peek the clone argument: `{` -> object form, quote -> string
+        # form; anything else fails closed.
+        kk = _js_skip_ws(text, m)
+        if kk >= n or text[kk] != "(":
+            raise _JSExprFail("F1067 no clone call")
+        k2 = _js_skip_ws(text, kk + 1)
+        if k2 < n and text[k2] == "{":
+            # Form (a): nested object.
+            props, codes, j = _js_f1067_parse_clone_object(
+                text, _js_skip_ws(text, j), bound, shadow, "F1067")
+            j = _js_expect(text, j, ";")
+            _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            if rname != "RESULT":
+                raise _JSExprFail("F1067 not RESULT")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+            if m is None:
+                raise _JSExprFail("F1067 no String")
+            j = _js_expect(text, m, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+            if m is None:
+                raise _JSExprFail("F1067 no fromCharCode")
+            j = _js_expect(text, m, "(")
+            for pi, pname in enumerate(props):
+                j = _js_skip_ws(text, j)
+                if not text.startswith("...", j):
+                    raise _JSExprFail("F1067 no spread")
+                onm, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+                if onm != sname:
+                    raise _JSExprFail("F1067 spread obj mismatch")
+                j = _js_expect(text, j, ".")
+                pnm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+                if pnm != pname:
+                    raise _JSExprFail("F1067 prop order mismatch")
+                if pi < len(props) - 1:
+                    j = _js_expect(text, _js_skip_ws(text, j), ",")
+            j = _js_expect(text, j, ")")
+            _js_f96x_expect_semi_end(text, j)
+            return _js_f996f997_fcc_chr(codes, "F1067")
+        if not (k2 < n and text[k2] in "'\""):
+            raise _JSExprFail("F1067 bad clone arg")
+        # Form (b): fragment string.
+        val, j = _js_f1067_parse_clone_string(text, _js_skip_ws(text, j),
+                                             "F1067")
+        if "|" not in val:
+            raise _JSExprFail("F1067 no separator")
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1067 not RESULT")
+        snm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if snm != sname:
+            raise _JSExprFail("F1067 split recv mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "split")
+        if m is None:
+            raise _JSExprFail("F1067 no split")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "|":
+            raise _JSExprFail("F1067 bad split sep")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail("F1067 no join")
+        j = _js_expect(text, m, "(")
+        js, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if js != "":
+            raise _JSExprFail("F1067 bad join sep")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        out = "".join(val.split("|"))
+        if len(out) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1067 result too long")
+        return out
+    except _JSExprFail:
+        return None
+
+
+# -- end F1065/F1066/F1067 ------------------------------------------------
+
+
 # -- end F1025/F1026/F1027 ---------------------------------------------------
 
 
@@ -126039,6 +126595,21 @@ def _decode_layer(text):
     # and grammar (documented per hook). Additive, in F-number order.
     for _stmtdec in (_js_f1061_stmt_decode, _js_f1062_stmt_decode,
                      _js_f1063_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1065/F1066/F1067: narrow whole-text statement-sequence decoders
+    # (wave-398 lane 1) -- generator-declaration accumulation (F1026/
+    # F1031 residual), String.fromCharCode.bind invocation, structuredClone
+    # non-flat argument forms (F1036 residual). Each returns the decoded
+    # string or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint from the F1026/F1031/F1036 hooks by
+    # anchor and grammar (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1065_stmt_decode, _js_f1066_stmt_decode,
+                     _js_f1067_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)

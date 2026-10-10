@@ -310,12 +310,11 @@ def c_sibling_disjointness():
 
 
 # ---------------- D: tail guards + tail statements (wave-379 class)
-# Pinned count as of wave-397 merge (lanes 1+2+3+4 merged): 18 per-wave
-# _stmtdec loops (wave-396 merge's 14 + lane 1's F1048-F1051 loop
-# + lane 2's F1052-F1055 loop + lane 3's F1056-F1060 loop
-# + lane 4's F1061-F1063 loop -- real code-count change,
-# wave-385 rule: repoint is justified by the added loops).
-N_STMTDEC_LOOPS = 18
+# Pinned count as of wave-398 lane 1: 19 per-wave _stmtdec loops
+# (wave-397 merge's 18 + this lane's F1065-F1067 loop -- real
+# code-count change, wave-385 rule: repoint is justified by the added
+# loop).
+N_STMTDEC_LOOPS = 19
 
 
 def d_tail_guards():
