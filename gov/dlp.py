@@ -123993,6 +123993,250 @@ def _js_f1099_stmt_decode(text):
 # -- end F1092/F1093/F1094/F1099 -----------------------------------------
 
 
+# -- F1095/F1096 (wave-401 lane 3) --------------------------------------
+# Narrow whole-text statement-sequence decoders, hooked in the
+# _decode_layer _stmtdec loop alongside F961-F1089. Each parses a strict
+# whole-text grammar; anything outside the grammar fails closed (returns
+# None -- a miss, never a mis-decode). All shapes node-verified (v24.20.0).
+# Like the wave-395/396/397/398/399/400 lane hooks these are pure
+# text-to-string scans and charge no F452 scan budget; staged items are
+# charged to a per-attempt local state via _js_f96x_charge and results
+# bounded by _MAX_DECODE_BYTES, so there is nothing to snapshot/restore
+# on miss (wave-383 rule). No new decision codes, no new re.compile (pin
+# tests unchanged). Never evals.
+
+
+def _js_f1095_stmt_decode(text):
+    """Decode F1095 destructuring-rest accumulation (whole-text).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const [H,...R]=C;`
+    `var|let|const S=String.fromCharCode(H);`
+    `for([var|let|const] I=0|1; I<R.length|I<=R.length; I++|++I|I+=1)`
+    `{S+=String.fromCharCode(R[I]);}`  (or `S=S+...`; braces optional)
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Semantics (v24.20.0): the destructure binds H=C[0] and R=C[1:];
+    S starts as the ToUint16 char of C[0] and the loop appends the
+    ToUint16 chars of C[1:] in order -- the accumulation is simulated
+    node-exactly via the shared F1074/F1075 for-loop machinery over the
+    decoded tail. Disjoint from F1075 (which requires the `{v:[...]}`
+    object declarator): this requires a plain int-array declarator
+    plus the `[H,...R]` rest binding, and F1075 fails closed on the
+    destructure form (verified both directions). Anything outside the
+    strict grammar fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
+    """
+    if "fromCharCode(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname in ("RESULT", "String"):
+            raise _JSExprFail("F1095 bad arr name")
+        codes, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                             state)
+        if not codes:
+            raise _JSExprFail("F1095 empty array")
+        j = _js_expect(text, j, ";")
+        bound = {cname, "RESULT", "String"}
+        # `var|let|const [H,...R]=C;`
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail("F1095 not a decl")
+        j = _js_expect(text, _js_skip_ws(text, k), "[")
+        hname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ",")
+        for _ in range(3):
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+        rname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, "]")
+        j = _js_skip_ws(text, j)
+        n = len(text)
+        if j >= n or text[j] != "=" or text.startswith(("==", "=>"), j):
+            raise _JSExprFail("F1095 destructure without init")
+        aname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if aname != cname:
+            raise _JSExprFail("F1095 destructure source mismatch")
+        j = _js_expect(text, j, ";")
+        for nm in (hname, rname):
+            if (nm in bound or nm == "arguments"
+                    or nm in _F611_RESERVED):
+                raise _JSExprFail("F1095 bad destructure name")
+        if hname == rname:
+            # `var[a,...a]=C` is runnable: node binds the rest last,
+            # so `a` is the array, not the head -- the naive decode
+            # would mis-decode. Fail closed (a miss, never a mis-decode).
+            raise _JSExprFail("F1095 duplicate destructure name")
+        bound = bound | {hname, rname}
+        # `var|let|const S=String.fromCharCode(H);`
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1095 bad acc name")
+        bound = bound | {sname}
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1095 not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1095 not fromCharCode")
+        j = _js_expect(text, m, "(")
+        hid, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if hid != hname:
+            raise _JSExprFail("F1095 head mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        head_chr = _js_f996f997_fcc_chr(codes[:1], "F1095")
+        tail_dstr = _js_f996f997_fcc_chr(codes[1:], "F1095")
+        arrref = _js_f1074f1075_plain_arrref(rname, "F1095")
+        loop_val, j = _js_f1074f1075_parse_for(text, _js_skip_ws(text, j),
+                                              sname, bound, arrref,
+                                              tail_dstr, "F1095")
+        val = head_chr + loop_val
+        _, rn, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rn != "RESULT":
+            raise _JSExprFail("F1095 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, val, sname, state,
+                                          "F1095")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1096_parse_accum(text, j, acc, cname, what):
+    """Parse `ACC+=String.fromCharCode(C.shift());` / `ACC=ACC+...` (F1096).
+
+    The shift receiver must be the staged int array C; any other
+    receiver fails closed. Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    a2, j = _js_parse_ident(text, j)
+    if a2 != acc:
+        raise _JSExprFail(what + " accum target mismatch")
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j] == "+" and text[j + 1] == "=":
+        j += 2
+    elif j < n and text[j] == "=" and not text.startswith(("==", "=>"), j):
+        j += 1
+        j = _js_skip_ws(text, j)
+        a3, j = _js_parse_ident(text, j)
+        if a3 != acc:
+            raise _JSExprFail(what + " accum self mismatch")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+" or text.startswith("++", j):
+            raise _JSExprFail(what + " accum not plus")
+        j += 1
+    else:
+        raise _JSExprFail(what + " accum not modeled")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail(what + " not String")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, j, "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    cnm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if cnm != cname:
+        raise _JSExprFail(what + " shift arr mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "shift")
+    if m is None:
+        raise _JSExprFail(what + " not shift")
+    j = _js_expect(text, m, "(")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    return j
+
+
+def _js_f1096_stmt_decode(text):
+    """Decode F1096 shift-staged accumulation (whole-text).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S='';`
+    `while(C.length|C.length>0)`
+    `{S+=String.fromCharCode(C.shift());}`  (or `S=S+...`)
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Semantics (v24.20.0): the braced body holds exactly the
+    accumulation statement -- each iteration removes C[0] via shift
+    and appends its ToUint16 char, so the loop runs exactly len(C)
+    times and the result is the ToUint16 decode of the staged array
+    in order. `C.length` and `C.length>0` are equivalent (length is
+    never negative); anything else in the condition fails closed.
+    Disjoint from the index-anchored accumulation hooks by
+    construction (no index variable exists here). Anything outside
+    the strict grammar fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "fromCharCode(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        n = len(text)
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname in ("RESULT", "String"):
+            raise _JSExprFail("F1096 bad arr name")
+        codes, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                             state)
+        if not codes:
+            raise _JSExprFail("F1096 empty array")
+        j = _js_expect(text, j, ";")
+        bound = {cname, "RESULT", "String"}
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1096 bad acc name")
+        bound = bound | {sname}
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1096 acc not empty")
+        j = _js_expect(text, j, ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "while")
+        if m is None:
+            raise _JSExprFail("F1096 not while")
+        j = _js_expect(text, m, "(")
+        anm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if anm != cname:
+            raise _JSExprFail("F1096 cond arr mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail("F1096 cond not length")
+        j = _js_skip_ws(text, m)
+        if j < n and text[j] == ">":
+            j = _js_skip_ws(text, j + 1)
+            if j >= n or text[j] != "0":
+                raise _JSExprFail("F1096 bad cond")
+            j += 1
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_f1096_parse_accum(text, j, sname, cname, "F1096")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        val = _js_f996f997_fcc_chr(codes, "F1096")
+        _, rn, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rn != "RESULT":
+            raise _JSExprFail("F1096 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, val, sname, state,
+                                          "F1096")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1095/F1096 ------------------------------------------------------
+
+
+
+
 # -- F1048/F1049/F1050/F1051 (wave-397 lane 1) --------------------------
 # Narrow whole-text statement-sequence decoders, hooked in the
 # _decode_layer _stmtdec loop alongside F961-F1047. Each parses a strict
@@ -131503,6 +131747,19 @@ def _decode_layer(text):
     # hook). Additive, in F-number order.
     for _stmtdec in (_js_f1092_stmt_decode, _js_f1093_stmt_decode,
                      _js_f1094_stmt_decode, _js_f1099_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1095/F1096 (wave-401 lane 3): destructuring-rest accumulation
+    # reads and shift-staged accumulation reads. Each returns the
+    # decoded string or None; all filed shapes BREAK on the open tree,
+    # so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Disjoint from F1075 (object
+    # declarator) and the index-anchored hooks by grammar (documented
+    # per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1095_stmt_decode, _js_f1096_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
