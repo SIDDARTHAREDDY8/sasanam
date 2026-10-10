@@ -367,10 +367,10 @@ def test_p6_perf():
 
 @_t
 def test_p7_open_rest():
-    # F1111-F1116, F1120-F1122 must still MISS on this tree.
+    # F1123-F1141 must still MISS on the merged tree.
     bad = []
-    for fnum in (1111, 1112, 1113, 1114, 1115, 1116, 1120, 1121, 1122):
-        for n, p in _redfirst_shapes("w402", fnum):
+    for fnum in (1123, 1124, 1127, 1140, 1141):
+        for n, p in _redfirst_shapes("w403", fnum):
             if not _misses(p):
                 bad.append("f%d/%s" % (fnum, n))
     return (not bad, "still-open shapes miss%s"
@@ -401,9 +401,7 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[0] == "BREAK":
                 real.append(parts[1])
-        expect_break = {"test_open_w402_f1117",
-                        "test_open_w402_f1118",
-                        "test_open_w402_f1119"}
+        expect_break = set()
         ok = set(real) == expect_break
         return (ok,
                 "green(w402_attack): %d BREAK (expect exactly %s: %s)"

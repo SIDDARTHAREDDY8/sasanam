@@ -410,12 +410,12 @@ def test_p6_perf():
 
 @_t
 def test_p7_open_f1111_1120():
-    # Attack round 70's F1111-F1120 must still MISS.
+    # F1123-F1141 must still MISS on the merged tree.
     bad = []
-    for n in range(1111, 1121):
-        shapes = _redfirst_shapes("w402", n)
+    for n in (1123, 1124, 1127, 1140, 1141):
+        shapes = _redfirst_shapes("w403", n)
         bad += [name for name, payload in shapes if not _misses(payload)]
-    return (not bad, "F1111-F1120 still open%s"
+    return (not bad, "F1123-F1141 still open%s"
             % ("" if not bad else ": " + ",".join(bad)))
 
 
@@ -423,9 +423,8 @@ def test_p7_open_f1111_1120():
 
 def _green_check():
     """Depth-1 green check on w402's attack battery (carries
-    F1111-F1122 pins). Honor GOV_SKIP_GREEN. On this lane tree
-    F1121/F1122 are closed, so expect exactly those 2 pin flips;
-    everything else must hold."""
+    F1111-F1122 pins). Honor GOV_SKIP_GREEN. On the merged tree
+    all pins are _closed_pin (or partial) and must be HELD."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w402_attack): skipped via GOV_SKIP_GREEN=1")
     import tempfile
@@ -446,7 +445,7 @@ def _green_check():
                 real.append("f1122")
             elif line.startswith("BREAK"):
                 real.append(line)
-        expect = ["f1121", "f1122"]
+        expect = []
         ok = sorted(real) == expect
         return (ok,
                 "green(w402_attack): %d BREAK (expect exactly %s: %s)"

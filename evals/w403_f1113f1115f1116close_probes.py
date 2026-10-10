@@ -307,16 +307,14 @@ def test_p5_sibling_hooks_hold():
 
 @_t
 def test_p5_still_open_miss():
-    """F1111, F1114, F1117 are still OPEN on this lane tree (filed shapes)."""
+    """Merged tree: F1123-F1141 stay OPEN (attack round 71 + merge audit)."""
     shapes = [
-        # F1111 Array.prototype.flat staged reads (filed shape).
-        "var C=%s;var S=String.fromCharCode(...C.flat());var RESULT=S;" % _codes(SECRET_S),
-        # F1114 Object.freeze-wrapped staged reads (filed shapes).
-        "var C=Object.freeze(%s);var S=String.fromCharCode(...C);var RESULT=S;" % _codes(SECRET_S),
-        "var S=String.fromCharCode(...Object.freeze(%s));var RESULT=S;" % _codes(SECRET_S),
-        # F1117 with-scope staged spread reads (filed shapes).
-        "var C=%s;var S='';with({}){S=String.fromCharCode(...C);}var RESULT=S;" % _codes(SECRET_S),
-        "var C=%s;var S='';with({C:C}){S=String.fromCharCode(...C);}var RESULT=S;" % _codes(SECRET_S),
+        # F1124 side-effect find callback (attack round 71).
+        "var C=%s;var S='';C.find(function(c){S+=String.fromCharCode(c);});var RESULT=S;" % _codes(SECRET_S),
+        # F1127 push-then-join (attack round 71).
+        "var C=%s;var A=[];for(var i=0;i<C.length;i++){A.push(String.fromCharCode(C[i]));}var RESULT=A.join('');" % _codes(SECRET_S),
+        # F1141 trailing-statement IIFE (merge audit).
+        "(async()=>{var C=%s;var S='';for await(var x of C[Symbol.iterator]()){S+=String.fromCharCode(x);}globalThis.__R70=S;})();var RESULT='';" % _codes(SECRET_S),
     ]
     bad = [p[:40] for p in shapes if _blocked(p)]
     return (not bad, "%d/%d still-open shapes miss%s"
@@ -360,8 +358,8 @@ def test_p7_perf_200_sites():
 def _green_check():
     """Depth-1 green check on w402's attack battery. Honor GOV_SKIP_GREEN.
 
-    On this lane tree F1113/F1115/F1116 are closed, so exactly those 3
-    open pins must BREAK (shapes now blocked); everything else HELD.
+    On the merged tree all F1111-F1122 pins are _closed_pin (or partial)
+    and must be HELD (empty BREAK set).
     """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w402_attack): skipped via GOV_SKIP_GREEN=1")
@@ -380,8 +378,7 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[0] == "BREAK":
                 broken.append(parts[1])
-        want = {"test_open_w402_f1113", "test_open_w402_f1115",
-                "test_open_w402_f1116"}
+        want = set()
         ok = set(broken) == want
         return (ok, "green(w402_attack): BREAK=%s (expect %s)"
                 % (sorted(broken), sorted(want)))

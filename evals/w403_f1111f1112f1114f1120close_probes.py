@@ -355,14 +355,14 @@ def test_p5_sibling_hooks_hold():
 
 @_t
 def test_p5_still_open_miss():
-    """Lane scope: F1113, F1115-F1119, F1121-F1122 stay OPEN (other lanes)."""
+    """Merged tree: F1123-F1140 stay OPEN (attack round 71)."""
     shapes = [
-        # F1113 concat loop (lane 2 scope).
-        "var C=%s;var S='';for(var i=0;i<C.length;i++){S=S.concat(String.fromCharCode(C[i]));}var RESULT=S;",
-        # F1115 fromCodePoint loop (lane 2 scope).
-        "var C=%s;var S='';for(var i=0;i<C.length;i++){S+=String.fromCodePoint(C[i]);}var RESULT=S;",
-        # F1121 top-level for-await (lane 4 scope).
-        "var C=%s;var S='';for await (var x of C){S+=String.fromCharCode(x);}var RESULT=S;",
+        # F1124 side-effect find callback (attack round 71).
+        "var C=%s;var S='';C.find(function(c){S+=String.fromCharCode(c);});var RESULT=S;",
+        # F1127 push-then-join (attack round 71).
+        "var C=%s;var A=[];for(var i=0;i<C.length;i++){A.push(String.fromCharCode(C[i]));}var RESULT=A.join('');",
+        # F1140 for-loop header variant (attack round 71).
+        "var C=%s;var S='';for(var i=0,n=C.length;i<n;i++){S+=String.fromCharCode(C[i]);}var RESULT=S;",
     ]
     bad = [p[:40] for p in shapes if _blocked(p % _codes(SECRET_S))]
     return (not bad, "%d/%d still-open miss%s"
@@ -407,9 +407,8 @@ def test_p7_perf_200_sites():
 def _green_check():
     """Depth-1 green check on w402's attack battery.
 
-    On this lane tree exactly the 4 closed findings' open pins must flip
-    (test_open_w402_f1111/f1112/f1114/f1120 -> BREAK = now blocked);
-    every other pin must stay HELD. Honor GOV_SKIP_GREEN.
+    On the merged tree all F1111-F1122 pins are _closed_pin and must be
+    HELD (empty BREAK set). Honor GOV_SKIP_GREEN.
     """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w402_attack): skipped via GOV_SKIP_GREEN=1")
@@ -433,8 +432,7 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[0] == "BREAK":
                 breaks.add(parts[1])
-        expect = {"test_open_w402_f1111", "test_open_w402_f1112",
-                  "test_open_w402_f1114", "test_open_w402_f1120"}
+        expect = set()
         ok = breaks == expect
         return (ok, "green(w402_attack): BREAK=%s (expect %s)"
                 % (sorted(breaks), sorted(expect)))

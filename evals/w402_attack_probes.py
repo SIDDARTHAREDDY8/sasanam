@@ -49,11 +49,11 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-403 footer (F1111-F1122 CLOSED (12); F1123-F1140 OPEN (18);
-    next free F1141)."""
+    """Control: wave-403 footer (F1111-F1122 CLOSED (12); F1123-F1141 OPEN (19);
+    next free F1142)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("# Wave-403: F1111-F1122 CLOSED (12); F1123-F1140 OPEN (18); next free F1141" in text)
+    ok = ("# Wave-403: F1111-F1122 CLOSED (12); F1123-F1141 OPEN (19); next free F1142" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -94,9 +94,25 @@ def _closed_pin(prefix, num):
 
 
 # Round-70 pins (F1111-F1120 decoder seam) -- CLOSED on the merged tree
-# (wave-403 lanes 1-3).
-for _n in (1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1120):
+# (wave-403 lanes 1-3), except F1119 which is partially closed (see below).
+for _n in (1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1120):
     _closed_pin("w402", _n)
+
+
+@_t
+def test_partial_w402_f1119():
+    """F1119 is partially CLOSED: the for-of and for-await (no trailing)
+    shapes block, but the trailing-statement variants (now F1141) still miss.
+    """
+    shapes = _redfirst_shapes("w402", 1119)
+    # The first 2 shapes (for-of, for-await no trailing) must block
+    blocked = [name for name, payload in shapes[:2] if _misses(payload)]
+    # The last 2 shapes (trailing variants, now F1141) must still miss
+    still_open = [name for name, payload in shapes[2:] if _misses(payload)]
+    ok = (not blocked) and (len(still_open) == 2)
+    print(("HELD " if ok else "BREAK") + " test_partial_w402_f1119 "
+          "(blocked-miss=%s, trailing-still-open=%d/2)" % (blocked, len(still_open)))
+    return ok
 
 # Wave-402 lane 3 self-files renumbered F1121/F1122 (F1091 residuals) -- CLOSED
 # on the merged tree (wave-403 lane 4).

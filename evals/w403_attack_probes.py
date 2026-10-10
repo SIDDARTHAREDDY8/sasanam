@@ -85,9 +85,9 @@ def _open_pin(prefix, num):
 for _n in range(1123, 1141):
     _open_pin("w403", _n)
 
-# Carried round-70 pins (F1111-F1120) + lane-3 renumbered F1121/F1122 -- still OPEN.
-for _n in list(range(1111, 1121)) + [1121, 1122]:
-    _open_pin("w402", _n)
+# Carried round-70 pins (F1111-F1122) are now CLOSED on the merged tree
+# (wave-403 lanes 1-4); verified by w402_attack_probes.py (including the
+# F1119 partial-closure pin and F1141 residual). Not duplicated here.
 
 
 @_t
