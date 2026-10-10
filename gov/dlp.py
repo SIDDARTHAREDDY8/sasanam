@@ -121449,6 +121449,816 @@ def _js_f1046_stmt_decode(text):
 
 
 
+# -- F1048/F1049/F1050/F1051 (wave-397 lane 1) --------------------------
+# Narrow whole-text statement-sequence decoders, hooked in the
+# _decode_layer _stmtdec loop alongside F961-F1047. Each parses a strict
+# whole-text grammar; anything outside the grammar fails closed (returns
+# None -- a miss, never a mis-decode). All shapes node-verified (v24.20.0).
+# Like every other _stmtdec hook these charge no F452 scan budget (pure
+# text-to-string scans; staged items are charged to a per-attempt local
+# state via _js_f96x_charge and results bounded by _MAX_DECODE_BYTES),
+# so there is nothing to snapshot/restore on miss (wave-383 rule). No new
+# decision codes, no new re.compile (pin tests unchanged). Never evals.
+
+
+def _js_f1048f1051_check_name(name, bound, what):
+    """Freshness check for statement-decoder temporaries (F1048-F1051).
+
+    Rejects RESULT, already-bound names, reserved words and `arguments`.
+    The staging constructors (Error/Promise/URLSearchParams/FormData)
+    are rejected by the callers via the shadow set. Never evals.
+    """
+    if (name == "RESULT" or name in bound or name == "arguments"
+            or name in _F611_RESERVED):
+        raise _JSExprFail(what + " bad name")
+
+
+def _js_f1048_parse_cause_key(text, j, what):
+    """Parse the `{cause:X}` / `{"cause":X}` key at text[j] (F1048).
+
+    Returns next_index past the `:`. Anything else fails closed.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        key, j = _js_f99x_parse_str(text, j)
+    else:
+        key, j = _js_parse_ident(text, j)
+    if key != "cause":
+        raise _JSExprFail(what + " not a cause key")
+    return _js_expect(text, j, ":")
+
+
+def _js_f1048_parse_inner_error(text, j, state, what):
+    """Parse `new Error("msg",{cause:"lit"})` at text[j] (F1048).
+
+    The innermost staged error: its cause must be a string literal.
+    Returns (frag, next_index). Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "new")
+    if m is None:
+        raise _JSExprFail(what + " inner no new")
+    m = _js_match_kw(text, _js_skip_ws(text, m), "Error")
+    if m is None:
+        raise _JSExprFail(what + " inner no Error")
+    j = _js_expect(text, m, "(")
+    _msg, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, ",")
+    j = _js_expect(text, j, "{")
+    j = _js_f1048_parse_cause_key(text, j, what)
+    frag, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ")")
+    _js_f96x_charge(state, what + " too many parts")
+    return frag, j
+
+
+def _js_f1048_stmt_decode(text):
+    """Decode F1048 nested Error cause-chain reads (whole-text, _decode_layer hook).
+
+    Form A (inline):
+    `var|let|const E=new Error("m",{cause:new Error("m2",{cause:"frag"})});`
+    `var|let|const RESULT=E.cause.cause(+"lit")*;`
+    Form B (named intermediate):
+    `var|let|const I=new Error("m",{cause:"frag"});`
+    `var|let|const E=new Error("m2",{cause:I});`
+    `var|let|const RESULT=E.cause.cause(+"lit")*;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the `cause` option installs `.cause`; the
+    nested read `E.cause.cause` is the innermost literal; `+` over the
+    modeled string operands concatenates. Disjoint from F787 (which
+    models only the single-level `.cause` read -- its term parser
+    rejects `.cause.cause`) and from F992 (`.message` reads). A
+    single-level cause read, a non-literal cause, a deeper (3+) chain,
+    a non-Error constructor, or anything outside the grammar fails
+    closed -- a miss, never a mis-decode. Returns the decoded string,
+    or None. Never evals.
+    """
+    if "new Error(" not in text or ".cause.cause" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    shadow = {"Error", "RESULT"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, n1, j = _js_f96x_decl(text, j)
+        if n1 in shadow:
+            raise _JSExprFail("F1048 bad name")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "new")
+        if m is None:
+            raise _JSExprFail("F1048 no new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Error")
+        if m is None:
+            raise _JSExprFail("F1048 no Error")
+        j = _js_expect(text, m, "(")
+        _msg, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ",")
+        j = _js_expect(text, j, "{")
+        j = _js_f1048_parse_cause_key(text, j, "F1048")
+        j = _js_skip_ws(text, j)
+        ename = n1
+        if j < n and text[j] in "'\"":
+            # Form B: this statement binds the inner error; the outer
+            # statement follows.
+            frag, j = _js_f99x_parse_str(text, j)
+            j = _js_expect(text, j, "}")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, ";")
+            _js_f96x_charge(state, "F1048 too many parts")
+            inner_bound = n1
+            _, n2, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            _js_f1048f1051_check_name(n2, shadow | {inner_bound}, "F1048")
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, j, "new")
+            if m is None:
+                raise _JSExprFail("F1048 outer no new")
+            m = _js_match_kw(text, _js_skip_ws(text, m), "Error")
+            if m is None:
+                raise _JSExprFail("F1048 outer no Error")
+            j = _js_expect(text, m, "(")
+            _msg2, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ",")
+            j = _js_expect(text, j, "{")
+            j = _js_f1048_parse_cause_key(text, j, "F1048")
+            iname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if iname != inner_bound:
+                raise _JSExprFail("F1048 cause ident mismatch")
+            j = _js_expect(text, j, "}")
+            j = _js_expect(text, j, ")")
+            _js_f96x_charge(state, "F1048 too many parts")
+            ename = n2
+        else:
+            # Form A: inline nested `new Error("m",{cause:"frag"})`.
+            frag, j = _js_f1048_parse_inner_error(text, j, state, "F1048")
+            j = _js_expect(text, j, "}")
+            j = _js_expect(text, j, ")")
+            _js_f96x_charge(state, "F1048 too many parts")
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1048 not RESULT")
+        seen = []
+
+        def _resolve(k, _ename=ename, _frag=frag, _seen=seen):
+            nm, k = _js_parse_ident(text, k)
+            if nm != _ename:
+                raise _JSExprFail("F1048 bad cause obj")
+            k = _js_expect(text, k, ".")
+            c1, k = _js_parse_ident(text, _js_skip_ws(text, k))
+            if c1 != "cause":
+                raise _JSExprFail("F1048 not cause read")
+            k = _js_expect(text, k, ".")
+            c2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+            if c2 != "cause":
+                raise _JSExprFail("F1048 not nested cause")
+            _js_f96x_charge(state, "F1048 too many parts")
+            _seen.append(1)
+            return _frag, k
+
+        val, j = _js_f99x_additive(text, _js_skip_ws(text, j), _resolve)
+        if not seen:
+            # A literal-only RESULT is a plain concat some other
+            # production owns -- not this finding.
+            raise _JSExprFail("F1048 no cause term")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1049_parse_cb_head(text, j, state, bound, what):
+    """Parse `.then(function(A){` at text[j] (F1049).
+
+    Returns (callback_param, next_index). Arrow callbacks fail closed.
+    Never evals.
+    """
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "then")
+    if m is None:
+        raise _JSExprFail(what + " no then")
+    j = _js_expect(text, m, "(")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+    if m is None:
+        raise _JSExprFail(what + " no function")
+    j = _js_expect(text, m, "(")
+    apar, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    _js_f1048f1051_check_name(apar, bound, what)
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    return apar, j
+
+
+def _js_f1049_parse_then_all(text, j, state, f1, f2, frag1, frag2):
+    """Parse `.then(function(A){RESULT=A[0]+A[1];});` (F1049 Form A).
+
+    Returns (assembled, next_index). Never evals.
+    """
+    n = len(text)
+    apar, j = _js_f1049_parse_cb_head(
+        text, j, state, {"Promise", "RESULT", f1, f2}, "F1049")
+    r2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if r2 != "RESULT":
+        raise _JSExprFail("F1049 body not RESULT")
+    j = _js_expect(text, j, "=")
+    for idx in (0, 1):
+        a, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if a != apar:
+            raise _JSExprFail("F1049 body param mismatch")
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != str(idx):
+            raise _JSExprFail("F1049 body index")
+        j += 1
+        j = _js_expect(text, j, "]")
+        _js_f96x_charge(state, "F1049 too many parts")
+        if idx == 0:
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "+" or text.startswith("++", j):
+                raise _JSExprFail("F1049 body not additive")
+            j += 1
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ")")
+    return frag1 + frag2, j
+
+
+def _js_f1049_parse_then_resolve(text, j, state, frag1):
+    """Parse `.then(function(A){RESULT=A+"lit";});` (F1049 Form B).
+
+    Also accepts `RESULT="lit"+A;`. Returns (assembled, next_index).
+    Never evals.
+    """
+    n = len(text)
+    apar, j = _js_f1049_parse_cb_head(
+        text, j, state, {"Promise", "RESULT"}, "F1049")
+    r2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if r2 != "RESULT":
+        raise _JSExprFail("F1049 body not RESULT")
+    j = _js_expect(text, j, "=")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        frag2, j = _js_f99x_parse_str(text, j)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+" or text.startswith("++", j):
+            raise _JSExprFail("F1049 body not additive")
+        a, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if a != apar:
+            raise _JSExprFail("F1049 body param mismatch")
+        val = frag2 + frag1
+    else:
+        a, j = _js_parse_ident(text, j)
+        if a != apar:
+            raise _JSExprFail("F1049 body param mismatch")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+" or text.startswith("++", j):
+            raise _JSExprFail("F1049 body not additive")
+        frag2, j = _js_f99x_parse_str(text, _js_skip_ws(text, j + 1))
+        val = frag1 + frag2
+    _js_f96x_charge(state, "F1049 too many parts")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ")")
+    return val, j
+
+
+def _js_f1049_stmt_decode(text):
+    """Decode F1049 Promise resolution-staged fragment assembly (whole-text, _decode_layer hook).
+
+    Form A:
+    `var|let|const RESULT="";`
+    `var|let|const F1="frag1",F2="frag2";`
+    `Promise.all([F1,F2]).then(function(A){RESULT=A[0]+A[1];});`
+    Form B:
+    `var|let|const RESULT="";`
+    `Promise.resolve("frag1").then(function(A){RESULT=A+"frag2";});`
+    (also `RESULT="frag2"+A;`)
+    then end-of-text.
+
+    Node-exact (v24.20.0): Promise.all resolves its input array in
+    order; the .then callback receives the resolution value, so
+    RESULT is the fragment concatenation. The `var RESULT="";`
+    prologue is required -- the filed shapes declare it. Arrow
+    callbacks, extra array elements, non-literal fragments, or
+    anything outside the grammar fails closed -- a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "Promise.all(" not in text and "Promise.resolve(" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    shadow = {"Promise", "RESULT"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            raise _JSExprFail("F1049 not RESULT prologue")
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1049 RESULT not empty")
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        kw, k = _js_match_decl_kw(text, j)
+        if kw is not None:
+            # Form A: `var|let|const F1="frag1",F2="frag2";` then
+            # `Promise.all([F1,F2]).then(...)`.
+            _, f1, j = _js_f96x_decl(text, j)
+            _js_f1048f1051_check_name(f1, shadow, "F1049")
+            frag1, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ",")
+            f2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            _js_f1048f1051_check_name(f2, shadow | {f1}, "F1049")
+            j = _js_expect(text, j, "=")
+            frag2, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ";")
+            _js_f96x_charge(state, "F1049 too many parts")
+            _js_f96x_charge(state, "F1049 too many parts")
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, j, "Promise")
+            if m is None:
+                raise _JSExprFail("F1049 no Promise")
+            j = _js_expect(text, m, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "all")
+            if m is None:
+                raise _JSExprFail("F1049 no all")
+            j = _js_expect(text, m, "(")
+            j = _js_expect(text, j, "[")
+            a1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if a1 != f1:
+                raise _JSExprFail("F1049 all arg1 mismatch")
+            j = _js_expect(text, j, ",")
+            a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if a2 != f2:
+                raise _JSExprFail("F1049 all arg2 mismatch")
+            j = _js_expect(text, j, "]")
+            j = _js_expect(text, j, ")")
+            val, j = _js_f1049_parse_then_all(text, j, state, f1, f2,
+                                             frag1, frag2)
+        else:
+            # Form B: `Promise.resolve("frag1").then(...)` directly.
+            m = _js_match_kw(text, j, "Promise")
+            if m is None:
+                raise _JSExprFail("F1049 no Promise")
+            j = _js_expect(text, m, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "resolve")
+            if m is None:
+                raise _JSExprFail("F1049 no resolve")
+            j = _js_expect(text, m, "(")
+            frag1, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ")")
+            _js_f96x_charge(state, "F1049 too many parts")
+            val, j = _js_f1049_parse_then_resolve(text, j, state, frag1)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1050_qs_decode(comp, what):
+    """Decode one application/x-www-form-urlencoded component (F1050).
+
+    `+` -> space; %XX -> byte (malformed % kept literal); the bytes
+    UTF-8-decode with U+FFFD replacement -- node v24.20.0 exact.
+    Never evals.
+    """
+    buf = bytearray()
+    i, n = 0, len(comp)
+    _hex = "0123456789abcdefABCDEF"
+    while i < n:
+        c = comp[i]
+        if c == "+":
+            buf.append(0x20)
+            i += 1
+        elif (c == "%" and i + 2 < n and comp[i + 1] in _hex
+                and comp[i + 2] in _hex):
+            buf.append(int(comp[i + 1:i + 3], 16))
+            i += 3
+        else:
+            try:
+                buf.extend(c.encode("utf-8"))
+            except UnicodeEncodeError:
+                raise _JSExprFail(what + " bad char")
+            i += 1
+    return buf.decode("utf-8", errors="replace")
+
+
+def _js_f1050_parse_qs(qs, state, what):
+    """Parse a query-string init into [(name, value)] (F1050).
+
+    Split on `&` only (`;` is literal -- node v24.20.0); each pair
+    splits on the first `=`; a bare name gets value "". A single
+    leading "?" is stripped (node v24.20.0: `new URLSearchParams("?k=v")`
+    reads k; `"??k=v"` keeps "?k"). Duplicate names are preserved
+    (`.get` takes the first). Never evals.
+    """
+    if qs.startswith("?"):
+        qs = qs[1:]
+    pairs = []
+    for part in qs.split("&"):
+        if "=" in part:
+            nm, _, val = part.partition("=")
+        else:
+            nm, val = part, ""
+        pairs.append((_js_f1050_qs_decode(nm, what),
+                      _js_f1050_qs_decode(val, what)))
+        _js_f96x_charge(state, what + " too many pairs")
+    return pairs
+
+
+def _js_f1050_parse_obj_init(text, j, state, what):
+    """Parse `{k:"v",...}` at text[j] (F1050).
+
+    Keys are identifiers or string literals; values are string
+    literals. Returns ([(key, value)], next_index) in JS object-key
+    order: integer-index keys ascending first, then string keys in
+    insertion order; duplicate keys collapse (later wins, first
+    position kept) -- node v24.20.0 exact. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    raw = []
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        return [], j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            key, j = _js_f99x_parse_str(text, j)
+        elif j < n and text[j] in "0123456789":
+            # Numeric key: node stores the canonical integer-index
+            # string ("2" for {2:...}, "7" for {007:...} legacy
+            # octal); overlong digit runs fail closed.
+            k = j
+            while k < n and text[k] in "0123456789":
+                k += 1
+            if k - j > 10:
+                raise _JSExprFail(what + " key too long")
+            key = str(int(text[j:k]))
+            j = k
+        else:
+            key, j = _js_parse_ident(text, j)
+        j = _js_expect(text, j, ":")
+        val, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        raw.append((key, val))
+        _js_f96x_charge(state, what + " too many pairs")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        if j < n and text[j] == "}":
+            j += 1
+            break
+        raise _JSExprFail(what + " obj not closed")
+    seen = {}
+    for k, v in raw:
+        seen[k] = v
+    int_keys = sorted((k for k in seen if _js_f1015_is_int_key(k)),
+                      key=int)
+    str_keys = [k for k in seen if not _js_f1015_is_int_key(k)]
+    return [(k, seen[k]) for k in int_keys + str_keys], j
+
+
+def _js_f1050_parse_accum(text, j, acc, pvar, state, what, index):
+    """Parse the F1050/F1051 loop body at text[j]; returns next_index.
+
+    `ACC+=P[1];` / `ACC=ACC+P[1];` (index=1, entries form) or
+    `ACC+=K;` / `ACC=ACC+K;` (index=None, keys form). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    a2, j = _js_parse_ident(text, j)
+    if a2 != acc:
+        raise _JSExprFail(what + " accum target mismatch")
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j] == "+" and text[j + 1] == "=":
+        j += 2
+    elif j < n and text[j] == "=" and not text.startswith(("==", "=>"), j):
+        j += 1
+        j = _js_skip_ws(text, j)
+        a3, j = _js_parse_ident(text, j)
+        if a3 != acc:
+            raise _JSExprFail(what + " accum self mismatch")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+" or text.startswith("++", j):
+            raise _JSExprFail(what + " accum not plus")
+        j += 1
+    else:
+        raise _JSExprFail(what + " accum not modeled")
+    p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if p2 != pvar:
+        raise _JSExprFail(what + " accum var mismatch")
+    if index is not None:
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != str(index):
+            raise _JSExprFail(what + " accum index")
+        j += 1
+        j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, ";")
+    return j
+
+
+def _js_f1050_stmt_decode(text):
+    """Decode F1050 URLSearchParams fragment reads (whole-text, _decode_layer hook).
+
+    `var|let|const U=new URLSearchParams(INIT);` where INIT is
+    `{k1:"f1",...}` (identifier/quoted keys, string-literal values) or
+    `"k1=f1&k2=f2"` (a query-string literal), then either
+    `var|let|const RESULT=U.get("k1")+U.get("k2")(+...)*;` or
+    `var|let|const S="";for([var|let|const] P of U.entries()){S+=P[1];}`
+    (also `S=S+P[1];`; braces optional)
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): object-init values are stored per key with
+    JS object-key ordering; query strings parse as
+    application/x-www-form-urlencoded (`+` -> space, %XX decoded,
+    malformed % kept literal, U+FFFD replacement); `.get` returns the
+    first value for a name (null when absent -- fail closed);
+    `.entries()` iterates in insertion order. A missing get-name, a
+    non-literal init, or anything outside the grammar fails closed --
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "new URLSearchParams(" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    shadow = {"URLSearchParams", "RESULT"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, uname, j = _js_f96x_decl(text, j)
+        if uname in shadow:
+            raise _JSExprFail("F1050 bad name")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "new")
+        if m is None:
+            raise _JSExprFail("F1050 no new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "URLSearchParams")
+        if m is None:
+            raise _JSExprFail("F1050 no ctor")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            qs, j = _js_f99x_parse_str(text, j)
+            pairs = _js_f1050_parse_qs(qs, state, "F1050")
+        elif j < n and text[j] == "{":
+            pairs, j = _js_f1050_parse_obj_init(text, j, state, "F1050")
+        else:
+            raise _JSExprFail("F1050 init not modeled")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        first = {}
+        for k, v in pairs:
+            if k not in first:
+                first[k] = v
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname == "RESULT":
+            parts = []
+            while True:
+                u2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+                if u2 != uname:
+                    raise _JSExprFail("F1050 get recv mismatch")
+                j = _js_expect(text, j, ".")
+                m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+                if m is None:
+                    raise _JSExprFail("F1050 no get")
+                j = _js_expect(text, m, "(")
+                knm, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+                j = _js_expect(text, j, ")")
+                if knm not in first:
+                    raise _JSExprFail("F1050 get missing key")
+                parts.append(first[knm])
+                _js_f96x_charge(state, "F1050 too many parts")
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == "+" and not text.startswith("++", j):
+                    j += 1
+                    continue
+                break
+            val = "".join(parts)
+            if len(val) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F1050 result too long")
+            _js_f96x_expect_semi_end(text, j)
+            return val
+        sname = rname
+        _js_f1048f1051_check_name(sname, shadow | {uname}, "F1050")
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1050 acc not empty")
+        j = _js_expect(text, j, ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail("F1050 no for")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        kw2, k2 = _js_match_decl_kw(text, j)
+        if kw2 is not None:
+            j = _js_skip_ws(text, k2)
+        pvar, j = _js_parse_ident(text, j)
+        _js_f1048f1051_check_name(pvar, shadow | {uname, sname}, "F1050")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "of")
+        if m is None:
+            raise _JSExprFail("F1050 no of")
+        u3, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if u3 != uname:
+            raise _JSExprFail("F1050 iter recv mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "entries")
+        if m is None:
+            raise _JSExprFail("F1050 no entries")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        braced = j < n and text[j] == "{"
+        if braced:
+            j += 1
+        j = _js_f1050_parse_accum(text, j, sname, pvar, state, "F1050", 1)
+        j = _js_skip_ws(text, j)
+        if braced:
+            j = _js_expect(text, j, "}")
+        _, rname2, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname2 != "RESULT":
+            raise _JSExprFail("F1050 not RESULT")
+        s2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if s2 != sname:
+            raise _JSExprFail("F1050 acc mismatch")
+        val = "".join(v for _, v in pairs)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1050 result too long")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1051_stmt_decode(text):
+    """Decode F1051 FormData staged fragment reads (whole-text, _decode_layer hook).
+
+    `var|let|const D=new FormData();`
+    `(D.append("name","value");)+`
+    then one of:
+    - `var|let|const RESULT=D.get("n1")+D.get("n2")(+...)*;`
+    - `var|let|const S="";for([var|let|const] P of D.entries()){S+=P[1];}`
+      (also `S=S+P[1];`; braces optional) `var|let|const RESULT=S;`
+    - `var|let|const S="";for([var|let|const] K of D.keys()){S+=K;}`
+      (also `S=S+K;`; braces optional) `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): append stores (name, value) pairs in
+    insertion order (string-literal values are identity under the
+    USVString coercion); `.get` returns the first value for a name
+    (null when absent -- fail closed); `.entries()`/`.keys()`
+    iterate insertion order including duplicates. A missing
+    get-name, a non-literal append argument, a constructor argument,
+    or anything outside the grammar fails closed -- a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "new FormData(" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    shadow = {"FormData", "RESULT"}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, dname, j = _js_f96x_decl(text, j)
+        if dname in shadow:
+            raise _JSExprFail("F1051 bad name")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "new")
+        if m is None:
+            raise _JSExprFail("F1051 no new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "FormData")
+        if m is None:
+            raise _JSExprFail("F1051 no ctor")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        pairs = []
+        while True:
+            k = _js_skip_ws(text, j)
+            d2, k2 = _js_parse_ident(text, k)
+            if d2 != dname:
+                break
+            k3 = _js_skip_ws(text, k2)
+            if k3 >= n or text[k3] != ".":
+                break
+            m = _js_match_kw(text, k3 + 1, "append")
+            if m is None:
+                break
+            k = _js_expect(text, m, "(")
+            nm, k = _js_f99x_parse_str(text, _js_skip_ws(text, k))
+            k = _js_expect(text, k, ",")
+            val, k = _js_f99x_parse_str(text, _js_skip_ws(text, k))
+            k = _js_expect(text, k, ")")
+            k = _js_expect(text, k, ";")
+            pairs.append((nm, val))
+            _js_f96x_charge(state, "F1051 too many parts")
+            j = k
+        if not pairs:
+            raise _JSExprFail("F1051 no appends")
+        first = {}
+        for k, v in pairs:
+            if k not in first:
+                first[k] = v
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname == "RESULT":
+            parts = []
+            while True:
+                d3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+                if d3 != dname:
+                    raise _JSExprFail("F1051 get recv mismatch")
+                j = _js_expect(text, j, ".")
+                m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+                if m is None:
+                    raise _JSExprFail("F1051 no get")
+                j = _js_expect(text, m, "(")
+                knm, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+                j = _js_expect(text, j, ")")
+                if knm not in first:
+                    raise _JSExprFail("F1051 get missing key")
+                parts.append(first[knm])
+                _js_f96x_charge(state, "F1051 too many parts")
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == "+" and not text.startswith("++", j):
+                    j += 1
+                    continue
+                break
+            val = "".join(parts)
+            if len(val) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F1051 result too long")
+            _js_f96x_expect_semi_end(text, j)
+            return val
+        sname = rname
+        _js_f1048f1051_check_name(sname, shadow | {dname}, "F1051")
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1051 acc not empty")
+        j = _js_expect(text, j, ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail("F1051 no for")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        kw2, k2 = _js_match_decl_kw(text, j)
+        if kw2 is not None:
+            j = _js_skip_ws(text, k2)
+        pvar, j = _js_parse_ident(text, j)
+        _js_f1048f1051_check_name(pvar, shadow | {dname, sname}, "F1051")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "of")
+        if m is None:
+            raise _JSExprFail("F1051 no of")
+        d4, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if d4 != dname:
+            raise _JSExprFail("F1051 iter recv mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "entries")
+        if m is not None:
+            method = "entries"
+            j = m
+        else:
+            m = _js_match_kw(text, _js_skip_ws(text, j), "keys")
+            if m is None:
+                raise _JSExprFail("F1051 bad method")
+            method = "keys"
+            j = m
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        braced = j < n and text[j] == "{"
+        if braced:
+            j += 1
+        j = _js_f1050_parse_accum(text, j, sname, pvar, state, "F1051",
+                                 1 if method == "entries" else None)
+        j = _js_skip_ws(text, j)
+        if braced:
+            j = _js_expect(text, j, "}")
+        _, rname2, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname2 != "RESULT":
+            raise _JSExprFail("F1051 not RESULT")
+        s2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if s2 != sname:
+            raise _JSExprFail("F1051 acc mismatch")
+        if method == "entries":
+            val = "".join(v for _, v in pairs)
+        else:
+            val = "".join(k for k, _ in pairs)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1051 result too long")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1048/F1049/F1050/F1051 ----------------------------------------
+
+
+
 # -- F1017/F1018/F1019/F1020 (wave-394 lane 4) ----------------------------
 
 
@@ -122850,6 +123660,20 @@ def _decode_layer(text):
     # order (F441) is preserved. Additive, in F-number order.
     for _stmtdec in (_js_f1044_stmt_decode, _js_f1045_stmt_decode,
                      _js_f1046_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1048/F1049/F1050/F1051: narrow whole-text statement-sequence
+    # decoders (wave-397 lane 1) -- nested Error cause-chain reads,
+    # Promise resolution-staged fragment assembly, URLSearchParams
+    # fragment reads, FormData staged fragment reads. Each returns the
+    # decoded string or None; all filed shapes BREAK on the open tree,
+    # so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1048_stmt_decode, _js_f1049_stmt_decode,
+                     _js_f1050_stmt_decode, _js_f1051_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
