@@ -123421,6 +123421,143 @@ def _js_f1078_stmt_decode(text):
 # -- end F1078/F1080/F1081/F1082 ----------------------------------------
 
 
+# -- F1089 (wave-400 lane 3) ---------------------------------------------
+# Narrow whole-text statement-sequence decoder, hooked in the
+# _decode_layer _stmtdec loop alongside F961-F1082. Parses a strict
+# whole-text grammar; anything outside the grammar fails closed
+# (returns None -- a miss, never a mis-decode). All shapes
+# node-verified (v24.20.0). Pure text-to-string scan: charges no
+# F452 scan budget; staged items are charged to a per-attempt local
+# state via _js_f96x_charge and results bounded by
+# _MAX_DECODE_BYTES, so there is nothing to snapshot/restore on miss
+# (wave-383 rule). No new decision codes, no new re.compile (pin
+# tests unchanged). Never evals.
+
+
+def _js_f1089_parse_with_iife(text, j, oname):
+    """Parse `(()=>{with(O){return v;}})();` at text[j] (F1089).
+
+    Node-exact (v24.20.0): the zero-arg arrow's block body runs
+    `with(O)` whose block returns the bare identifier `v`,
+    resolving to O's `v` property; the IIFE result is the staged
+    int array, which the spread then feeds to fromCharCode.
+    Returns next_index. Never evals.
+    """
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "=")
+    j = _js_expect(text, _js_skip_ws(text, j), ">")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    jw = _js_match_kw(text, _js_skip_ws(text, j), "with")
+    if jw is None:
+        raise _JSExprFail("F1089 with expected")
+    j = _js_expect(text, jw, "(")
+    base, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if base != oname:
+        raise _JSExprFail("F1089 with base mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    jw = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if jw is None:
+        raise _JSExprFail("F1089 return expected")
+    vname, j = _js_parse_ident(text, _js_skip_ws(text, jw))
+    if vname != "v":
+        raise _JSExprFail("F1089 with return not v")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "(")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    # The IIFE ends here; the caller consumes the fromCharCode
+    # close paren and the statement terminator.
+    return j
+
+
+def _js_f1089_stmt_decode(text):
+    """Decode F1089 member-expression spread receivers (whole-text).
+
+    `var|let|const O={v:[INT,...]};`
+    `[var|let|const V=O.v;]`                        (alias form only)
+    `var|let|const RESULT=String.fromCharCode(...X);`
+    where X is `O.v` / `O['v']` / `O["v"]` (member expression),
+    `V` (the alias, only when declared), or
+    `(()=>{with(O){return v;}})();` (with-scope IIFE).
+    then end-of-text.
+
+    Node-exact (v24.20.0): spreading the staged int array applies
+    fromCharCode's ToUint16 per element (F967 discipline),
+    identical for all three receiver forms. Disjoint from F1069:
+    F1069 requires a WeakRef / globalThis / rest-param / plain
+    int-array-literal receiver -- the object declarator plus
+    member/alias/with receivers here fail closed on all three
+    F1069 sub-productions, and F1069's hook fails closed on these
+    shapes (verified both directions). Disjoint from F1075:
+    F1075 models loop/indexed reads only and fails closed on any
+    spread; this hook requires the `...` spread token. Anything
+    outside the strict grammar fails closed -- a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "fromCharCode(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, oname, j = _js_f96x_decl(text, j)
+        if oname in ("RESULT", "String"):
+            raise _JSExprFail("F1089 bad obj name")
+        codes, j = _js_f1075_parse_obj(text, _js_skip_ws(text, j), state)
+        j = _js_expect(text, j, ";")
+        bound = {oname, "RESULT", "String"}
+        vname = None
+        try:
+            ja = _js_skip_ws(text, j)
+            _, vname, ja = _js_f96x_decl(text, ja)
+            if vname in bound:
+                raise _JSExprFail("F1089 bad alias name")
+            ja = _js_f1075_member_arrref(oname, "F1089")(text, ja)
+            ja = _js_expect(text, ja, ";")
+            bound = bound | {vname}
+            j = ja
+        except _JSExprFail:
+            vname = None
+        dstr = _js_f996f997_fcc_chr(codes, "F1089")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1089 not RESULT")
+        # _js_f96x_decl returns j-after-=.
+        sname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if sname != "String":
+            raise _JSExprFail("F1089 not String")
+        j = _js_expect(text, j, ".")
+        fname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if fname != "fromCharCode":
+            raise _JSExprFail("F1089 not fromCharCode")
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        for _ in range(3):
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+        j = _js_skip_ws(text, j)
+        n = len(text)
+        if j < n and text[j] == "(":
+            j = _js_f1089_parse_with_iife(text, j, oname)
+        else:
+            try:
+                j = _js_f1075_member_arrref(oname, "F1089")(text, j)
+            except _JSExprFail:
+                xname, j = _js_parse_ident(text, j)
+                if vname is None or xname != vname:
+                    raise _JSExprFail("F1089 bad receiver")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+# -- end F1089 ------------------------------------------------------------
+
+
 # -- F1048/F1049/F1050/F1051 (wave-397 lane 1) --------------------------
 # Narrow whole-text statement-sequence decoders, hooked in the
 # _decode_layer _stmtdec loop alongside F961-F1047. Each parses a strict
@@ -130163,6 +130300,21 @@ def _decode_layer(text):
     # preserved. Additive, in F-number order.
     for _stmtdec in (_js_f1086_stmt_decode, _js_f1087_stmt_decode,
                      _js_f1088_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1089 (wave-400 lane 3): member-expression spread receivers --
+    # `var O={v:[INT,...]};` then
+    # `var RESULT=String.fromCharCode(...X);` with X a member
+    # expression, alias, or with-scope IIFE. Distinct from F1069
+    # (WeakRef/globalThis/rest-param receivers) and F1075
+    # (loop/indexed reads) by grammar (documented in the hook). The
+    # filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1089_stmt_decode,):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
