@@ -122485,6 +122485,113 @@ def _js_f1055_stmt_decode(text):
 # -- end F1052/F1053/F1054/F1055 --------------------------------------------
 
 
+# -- F1072 (wave-398 lane 3) ----------------------------------------------
+# JSON.parse reviver-less plain property reads: `var|let|const
+# O=JSON.parse('{"a":"f1","b":"f2"}');var|let|const RESULT=O.a+O.b;`
+# and the O["a"] bracket-read twin. This is a DISTINCT production from
+# F1055 (which requires the two-argument reviver form -- the F1055
+# lane considered subsuming this and the attack report noted the
+# double-filing risk; the forms are genuinely distinct, so F1072 is a
+# separate already-filed finding and this is its own hook, not a
+# renumber). The hook requires exactly ONE parse argument (a comma
+# after the JSON literal fails closed into F1055's production), so
+# the two hooks are disjoint. Disjoint from F630 (the expression-level
+# JSON.parse enumeration source -- this is a whole-text statement
+# sequence with a RESULT reader). Pure text-to-string scans, so like
+# every other _stmtdec hook this charges no F452 scan budget
+# (wave-383 rule): nothing to snapshot/restore on miss. Never evals.
+
+
+def _js_f1072_stmt_decode(text):
+    """Decode F1072 JSON.parse reviver-less plain property reads (whole-text hook).
+
+    `var|let|const O=JSON.parse('{"a":"f1","b":"f2"}');`
+    `var|let|const RESULT=O.a+O.b;` -- reviver-less parse returns the
+    plain object, so the property reads assemble node-exactly. Also
+    the `O["a"]` bracket-read twin.
+
+    Node-exact (v24.20.0) for the modeled subset: the JSON text must
+    parse to a non-empty object of string values (anything else fails
+    closed); exactly one parse argument (a comma after the literal
+    fails closed -- that is F1055's production); every read key must
+    exist (the engine's undefined fails closed). Returns the decoded
+    string, or None. Never evals.
+    """
+    if "JSON.parse(" not in text:
+        return None
+    shadow = {"String", "JSON"}
+    bound = set()
+    try:
+        j = _js_skip_ws(text, 0)
+        _, oname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(oname, bound, shadow, "F1072")
+        bound.add(oname)
+        j = _js_skip_ws(text, j)
+        n = len(text)
+        m = _js_match_kw(text, j, "JSON")
+        if m is None:
+            raise _JSExprFail("F1072 no JSON")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "parse")
+        if m is None:
+            raise _JSExprFail("F1072 no parse")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F1072 json not a literal")
+        jsontxt, j = _js_parse_string(text, j)
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            raise _JSExprFail("F1072 reviver form is F1055")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        try:
+            obj = json.loads(jsontxt)
+        except Exception:
+            raise _JSExprFail("F1072 bad json")
+        if (not isinstance(obj, dict) or not obj
+                or any(not isinstance(k, str) or not isinstance(v, str)
+                       for k, v in obj.items())):
+            raise _JSExprFail("F1072 json not str dict")
+        if any(any(ord(c) >= 0x80 for c in k) for k in obj):
+            raise _JSExprFail("F1072 non-ascii key")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1072 not RESULT")
+        parts = []
+        while True:
+            j = _js_skip_ws(text, j)
+            iname, j = _js_parse_ident(text, j)
+            if iname != oname:
+                raise _JSExprFail("F1072 reader obj mismatch")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ".":
+                key, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+            elif j < n and text[j] == "[":
+                j = _js_skip_ws(text, j + 1)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("F1072 reader key not literal")
+                key, j = _js_parse_string(text, j)
+                j = _js_expect(text, _js_skip_ws(text, j), "]")
+            else:
+                raise _JSExprFail("F1072 reader not modeled")
+            if key not in obj:
+                raise _JSExprFail("F1072 reader key missing")
+            parts.append(obj[key])
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "+":
+                j += 1
+                continue
+            break
+        _js_f96x_expect_semi_end(text, j)
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1072 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+
 
 # -- F1048/F1049/F1050/F1051 (wave-397 lane 1) --------------------------
 # Narrow whole-text statement-sequence decoders, hooked in the
@@ -127750,6 +127857,20 @@ def _decode_layer(text):
     # F-number order.
     for _stmtdec in (_js_f1068_stmt_decode, _js_f1069_stmt_decode,
                      _js_f1070_stmt_decode, _js_f1071_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1072: JSON.parse reviver-less plain property reads (wave-398
+    # lane 3) -- `var O=JSON.parse('{"a":"f1"}');var RESULT=O.a+O.b;`.
+    # Distinct production from F1055 (no reviver argument at all --
+    # the hook fails closed on a comma after the literal, routing
+    # that shape to F1055's production). The filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1072_stmt_decode,):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)

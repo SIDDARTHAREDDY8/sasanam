@@ -1033,6 +1033,180 @@ def _has_hidden_hidden_option(text):
     return False
 
 
+# F1073: nine further hidden-instruction carriers beyond F1024 /
+# F1034 / F1047 / F1064. Same construction: substantive PROSE-SHAPED
+# text in a carrier never rendered to the human reader is
+# instruction-shaped by construction (the F1024 rationale); machine
+# tokens, markup-only carriers, and empty carriers are honest text,
+# quiet. No re.compile() here (module-level count stays as audited);
+# patterns ride the re module's cache. All detectors run on the
+# zero-width-stripped norm (F1024) so ZWSP mangling of the carrier
+# markup cannot evade them. Never evals.
+
+
+def _has_hidden_mathml_annotation(text):
+    """True when *text* carries prose-shaped text in a MathML
+    `<annotation>` inside `<semantics>`.
+
+    F1073: annotations are alternative representations (never
+    rendered), so prose there is hidden from the human reader (the
+    F1024 rationale). Markup-only annotations (real presentation
+    markup) and machine tokens (base64 payloads) are honest text,
+    quiet. Never evals.
+    """
+    for math in _scan_element_regions(text, "math"):
+        for sem in _scan_element_regions(math, "semantics"):
+            for region in _scan_element_regions(sem, "annotation"):
+                if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+                    return True
+    return False
+
+
+def _has_hidden_rdfa_microdata_content(text):
+    """True when *text* carries prose-shaped text in an RDFa /
+    microdata `content` attribute.
+
+    F1073: RDFa (`<div vocab property content=...>`) and microdata
+    (`<span itemprop content=...>` overriding the visible text) are
+    never rendered, so prose in `content` is hidden from the human
+    reader (the F1024 rationale). Scoped to elements carrying an
+    RDFa/microdata marker (`property`, `itemprop`, `vocab`,
+    `itemtype`); `<meta>` tags are out of scope (handled by
+    F1047/F1064). Machine tokens (`content="2024-01-01"`) are honest
+    text, quiet. Never evals.
+    """
+    for m in re.finditer(r"<(?!meta\b)([A-Za-z][\w-]*)\b[^>]*>", text,
+                         re.I):
+        tag = m.group(0)
+        marker = False
+        for name in ("property", "itemprop", "vocab", "itemtype"):
+            _, found = _f1047_attr_value(tag, name)
+            if found:
+                marker = True
+                break
+        if not marker:
+            continue
+        content, has_content = _f1047_attr_value(tag, "content")
+        if has_content and _is_prose_shaped(content):
+            return True
+    return False
+
+
+def _has_hidden_option_value(text):
+    """True when *text* carries prose-shaped text in an `<option>`
+    `value` attribute.
+
+    F1073: only the option's text is rendered -- the `value` is
+    never shown -- so prose there is hidden from the human reader
+    (the F1024 rationale). Machine tokens (`value="report-2024"`)
+    are honest text, quiet. Distinct from F1064's `<option hidden>`
+    carrier (element visibility, not the value attribute). Never
+    evals.
+    """
+    for m in re.finditer(r"<option\b[^>]*>", text, re.I):
+        value, has_value = _f1047_attr_value(m.group(0), "value")
+        if has_value and _is_prose_shaped(value):
+            return True
+    return False
+
+
+def _has_hidden_canvas_fallback(text):
+    """True when *text* carries prose-shaped text as `<canvas>`
+    fallback content.
+
+    F1073: fallback content renders only when canvas is
+    unsupported, so on any modern agent/host it is hidden from the
+    human reader (the F1024 rationale). Markup-only fallbacks are
+    quiet. Never evals.
+    """
+    for region in _scan_element_regions(text, "canvas"):
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+            return True
+    return False
+
+
+def _has_hidden_script_text_plain(text):
+    """True when *text* carries prose-shaped text in a
+    `<script type="text/plain">` block.
+
+    F1073: non-executable script blocks are never rendered and
+    never executed, so prose there is hidden from the human reader
+    (the F1024 rationale). Scoped to `text/plain` -- ordinary
+    scripts are out of scope. Empty blocks and machine tokens are
+    honest text, quiet. Never evals.
+    """
+    for m in re.finditer(r"<script\b[^>]*>", text, re.I):
+        itype, has_type = _f1047_attr_value(m.group(0), "type")
+        if not has_type or itype.lower() != "text/plain":
+            continue
+        start = m.end()
+        close = re.search(r"</script\s*>", text[start:], re.I)
+        region = text[start:start + close.start()] if close \
+            else text[start:]
+        if _is_prose_shaped(region):
+            return True
+    return False
+
+
+def _has_hidden_style_comment(text):
+    """True when *text* carries prose-shaped text in a CSS comment
+    inside `<style>`.
+
+    F1073: CSS comments are never rendered, so prose there is
+    hidden from the human reader (the F1024 rationale). An
+    unterminated `<style>` scans to end of text (the F1024
+    fail-closed rule). Comment tokens without whitespace
+    (`/*fix:spacing*/`) are honest text, quiet. Never evals.
+    """
+    for region in _scan_element_regions(text, "style"):
+        for m in re.finditer(r"/\*(.*?)\*/", region, re.S):
+            if _is_prose_shaped(m.group(1)):
+                return True
+    return False
+
+
+def _has_hidden_object_param(text):
+    """True when *text* carries prose-shaped text in an
+    `<object><param>` `value` attribute.
+
+    F1073: param values are never rendered, so prose there is
+    hidden from the human reader (the F1024 rationale). Machine
+    tokens (`value="movie.swf"`) are honest text, quiet. Never
+    evals.
+    """
+    for m in re.finditer(r"<param\b[^>]*>", text, re.I):
+        value, has_value = _f1047_attr_value(m.group(0), "value")
+        if has_value and _is_prose_shaped(value):
+            return True
+    return False
+
+
+def _has_hidden_xml_pi(text):
+    """True when *text* carries prose-shaped text in an XML
+    processing instruction.
+
+    F1073: processing instructions are never rendered in HTML
+    parsing, so prose there is hidden from the human reader (the
+    F1024 rationale). The XML declaration (`<?xml version="1.0"
+    encoding="UTF-8"?>` -- attribute-shaped data: every
+    whitespace-separated token is a `name="value"` assignment) is
+    honest text, quiet; data-free PIs and machine-token data are
+    quiet too. PIs whose data carries prose are the filed carrier
+    class. Never evals.
+    """
+    for m in re.finditer(r"<\?([A-Za-z_][\w:.-]*)\s+([^?]*?)\?>",
+                         text):
+        target, data = m.group(1), m.group(2)
+        if (target.lower() == "xml"
+                and all(re.match(r"^[\w:.-]+=([\"']).*?\1$",
+                                 tok)
+                        for tok in data.split())):
+            continue
+        if _is_prose_shaped(data):
+            return True
+    return False
+
+
 def instruction_shaped(text):
     """Deterministic heuristic: does this unit read like an instruction
     to the agent? A stand-in for the plan-trace / intent-slicing
@@ -1080,7 +1254,7 @@ def instruction_shaped(text):
     # NOTE blocks, XMP dc:description, og:/twitter: meta
     # descriptions, and <option hidden>. All detectors run on the
     # zero-width-stripped norm (F1024).
-    return (_has_hidden_display_none(norm)
+    if (_has_hidden_display_none(norm)
             or _has_hidden_visibility_hidden(norm)
             or _has_hidden_hidden_attr(norm)
             or _has_hidden_html_title(norm)
@@ -1091,7 +1265,21 @@ def instruction_shaped(text):
             or _has_hidden_vtt_note(norm)
             or _has_hidden_xmp_desc(norm)
             or _has_hidden_meta_descriptions(norm)
-            or _has_hidden_hidden_option(norm))
+            or _has_hidden_hidden_option(norm)):
+        return True
+    # F1073: the same construction for nine further hidden-from-human
+    # carriers -- MathML <annotation>, RDFa/microdata `content`
+    # attributes, <option value>, <canvas> fallback content,
+    # <script type="text/plain">, CSS comments in <style>,
+    # <object><param value>, and XML processing instructions.
+    return (_has_hidden_mathml_annotation(norm)
+            or _has_hidden_rdfa_microdata_content(norm)
+            or _has_hidden_option_value(norm)
+            or _has_hidden_canvas_fallback(norm)
+            or _has_hidden_script_text_plain(norm)
+            or _has_hidden_style_comment(norm)
+            or _has_hidden_object_param(norm)
+            or _has_hidden_xml_pi(norm))
 
 
 class ActionRequest(object):
