@@ -121448,6 +121448,1043 @@ def _js_f1046_stmt_decode(text):
 # -- end F1044/F1045/F1046 ----------------------------------------------
 
 
+# -- F1052/F1053/F1054/F1055 (wave-397 lane 2) --------------------------------
+# Narrow whole-text statement-sequence decoders, hooked in the _stmtdec
+# loop alongside F961-F1046. Each parses a strict whole-text grammar;
+# anything outside the grammar fails closed (returns None -- a miss,
+# never a mis-decode). All shapes node-verified (v24.20.0). Like the
+# wave-395/396 lane hooks these are pure text-to-string scans and charge
+# no F452 scan budget, so there is nothing to snapshot/restore on miss
+# (wave-383 rule). No new decision codes, no new re.compile (pin tests
+# unchanged). Never evals.
+
+
+def _js_f1052_parse_headers_init(text, j, what):
+    """Parse `new Headers({...})` at text[j] (F1052).
+
+    The init is an object literal with quoted-string keys and
+    quoted-string values only. Header names normalize to lowercase
+    (engine); duplicate names: later wins (engine); values are
+    stripped of leading/trailing space/tab (engine, node-verified).
+    A value containing \\x00, \\n or \\r is the engine's TypeError --
+    fail closed; all other control chars are kept verbatim (engine,
+    node-verified). Keys and values must be ASCII (fail closed
+    otherwise -- the engine's ByteString coercion is not modeled).
+    Returns (headers dict, next_index). Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, j, "new")
+    if m is None:
+        raise _JSExprFail(what + " no new")
+    m = _js_match_kw(text, _js_skip_ws(text, m), "Headers")
+    if m is None:
+        raise _JSExprFail(what + " no Headers")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    headers = {}
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        j = _js_expect(text, j + 1, ")")
+        return headers, j
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail(what + " key not a literal")
+        key, j = _js_parse_string(text, j)
+        if not key or any(ord(c) >= 0x80 for c in key):
+            raise _JSExprFail(what + " bad key")
+        j = _js_expect(text, _js_skip_ws(text, j), ":")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail(what + " value not a literal")
+        val, j = _js_parse_string(text, j)
+        if any(ord(c) >= 0x80 or c in "\x00\n\r" for c in val):
+            raise _JSExprFail(what + " bad value")
+        headers[key.lower()] = val.strip(" \t")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "}":
+                j = _js_expect(text, j + 1, ")")
+                return headers, j
+            continue
+        if j < n and text[j] == "}":
+            j = _js_expect(text, j + 1, ")")
+            return headers, j
+        raise _JSExprFail(what + " bad headers literal")
+
+
+def _js_f1052_parse_get_reads(text, j, hname, headers, what):
+    """Parse `RESULT=H.get("K")(+H.get("K"))*;` at text[j] (F1052).
+
+    Returns the decoded string. A missing key is the engine's null --
+    fail closed. Never evals.
+    """
+    n = len(text)
+    _, rname, j = _js_f96x_decl(text, j)
+    if rname != "RESULT":
+        raise _JSExprFail(what + " not RESULT")
+    parts = []
+    while True:
+        j = _js_skip_ws(text, j)
+        iname, j = _js_parse_ident(text, j)
+        if iname != hname:
+            raise _JSExprFail(what + " get obj mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+        if m is None:
+            raise _JSExprFail(what + " no get")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail(what + " get key not a literal")
+        key, j = _js_parse_string(text, j)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        lk = key.lower()
+        if lk not in headers:
+            raise _JSExprFail(what + " get key missing")
+        parts.append(headers[lk])
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j += 1
+            continue
+        break
+    _js_f96x_expect_semi_end(text, j)
+    val = "".join(parts)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " result too long")
+    return val
+
+
+def _js_f1052_parse_foreach(text, j, hname, headers, bound, shadow, what):
+    """Parse the F1052 forEach reader at text[j].
+
+    `S="";H.forEach(function(V,K){S+=V;});RESULT=S;` (also the
+    `(V,K)=>{S+=V;}` arrow twin and the `S=S+V;` body twin). forEach
+    visits values in sorted-name order (engine, node-verified).
+    Returns the decoded string. Never evals.
+    """
+    n = len(text)
+    _, sname, j = _js_f96x_decl(text, j)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] not in "'\"":
+        raise _JSExprFail(what + " accum not a literal")
+    init, j = _js_parse_string(text, j)
+    if init != "":
+        raise _JSExprFail(what + " accum not empty")
+    _js_f1028f1029_check_fresh_name(sname, bound, shadow, what)
+    bound.add(sname)
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_skip_ws(text, j)
+    iname, j = _js_parse_ident(text, j)
+    if iname != hname:
+        raise _JSExprFail(what + " foreach obj mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "forEach")
+    if m is None:
+        raise _JSExprFail(what + " no forEach")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_skip_ws(text, j)
+    mf = _js_match_kw(text, j, "function")
+    if mf is not None:
+        j = _js_skip_ws(text, mf)
+        j = _js_expect(text, j, "(")
+        vname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        kname = None
+        if j < n and text[j] == ",":
+            kname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+    elif j < n and text[j] == "(":
+        j = _js_skip_ws(text, j + 1)
+        vname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        kname = None
+        if j < n and text[j] == ",":
+            kname, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " no arrow")
+        j += 2
+    else:
+        raise _JSExprFail(what + " callback not modeled")
+    if vname in (sname, hname) or kname in (sname, hname):
+        raise _JSExprFail(what + " callback param shadows")
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "{")
+    j = _js_skip_ws(text, j)
+    aname, j = _js_parse_ident(text, j)
+    if aname != sname:
+        raise _JSExprFail(what + " accum mismatch")
+    j = _js_skip_ws(text, j)
+    if text.startswith("+=", j):
+        j = _js_skip_ws(text, j + 2)
+        vname2, j = _js_parse_ident(text, j)
+        if vname2 != vname:
+            raise _JSExprFail(what + " accum value mismatch")
+    elif j < n and text[j] == "=":
+        aname2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if aname2 != sname:
+            raise _JSExprFail(what + " accum self mismatch")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+":
+            raise _JSExprFail(what + " accum no plus")
+        vname2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if vname2 != vname:
+            raise _JSExprFail(what + " accum value mismatch")
+    else:
+        raise _JSExprFail(what + " accum body not modeled")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if rname != "RESULT":
+        raise _JSExprFail(what + " not RESULT")
+    j = _js_skip_ws(text, j)
+    rval, j = _js_parse_ident(text, j)
+    if rval != sname:
+        raise _JSExprFail(what + " result not accum")
+    _js_f96x_expect_semi_end(text, j)
+    val = "".join(v for _, v in sorted(headers.items()))
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " result too long")
+    return val
+
+
+def _js_f1052_stmt_decode(text):
+    """Decode F1052 Headers value reads (whole-text, _decode_layer hook).
+
+    `var|let|const H=new Headers({"K1":"V1",...});` then either
+    `var|let|const RESULT=H.get("K1")+H.get("K2")(+...);` or
+    `var|let|const S="";H.forEach(function(V,K){S+=V;});`
+    `var|let|const RESULT=S;` (also the `(V,K)=>{S+=V;}` arrow twin).
+
+    Node-exact (v24.20.0): header names normalize to lowercase so
+    lookup is case-insensitive; values are stripped of
+    leading/trailing space/tab at construction (engine); forEach
+    visits values in sorted-name order. A missing get key is the
+    engine's null -- fail closed. Disjoint from F861 (IIFE-wrapped
+    `new Headers` production -- this requires a whole-text decl
+    start). Returns the decoded string, or None. Never evals.
+    """
+    if "new Headers(" not in text:
+        return None
+    shadow = {"String", "Headers"}
+    bound = set()
+    try:
+        j = _js_skip_ws(text, 0)
+        _, hname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(hname, bound, shadow, "F1052")
+        bound.add(hname)
+        headers, j = _js_f1052_parse_headers_init(
+            text, _js_skip_ws(text, j), "F1052")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_skip_ws(text, j)
+        try:
+            return _js_f1052_parse_get_reads(
+                text, j, hname, headers, "F1052")
+        except _JSExprFail:
+            pass
+        return _js_f1052_parse_foreach(
+            text, j, hname, headers, bound, shadow, "F1052")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1053_u8_chr(codes, what):
+    """ToUint8 decode of integer codes (F1053).
+
+    A Uint8Array set / DataView setUint8 stages each int via ToNumber
+    then mod 256 (node-verified); reading the view back yields the
+    byte. Raises _JSExprFail. Never evals.
+    """
+    out = []
+    for cp in codes:
+        out.append(chr(cp % 256))
+        if len(out) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail(what + " too many codepoints")
+    val = "".join(out)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " result too long")
+    return val
+
+
+def _js_f1053_parse_for_head(text, j, bound, shadow, what):
+    """Parse the F1053 `for(...)` head at text[j].
+
+    `for([var|let] I=0;I<K;I++|++I|I+=1)` -- a `const` counter is the
+    engine's TypeError, so it fails closed. Returns
+    (counter_name, K, next_index). Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, j, "for")
+    if m is None:
+        raise _JSExprFail(what + " no for")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_skip_ws(text, j)
+    dm = _js_match_kw(text, j, "var")
+    if dm is None:
+        dm = _js_match_kw(text, j, "let")
+    if dm is not None:
+        j = _js_skip_ws(text, dm)
+    ivar, j = _js_parse_ident(text, j)
+    _js_f1028f1029_check_fresh_name(ivar, bound, shadow, what)
+    bound.add(ivar)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "=":
+        raise _JSExprFail(what + " counter no init")
+    j = _js_skip_ws(text, j + 1)
+    if j >= n or text[j] != "0":
+        raise _JSExprFail(what + " counter not zero")
+    j = _js_skip_ws(text, j + 1)
+    j = _js_expect(text, j, ";")
+    j = _js_skip_ws(text, j)
+    ivar2, j = _js_parse_ident(text, j)
+    if ivar2 != ivar:
+        raise _JSExprFail(what + " test var mismatch")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("<", j) or text.startswith("<=", j):
+        raise _JSExprFail(what + " test not lt")
+    j += 1
+    kval, j = _js_f997_parse_int(text, _js_skip_ws(text, j), what)
+    if kval < 1 or kval > _JS_EXPR_MAX_CODEPOINTS:
+        raise _JSExprFail(what + " bad bound")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_skip_ws(text, j)
+    if text.startswith("++", j):
+        ivar3, j = _js_parse_ident(text, _js_skip_ws(text, j + 2))
+    else:
+        ivar3, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if text.startswith("++", j):
+            j += 2
+        elif text.startswith("+=", j):
+            one, j = _js_f997_parse_int(text, _js_skip_ws(text, j + 2),
+                                        what)
+            if one != 1:
+                raise _JSExprFail(what + " step not one")
+        else:
+            raise _JSExprFail(what + " step not modeled")
+    if ivar3 != ivar:
+        raise _JSExprFail(what + " step var mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    return ivar, kval, j
+
+
+def _js_f1053_parse_view_loop(text, j, acc, read, bound, shadow, what):
+    """Parse the F1053 accumulation loop at text[j].
+
+    `{ACC+=String.fromCharCode(READ);}` (braced or braceless; the
+    `ACC=ACC+...` twin). READ is ("view", VNAME) for `V[I]` or
+    ("dataview", DVNAME) for `DV.getUint8(I)`. Returns
+    (K, next_index). Never evals.
+    """
+    n = len(text)
+    kind, rname = read
+    ivar, kval, j = _js_f1053_parse_for_head(text, j, bound, shadow, what)
+    j = _js_skip_ws(text, j)
+    braced = j < n and text[j] == "{"
+    if braced:
+        j += 1
+    j = _js_skip_ws(text, j)
+    aname, j = _js_parse_ident(text, j)
+    if aname != acc:
+        raise _JSExprFail(what + " accum mismatch")
+    j = _js_skip_ws(text, j)
+    if text.startswith("+=", j):
+        j = _js_skip_ws(text, j + 2)
+    elif j < n and text[j] == "=":
+        aname2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if aname2 != acc:
+            raise _JSExprFail(what + " accum self mismatch")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+":
+            raise _JSExprFail(what + " accum no plus")
+        j = _js_skip_ws(text, j + 1)
+    else:
+        raise _JSExprFail(what + " accum body not modeled")
+    m = _js_match_kw(text, j, "String")
+    if m is None:
+        raise _JSExprFail(what + " no String")
+    j = _js_expect(text, _js_skip_ws(text, m), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " no fromCharCode")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_skip_ws(text, j)
+    iname, j = _js_parse_ident(text, j)
+    if iname != rname:
+        raise _JSExprFail(what + " read obj mismatch")
+    if kind == "view":
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        ivar2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if ivar2 != ivar:
+            raise _JSExprFail(what + " index var mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+    else:
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "getUint8")
+        if m is None:
+            raise _JSExprFail(what + " no getUint8")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        ivar2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if ivar2 != ivar:
+            raise _JSExprFail(what + " index var mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    if braced:
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return kval, j
+
+
+def _js_f1053_parse_dv_write(text, j, dvname, csname, bound, shadow, what):
+    """Parse the F1053 DataView write loop at text[j].
+
+    `for([var|let] I=0;I<K;I++|++I|I+=1){DV.setUint8(I,CS[I]);}`
+    (braced or braceless). Returns (K, next_index). Never evals.
+    """
+    n = len(text)
+    ivar, kval, j = _js_f1053_parse_for_head(text, j, bound, shadow, what)
+    j = _js_skip_ws(text, j)
+    braced = j < n and text[j] == "{"
+    if braced:
+        j += 1
+    j = _js_skip_ws(text, j)
+    iname, j = _js_parse_ident(text, j)
+    if iname != dvname:
+        raise _JSExprFail(what + " write obj mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "setUint8")
+    if m is None:
+        raise _JSExprFail(what + " no setUint8")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    ivar2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if ivar2 != ivar:
+        raise _JSExprFail(what + " write index mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ",")
+    cname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if cname != csname:
+        raise _JSExprFail(what + " staged array mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "[")
+    ivar3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if ivar3 != ivar:
+        raise _JSExprFail(what + " staged index mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "]")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    if braced:
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return kval, j
+
+
+def _js_f1053_parse_result(text, j, acc, what):
+    """Parse `var|let|const RESULT=ACC;` then end-of-text (F1053)."""
+    _, rname, j = _js_f96x_decl(text, j)
+    if rname != "RESULT":
+        raise _JSExprFail(what + " not RESULT")
+    j = _js_skip_ws(text, j)
+    rval, j = _js_parse_ident(text, j)
+    if rval != acc:
+        raise _JSExprFail(what + " result not accum")
+    _js_f96x_expect_semi_end(text, j)
+    return None
+
+
+def _js_f1053_stmt_decode(text):
+    """Decode F1053 memory-view staged code reads (whole-text hook).
+
+    Three subforms, all staging int codes behind a byte view and
+    reading them back for fromCharCode accumulation (node-exact,
+    v24.20.0):
+
+    - WASM: `var|let|const M=new WebAssembly.Memory({initial:N});`
+      `var|let|const V=new Uint8Array(M.buffer);V.set([codes]);`
+      `var|let|const S="";` view loop `var|let|const RESULT=S;`
+    - ArrayBuffer: `var|let|const B=new ArrayBuffer(N);`
+      `new Uint8Array(B).set([codes]);var|let|const S="";`
+      `var|let|const V=new Uint8Array(B);` view loop `RESULT=S;`
+    - DataView: `var|let|const B=new ArrayBuffer(N);`
+      `var|let|const DV=new DataView(B);var|let|const CS=[codes];`
+      write loop `DV.setUint8(I,CS[I]);` `var|let|const S="";`
+      read loop `String.fromCharCode(DV.getUint8(J));`
+      `var|let|const RESULT=S;`
+
+    Node-exact staging: set/setUint8 apply ToNumber then mod 256, so
+    each staged byte is `code % 256`; the buffers are zero-filled, so
+    a loop bound K past the staged codes reads 0x00 (modeled). A
+    staged array longer than the view is the engine's RangeError --
+    fail closed. Disjoint from F1039 (`new Int32Array(new
+    SharedArrayBuffer(` anchor) and from F896/F742 (IIFE-wrapped --
+    this requires a whole-text decl start). Returns the decoded
+    string, or None. Never evals.
+    """
+    if ("new WebAssembly.Memory(" not in text
+            and "new ArrayBuffer(" not in text):
+        return None
+    shadow = {"String", "WebAssembly", "Uint8Array", "ArrayBuffer",
+              "DataView"}
+    bound = set()
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        _, d1name, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(d1name, bound, shadow, "F1053")
+        bound.add(d1name)
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "new")
+        if m is None:
+            raise _JSExprFail("F1053 no new")
+        j = _js_skip_ws(text, m)
+        mw = _js_match_kw(text, j, "WebAssembly")
+        if mw is not None:
+            # --- form W: WebAssembly.Memory ---
+            j = _js_expect(text, _js_skip_ws(text, mw), ".")
+            mm = _js_match_kw(text, _js_skip_ws(text, j), "Memory")
+            if mm is None:
+                raise _JSExprFail("F1053 no Memory")
+            j = _js_expect(text, _js_skip_ws(text, mm), "(")
+            j = _js_expect(text, _js_skip_ws(text, j), "{")
+            ik, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if ik != "initial":
+                raise _JSExprFail("F1053 no initial")
+            j = _js_expect(text, _js_skip_ws(text, j), ":")
+            npages, j = _js_f997_parse_int(text, _js_skip_ws(text, j),
+                                           "F1053")
+            if npages < 0 or npages > 65536:
+                # >65536 pages is the engine's RangeError (node-verified)
+                raise _JSExprFail("F1053 bad page count")
+            j = _js_expect(text, _js_skip_ws(text, j), "}")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            viewlen = npages * 65536
+            _, vname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            _js_f1028f1029_check_fresh_name(vname, bound, shadow,
+                                            "F1053")
+            bound.add(vname)
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, j, "new")
+            if m is None:
+                raise _JSExprFail("F1053 no new view")
+            m = _js_match_kw(text, _js_skip_ws(text, m), "Uint8Array")
+            if m is None:
+                raise _JSExprFail("F1053 no Uint8Array")
+            j = _js_expect(text, _js_skip_ws(text, m), "(")
+            j = _js_skip_ws(text, j)
+            iname, j = _js_parse_ident(text, j)
+            if iname != d1name:
+                raise _JSExprFail("F1053 memory mismatch")
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "buffer")
+            if m is None:
+                raise _JSExprFail("F1053 no buffer")
+            j = _js_expect(text, _js_skip_ws(text, m), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            j = _js_skip_ws(text, j)
+            iname, j = _js_parse_ident(text, j)
+            if iname != vname:
+                raise _JSExprFail("F1053 view mismatch")
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "set")
+            if m is None:
+                raise _JSExprFail("F1053 no set")
+            j = _js_expect(text, _js_skip_ws(text, m), "(")
+            codes, j = _js_f1028f1030_parse_code_array(
+                text, _js_skip_ws(text, j), "F1053")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            if len(codes) > viewlen:
+                raise _JSExprFail("F1053 staged past view")
+            _, acc, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F1053 accum not a literal")
+            init, j = _js_parse_string(text, j)
+            if init != "":
+                raise _JSExprFail("F1053 accum not empty")
+            _js_f1028f1029_check_fresh_name(acc, bound, shadow, "F1053")
+            bound.add(acc)
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            kval, j = _js_f1053_parse_view_loop(
+                text, _js_skip_ws(text, j), acc, ("view", vname),
+                bound, shadow, "F1053")
+            if kval > viewlen:
+                raise _JSExprFail("F1053 loop past view")
+            _js_f1053_parse_result(text, _js_skip_ws(text, j), acc,
+                                   "F1053")
+            staged = [c % 256 for c in codes[:kval]]
+            staged += [0] * (kval - len(staged))
+            return _js_f1053_u8_chr(staged, "F1053")
+        ma = _js_match_kw(text, j, "ArrayBuffer")
+        if ma is None:
+            raise _JSExprFail("F1053 no ArrayBuffer")
+        j = _js_expect(text, _js_skip_ws(text, ma), "(")
+        buflen, j = _js_f997_parse_int(text, _js_skip_ws(text, j),
+                                       "F1053")
+        if buflen < 0:
+            raise _JSExprFail("F1053 negative length")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_skip_ws(text, j)
+        # form A: `new Uint8Array(B).set([codes]);` ...
+        # form D: `var|let|const DV=new DataView(B);` ...
+        mn = _js_match_kw(text, j, "new")
+        if mn is not None:
+            # --- form A: ArrayBuffer + inline set ---
+            m = _js_match_kw(text, _js_skip_ws(text, mn), "Uint8Array")
+            if m is None:
+                raise _JSExprFail("F1053 no Uint8Array")
+            j = _js_expect(text, _js_skip_ws(text, m), "(")
+            j = _js_skip_ws(text, j)
+            iname, j = _js_parse_ident(text, j)
+            if iname != d1name:
+                raise _JSExprFail("F1053 buffer mismatch")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "set")
+            if m is None:
+                raise _JSExprFail("F1053 no set")
+            j = _js_expect(text, _js_skip_ws(text, m), "(")
+            codes, j = _js_f1028f1030_parse_code_array(
+                text, _js_skip_ws(text, j), "F1053")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            if len(codes) > buflen:
+                raise _JSExprFail("F1053 staged past view")
+            _, acc, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] not in "'\"":
+                raise _JSExprFail("F1053 accum not a literal")
+            init, j = _js_parse_string(text, j)
+            if init != "":
+                raise _JSExprFail("F1053 accum not empty")
+            _js_f1028f1029_check_fresh_name(acc, bound, shadow, "F1053")
+            bound.add(acc)
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            _, vname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            _js_f1028f1029_check_fresh_name(vname, bound, shadow,
+                                            "F1053")
+            bound.add(vname)
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, j, "new")
+            if m is None:
+                raise _JSExprFail("F1053 no new view")
+            m = _js_match_kw(text, _js_skip_ws(text, m), "Uint8Array")
+            if m is None:
+                raise _JSExprFail("F1053 no Uint8Array")
+            j = _js_expect(text, _js_skip_ws(text, m), "(")
+            j = _js_skip_ws(text, j)
+            iname, j = _js_parse_ident(text, j)
+            if iname != d1name:
+                raise _JSExprFail("F1053 buffer mismatch")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            kval, j = _js_f1053_parse_view_loop(
+                text, _js_skip_ws(text, j), acc, ("view", vname),
+                bound, shadow, "F1053")
+            if kval > buflen:
+                raise _JSExprFail("F1053 loop past view")
+            _js_f1053_parse_result(text, _js_skip_ws(text, j), acc,
+                                   "F1053")
+            staged = [c % 256 for c in codes[:kval]]
+            staged += [0] * (kval - len(staged))
+            return _js_f1053_u8_chr(staged, "F1053")
+        # --- form D: DataView write loop + read loop ---
+        _, dvname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(dvname, bound, shadow, "F1053")
+        bound.add(dvname)
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "new")
+        if m is None:
+            raise _JSExprFail("F1053 no new dataview")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "DataView")
+        if m is None:
+            raise _JSExprFail("F1053 no DataView")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        iname, j = _js_parse_ident(text, j)
+        if iname != d1name:
+            raise _JSExprFail("F1053 buffer mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, csname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(csname, bound, shadow, "F1053")
+        bound.add(csname)
+        codes, j = _js_f1028f1030_parse_code_array(
+            text, _js_skip_ws(text, j), "F1053")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        if len(codes) > buflen:
+            raise _JSExprFail("F1053 staged past view")
+        kw, j = _js_f1053_parse_dv_write(text, _js_skip_ws(text, j),
+                                         dvname, csname, bound, shadow,
+                                         "F1053")
+        if kw > buflen or kw > len(codes):
+            raise _JSExprFail("F1053 write past staged")
+        _, acc, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F1053 accum not a literal")
+        init, j = _js_parse_string(text, j)
+        if init != "":
+            raise _JSExprFail("F1053 accum not empty")
+        _js_f1028f1029_check_fresh_name(acc, bound, shadow, "F1053")
+        bound.add(acc)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        kr, j = _js_f1053_parse_view_loop(
+            text, _js_skip_ws(text, j), acc, ("dataview", dvname),
+            bound, shadow, "F1053")
+        if kr != kw:
+            raise _JSExprFail("F1053 read/write bound mismatch")
+        _js_f1053_parse_result(text, _js_skip_ws(text, j), acc,
+                               "F1053")
+        return _js_f1053_u8_chr(codes[:kr], "F1053")
+    except _JSExprFail:
+        return None
+
+
+_F1054_NAMED_SRC = "k1=(?<x>\\S+)\\sk2=(?<y>\\S+)"
+_F1054_NUMBERED_SRC = "k1=(\\S+)\\sk2=(\\S+)"
+
+
+def _js_f1054_parse_regex(text, j, what):
+    """Parse `/src/flags` at text[j] (F1054). Returns (src, next_index).
+
+    Flags must be empty (fail closed -- /g drops .groups, /i changes
+    matching). Never evals.
+    """
+    n = len(text)
+    i = j + 1
+    in_class = False
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif c == "/" and not in_class:
+            break
+        elif c == "\n":
+            raise _JSExprFail(what + " unterminated regex")
+        i += 1
+    if i >= n:
+        raise _JSExprFail(what + " unterminated regex")
+    src = text[j + 1:i]
+    i += 1
+    f0 = i
+    while i < n and (text[i].isalnum() or text[i] in "_$"):
+        i += 1
+    if i != f0:
+        raise _JSExprFail(what + " regex flags not modeled")
+    return src, i
+
+
+def _js_f1054_match_groups(subject, named, what):
+    """Apply the F1054 fixed regex skeleton to *subject* (F1054).
+
+    The subject must avoid every char on which Python re and the
+    engine diverge: non-ASCII (the \\s/\\S classes differ) and
+    \\x1c-\\x1f (Python's str.isspace quirk treats them as
+    whitespace; the engine does not -- node-verified). Fail closed
+    otherwise. Returns (first, second) group values; a non-match
+    fails closed (the engine yields null and `.groups` throws).
+    Never evals.
+    """
+    if any(ord(c) >= 0x80 or 0x1C <= ord(c) <= 0x1F
+           for c in subject):
+        raise _JSExprFail(what + " subject char class diverges")
+    if named:
+        m = re.search(r"k1=(?P<x>\S+)\sk2=(?P<y>\S+)", subject)
+        if m is None:
+            raise _JSExprFail(what + " no match")
+        return m.group("x"), m.group("y")
+    m = re.search(r"k1=(\S+)\sk2=(\S+)", subject)
+    if m is None:
+        raise _JSExprFail(what + " no match")
+    return m.group(1), m.group(2)
+
+
+def _js_f1054_parse_reader(text, j, mname, named, g1, g2, what):
+    """Parse the F1054 RESULT reader at text[j] (F1054).
+
+    `M.groups.x+M.groups.y` (either order; `M.groups["x"]` twin) or
+    `M[1]+M[2]` (either order) for the numbered skeleton. Returns the
+    decoded string. Never evals.
+    """
+    n = len(text)
+    vals = []
+    while True:
+        j = _js_skip_ws(text, j)
+        iname, j = _js_parse_ident(text, j)
+        if iname != mname:
+            raise _JSExprFail(what + " reader obj mismatch")
+        j = _js_skip_ws(text, j)
+        if named:
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "groups")
+            if m is None:
+                raise _JSExprFail(what + " no groups")
+            j = _js_skip_ws(text, m)
+            if j < n and text[j] == ".":
+                gname, j = _js_parse_ident(text,
+                                           _js_skip_ws(text, j + 1))
+            elif j < n and text[j] == "[":
+                j = _js_skip_ws(text, j + 1)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail(what + " group key not literal")
+                gname, j = _js_parse_string(text, j)
+                j = _js_expect(text, _js_skip_ws(text, j), "]")
+            else:
+                raise _JSExprFail(what + " group access not modeled")
+            if gname == "x":
+                vals.append(g1)
+            elif gname == "y":
+                vals.append(g2)
+            else:
+                raise _JSExprFail(what + " unknown group")
+        else:
+            j = _js_expect(text, j, "[")
+            idx, j = _js_f997_parse_int(text, _js_skip_ws(text, j),
+                                        what)
+            j = _js_expect(text, _js_skip_ws(text, j), "]")
+            if idx == 1:
+                vals.append(g1)
+            elif idx == 2:
+                vals.append(g2)
+            else:
+                raise _JSExprFail(what + " bad group index")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "+":
+            j += 1
+            continue
+        break
+    if not vals:
+        raise _JSExprFail(what + " empty reader")
+    _js_f96x_expect_semi_end(text, j)
+    val = "".join(vals)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " result too long")
+    return val
+
+
+def _js_f1054_stmt_decode(text):
+    """Decode F1054 RegExp match-group fragment assembly (whole-text hook).
+
+    `var|let|const M="SUBJECT".match(/k1=(?<x>\\S+)\\sk2=(?<y>\\S+)/);`
+    `var|let|const RESULT=M.groups.x+M.groups.y;` (either group order;
+    the `M.groups["x"]` twin) and the numbered twin
+    `/k1=(\\S+)\\sk2=(\\S+)/` with `RESULT=M[1]+M[2];` (either index
+    order).
+
+    Node-exact (v24.20.0) for the modeled skeleton: the match is
+    unanchored (first match wins); a non-match is the engine's null
+    (fail closed); any regex flags fail closed (/g drops .groups, /i
+    changes matching). The subject must avoid non-ASCII and
+    \\x1c-\\x1f (fail closed otherwise -- Python re and the engine
+    diverge exactly there). Disjoint from F958 (its restricted
+    pattern grammar rejects \\S/\\s -- the filed shapes BREAK on the
+    open tree) and from F867 (IIFE-wrapped single-group form);
+    distinct from F1056's replace-capture production. Returns the
+    decoded string, or None. Never evals.
+    """
+    if ".match(/" not in text:
+        return None
+    shadow = {"String"}
+    bound = set()
+    try:
+        j = _js_skip_ws(text, 0)
+        _, mname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(mname, bound, shadow, "F1054")
+        bound.add(mname)
+        j = _js_skip_ws(text, j)
+        n = len(text)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F1054 subject not a literal")
+        subject, j = _js_parse_string(text, j)
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "match")
+        if m is None:
+            raise _JSExprFail("F1054 no match")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "/":
+            raise _JSExprFail("F1054 regex not a literal")
+        src, j = _js_f1054_parse_regex(text, j, "F1054")
+        if src == _F1054_NAMED_SRC:
+            named = True
+        elif src == _F1054_NUMBERED_SRC:
+            named = False
+        else:
+            raise _JSExprFail("F1054 regex skeleton not modeled")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        g1, g2 = _js_f1054_match_groups(subject, named, "F1054")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1054 not RESULT")
+        return _js_f1054_parse_reader(text, _js_skip_ws(text, j), mname,
+                                      named, g1, g2, "F1054")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1055_parse_reviver(text, j, what):
+    """Parse the F1055 identity reviver at text[j].
+
+    `(k,v)=>v` and `function(k,v){return v;}` -- the reviver must be
+    the identity (a single-param reviver receives the key, not the
+    value, so `(v)=>v` is NOT the identity and fails closed);
+    anything else transforms the parsed value and fails closed.
+    Returns next_index. Never evals.
+    """
+    n = len(text)
+    if _js_match_kw(text, j, "function") is not None and (
+            j + 8 >= n or not (text[j + 8].isalnum()
+                               or text[j + 8] in "_$")):
+        j = _js_skip_ws(text, j + 8)
+        j = _js_expect(text, j, "(")
+        p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        # Exactly two params: a single-param reviver receives the key,
+        # not the value (node), so `(v)=>v` is NOT the identity.
+        if j >= n or text[j] != ",":
+            raise _JSExprFail(what + " reviver arity not modeled")
+        p2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " reviver no return")
+        r, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if r != p2:
+            raise _JSExprFail(what + " reviver not identity")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        return j
+    if j < n and text[j] == "(":
+        j = _js_skip_ws(text, j + 1)
+        p1, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        # Exactly two params: a single-param reviver receives the key,
+        # not the value (node), so `(v)=>v` is NOT the identity.
+        if j >= n or text[j] != ",":
+            raise _JSExprFail(what + " reviver arity not modeled")
+        p2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " reviver no arrow")
+        j = _js_skip_ws(text, j + 2)
+        r, j = _js_parse_ident(text, j)
+        if r != p2:
+            raise _JSExprFail(what + " reviver not identity")
+        return j
+    raise _JSExprFail(what + " reviver not modeled")
+
+
+def _js_f1055_stmt_decode(text):
+    """Decode F1055 JSON.parse reviver-staged fragment reads (whole-text hook).
+
+    `var|let|const O=JSON.parse('{"a":"f1","b":"f2"}',(k,v)=>v);`
+    `var|let|const RESULT=O.a+O.b;` -- the identity reviver leaves the
+    parsed object unchanged (engine), so the staged fragments read
+    back node-exactly. Also the `function(k,v){return v;}` reviver
+    twin and the `O["a"]` bracket-read twin.
+
+    Node-exact (v24.20.0) for the modeled subset: the JSON text must
+    parse to a non-empty object of string values (anything else fails
+    closed); the reviver must be the identity (any transforming
+    reviver fails closed); every read key must exist (the engine's
+    undefined fails closed). Disjoint from F630 (single-argument
+    `JSON.parse('LIT')` enumeration source -- this requires the
+    two-argument reviver form; the filed shapes BREAK on the open
+    tree) and from F1035 (Object.assign staging). Returns the decoded
+    string, or None. Never evals.
+    """
+    if "JSON.parse(" not in text:
+        return None
+    shadow = {"String", "JSON"}
+    bound = set()
+    try:
+        j = _js_skip_ws(text, 0)
+        _, oname, j = _js_f96x_decl(text, j)
+        _js_f1028f1029_check_fresh_name(oname, bound, shadow, "F1055")
+        bound.add(oname)
+        j = _js_skip_ws(text, j)
+        n = len(text)
+        m = _js_match_kw(text, j, "JSON")
+        if m is None:
+            raise _JSExprFail("F1055 no JSON")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "parse")
+        if m is None:
+            raise _JSExprFail("F1055 no parse")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail("F1055 json not a literal")
+        jsontxt, j = _js_parse_string(text, j)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_f1055_parse_reviver(text, _js_skip_ws(text, j), "F1055")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        try:
+            obj = json.loads(jsontxt)
+        except Exception:
+            raise _JSExprFail("F1055 bad json")
+        if (not isinstance(obj, dict) or not obj
+                or any(not isinstance(k, str) or not isinstance(v, str)
+                       for k, v in obj.items())):
+            raise _JSExprFail("F1055 json not str dict")
+        if any(any(ord(c) >= 0x80 for c in k) for k in obj):
+            raise _JSExprFail("F1055 non-ascii key")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1055 not RESULT")
+        parts = []
+        while True:
+            j = _js_skip_ws(text, j)
+            iname, j = _js_parse_ident(text, j)
+            if iname != oname:
+                raise _JSExprFail("F1055 reader obj mismatch")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ".":
+                key, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+            elif j < n and text[j] == "[":
+                j = _js_skip_ws(text, j + 1)
+                if j >= n or text[j] not in "'\"":
+                    raise _JSExprFail("F1055 reader key not literal")
+                key, j = _js_parse_string(text, j)
+                j = _js_expect(text, _js_skip_ws(text, j), "]")
+            else:
+                raise _JSExprFail("F1055 reader not modeled")
+            if key not in obj:
+                raise _JSExprFail("F1055 reader key missing")
+            parts.append(obj[key])
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "+":
+                j += 1
+                continue
+            break
+        _js_f96x_expect_semi_end(text, j)
+        val = "".join(parts)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1055 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1052/F1053/F1054/F1055 --------------------------------------------
+
+
 
 # -- F1017/F1018/F1019/F1020 (wave-394 lane 4) ----------------------------
 
@@ -122850,6 +123887,20 @@ def _decode_layer(text):
     # order (F441) is preserved. Additive, in F-number order.
     for _stmtdec in (_js_f1044_stmt_decode, _js_f1045_stmt_decode,
                      _js_f1046_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1052/F1053/F1054/F1055: narrow whole-text statement-sequence decoders
+    # (wave-397 lane 2) -- Headers value reads, memory-view staged code
+    # reads, RegExp match-group assembly, JSON.parse reviver-staged reads.
+    # Each returns the decoded string or None; all filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1052_stmt_decode, _js_f1053_stmt_decode,
+                     _js_f1054_stmt_decode, _js_f1055_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
