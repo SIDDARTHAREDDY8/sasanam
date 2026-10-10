@@ -105,13 +105,6 @@ def _open_pin_filtered(prefix, num, keep):
     return _fn
 
 
-# Round-67 pins (decoder seam) -- CLOSED on the merged tree (wave-400 lanes 1-3).
-# (F1086/F1087/F1088 are attack round 67's renumbered F1080/F1081/F1082;
-# F1089 is lane 1's renumbered F1080.)
-for _n in (1083, 1084, 1086, 1087, 1088, 1089):
-    _closed_pin("w399", _n)
-
-
 def _closed_pin(prefix, num):
     """All red-first shapes for a CLOSED finding must now BLOCK."""
     @_t
@@ -129,6 +122,12 @@ def _closed_pin(prefix, num):
 # Carried round-66 pins (F1074-F1077 decoder seam) -- CLOSED on the merged tree.
 for _n in (1074, 1075, 1076, 1077):
     _closed_pin("w398", _n)
+
+# Round-67 pins (decoder seam) -- CLOSED on the merged tree (wave-400 lanes 1-3).
+# (F1086/F1087/F1088 are attack round 67's renumbered F1080/F1081/F1082;
+# F1089 is lane 1's renumbered F1080.)
+for _n in (1083, 1084, 1086, 1087, 1088, 1089):
+    _closed_pin("w399", _n)
 
 
 @_t

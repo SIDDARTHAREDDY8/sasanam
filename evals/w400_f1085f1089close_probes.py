@@ -281,8 +281,9 @@ def test_f1085_honest_text():
 
 @_t
 def test_sibling_decoder_pins():
-    """F1069 and F1075 still block; still-open F1083/F1084/F1086/
-    F1087/F1088 still miss."""
+    """F1069 and F1075 still block; F1083/F1084/F1086/F1087/F1088 are
+    CLOSED on the merged tree (wave-400 lanes 1+2) -- their shapes now
+    block."""
     c = _codes(SECRET_S)
     blocked = [
         ("f1069-weakref", "var r=new WeakRef({c:%s});var RESULT=String.fromCharCode(...r.deref().c);" % c),
@@ -290,18 +291,15 @@ def test_sibling_decoder_pins():
         ("f1075-loop", "var O={v:%s};var S='';for(var i=0;i<O.v.length;i++){S+=String.fromCharCode(O.v[i]);}var RESULT=S;" % c),
     ]
     bad = [n for n, p in blocked if not _blocked(p)]
-    still_open = []
-    for num in (1083, 1084, 1087, 1088):
+    now_closed = []
+    for num in (1083, 1084, 1086, 1087, 1088):
         for name, payload in _redfirst_shapes("w399", num):
-            still_open.append((name, payload))
-    for name, payload in _redfirst_shapes("w399", 1086):
-        if "dowhile" in name or "braceless" in name:
-            still_open.append((name, payload))
-    bad += [n for n, p in still_open if not _misses(p)]
+            now_closed.append((name, payload))
+    bad += [n for n, p in now_closed if not _blocked(p)]
     ok = not bad
     print(("HELD " if ok else "BREAK") +
-          " test_sibling_decoder_pins (%d blocked, %d open%s)" %
-          (len(blocked), len(still_open), "" if ok else ": " + ",".join(bad)))
+          " test_sibling_decoder_pins (%d blocked, %d now-closed%s)" %
+          (len(blocked), len(now_closed), "" if ok else ": " + ",".join(bad)))
     return ok
 
 
@@ -377,19 +375,19 @@ def test_green_w399():
         footer_held = True
         for line in r.stdout.split("\n"):
             if line.startswith("BREAK "):
+                real.append(line.split()[1])
+            if line.startswith("HELD "):
                 nm = line.split()[1]
-                if nm in ("test_open_w399_f1089",
-                          "test_open_w399_f1085_provenance"):
+                if nm in ("test_closed_w399_f1089",
+                          "test_closed_w399_f1085_provenance"):
                     flips.append(nm)
-                else:
-                    real.append(nm)
             if line.startswith("HELD: test_b0_footer_state"):
                 footer_held = True
             if line.startswith("BREAK: test_b0_footer_state"):
                 footer_held = False
         tally = (r.stdout.strip().split("\n") or ["?"])[-1] if r.stdout else "?"
-        # The lane tree preserves the merge footer line verbatim, so the
-        # child's footer pin stays HELD; only the 2 now-closed pins flip.
+        # The w399 battery was reconciled to merged-tree truth: the 2
+        # now-closed pins are test_closed_* and HELD; nothing may BREAK.
         ok = (not real and len(flips) == 2 and footer_held)
         print(("HELD " if ok else "BREAK") +
               " test_green_w399 (real=%s flips=%d/2 footer_held=%s tally=%s)" %

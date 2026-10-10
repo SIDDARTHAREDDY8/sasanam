@@ -345,14 +345,16 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[0] in ("BREAK", "HELD"):
                 (real if parts[0] == "BREAK" else held).append(parts[1])
-        expect_break = {"test_open_w399_f1086", "test_open_w399_f1087",
-                        "test_open_w399_f1088"}
-        missing_break = expect_break - set(real)
-        extra_break = set(real) - expect_break
-        ok = not missing_break and not extra_break
+        # On the merged tree F1086/F1087/F1088 are closed: the w399 battery
+        # was reconciled (test_closed_w399_f1086/f1087/f1088 now HELD);
+        # nothing may BREAK.
+        expect_held = {"test_closed_w399_f1086", "test_closed_w399_f1087",
+                       "test_closed_w399_f1088"}
+        missing_held = expect_held - set(held)
+        ok = not real and not missing_held
         return (ok,
-                "green(w399_attack): %d BREAK, missing=%s extra=%s"
-                % (len(real), sorted(missing_break), sorted(extra_break)))
+                "green(w399_attack): %d BREAK, missing_held=%s"
+                % (len(real), sorted(missing_held)))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
 

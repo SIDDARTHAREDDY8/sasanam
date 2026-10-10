@@ -48,6 +48,7 @@ RECOMPILE_PIN = 28
 N_STMTDEC_LOOPS_PIN = 27  # wave-400 merge: 24 + 3 lane loops (real code-count change)
 
 from gov import dlp  # noqa: E402
+from gov.instruction_provenance import instruction_shaped  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TESTS = []
@@ -312,21 +313,20 @@ def test_p4_sibling_f1074():
 
 @_t
 def test_p4_still_open():
-    # F1085-F1089 must still MISS -- no incidental closure. F1086's 2
-    # braced pre-test while twins are already blocked by F1074's hook
-    # (documented partial incidental closure in w399_attack_probes.py),
-    # so pin only its 6 still-open shapes like the attack battery does.
+    # On the merged tree F1085-F1089 are CLOSED by wave-400 lanes 2+3 --
+    # their red-first shapes must now BLOCK (lane 1 closed nothing
+    # incidentally; the closures are each lane's own).
     bad = []
-    for num in (1085, 1087, 1088, 1089):
+    for num in (1086, 1087, 1088, 1089):
         for sname, shape in _redfirst_shapes(num, prefix="w399"):
-            if _blocked(shape):
+            if not _blocked(shape):
                 bad.append("f%d/%s" % (num, sname))
-    for sname, shape in _redfirst_shapes(1086, prefix="w399"):
-        if "dowhile" not in sname and "braceless" not in sname:
-            continue
-        if _blocked(shape):
-            bad.append("f1086/%s" % sname)
-    return (not bad, "still-open miss, incidental=%d" % len(bad))
+    # F1085 is a provenance-seam closure: its carriers must be flagged by
+    # instruction_shaped, not find_credential.
+    for sname, shape in _redfirst_shapes(1085, prefix="w399"):
+        if not instruction_shaped(shape):
+            bad.append("f1085/%s" % sname)
+    return (not bad, "f1085-f1089 closed, still-missing=%d" % len(bad))
 
 
 # ---------------- p5: honest text ----------------
@@ -390,15 +390,14 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[0] in ("BREAK", "HELD"):
                 (real if parts[0] == "BREAK" else held).append(parts[1])
-        # On this tree F1083/F1084 are closed: exactly their open pins
-        # flip; everything else must hold.
-        expect_break = {"test_open_w399_f1083", "test_open_w399_f1084"}
-        missing_break = expect_break - set(real)
-        extra_break = set(real) - expect_break
-        ok = not missing_break and not extra_break
+        # On the merged tree F1083/F1084 are closed: the w399 battery was
+        # reconciled (test_closed_w399_f1083/f1084 now HELD); nothing may BREAK.
+        expect_held = {"test_closed_w399_f1083", "test_closed_w399_f1084"}
+        missing_held = expect_held - set(held)
+        ok = not real and not missing_held
         return (ok,
-                "green(w399_attack): %d BREAK, missing=%s extra=%s"
-                % (len(real), sorted(missing_break), sorted(extra_break)))
+                "green(w399_attack): %d BREAK, missing_held=%s"
+                % (len(real), sorted(missing_held)))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
 
