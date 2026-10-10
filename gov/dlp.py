@@ -132472,6 +132472,454 @@ def _js_f1110_stmt_decode(text):
 
 # -- end F1110 -------------------------------------------------------------
 
+# -- F1111/F1112/F1114/F1120 (wave-403 lane 1) ---------------------------------
+
+
+def _js_f1111_parse_flat_array(text, j, state):
+    """Parse `[INT,...]` or `[[INT,...],[INT,...],...]` at text[j] (F1111).
+
+    The flat production is the identity code list; the nested
+    production concatenates the chunks (what `.flat()` does at depth
+    >= 1). Deeper nesting (`[[[...]]]`) or a trailing comma on the
+    outer array fails closed (documented narrowness): a miss, never a
+    mis-decode. Returns (codes, next_index). Never evals.
+    """
+    n = len(text)
+    k = _js_skip_ws(text, j)
+    k2 = _js_skip_ws(text, k + 1)
+    if k2 < n and text[k] == "[" and text[k2] == "[":
+        j = _js_expect(text, k, "[")
+        codes = []
+        while True:
+            chunk, j = _js_f1046_parse_int_array(text,
+                                                _js_skip_ws(text, j),
+                                                state)
+            codes.extend(chunk)
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                if j < n and text[j] == "[":
+                    continue
+                raise _JSExprFail("F1111 nested trailing comma")
+            if j < n and text[j] == "]":
+                return codes, j + 1
+            raise _JSExprFail("F1111 nested not closed")
+    return _js_f1046_parse_int_array(text, k, state)
+
+
+def _js_f1111_stmt_decode(text):
+    """Decode F1111 Array.prototype.flat staged reads (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S=String.fromCharCode(...C.flat([depth]));`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+    -- OR --
+    `var|let|const C=[[INT,...],[INT,...],...];`
+    (same tail; the nested chunks are concatenated by `.flat()`).
+
+    Node-exact (v24.20.0): `.flat()` with no argument (depth 1) or an
+    explicit depth >= 1 flattens one nesting level; a flat array is the
+    identity. Depth 0 or negative leaves the nesting intact (node) --
+    those fail closed. Spread passes each code to fromCharCode with
+    ToUint16 masking (F967 discipline via _js_f996f997_fcc_chr).
+    Disjoint from F1030 (which requires the array literal inline after
+    `...` -- this requires a bound identifier) and F1090 (`.flatMap(`
+    anchor) by grammar, verified both directions. Returns the decoded
+    string, or None. Never evals.
+    """
+    if ".flat(" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname in ("RESULT", "String", "Array"):
+            raise _JSExprFail("F1111 bad arr name")
+        codes, j = _js_f1111_parse_flat_array(text, _js_skip_ws(text, j),
+                                              state)
+        if not codes:
+            raise _JSExprFail("F1111 empty array")
+        j = _js_expect(text, j, ";")
+        bound = {cname, "RESULT", "String", "Array"}
+        dstr = _js_f996f997_fcc_chr(codes, "F1111")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1111 bad acc name")
+        bound.add(sname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1111 not String")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1111 not fromCharCode")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail("F1111 not spread")
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        if c2 != cname:
+            raise _JSExprFail("F1111 spread base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "flat")
+        if m is None:
+            raise _JSExprFail("F1111 not flat")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] != ")":
+            depth, j = _js_f997_parse_int(text, j, "F1111")
+            if depth < 1:
+                raise _JSExprFail("F1111 bad depth")
+            j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1111 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname, state,
+                                           "F1111")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1112_stmt_decode(text):
+    """Decode F1112 TypedArray staged reads (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=Uint16Array.from(C);`   (or `Uint8Array.from(C)`)
+    `var|let|const S=String.fromCharCode(...T);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `Uint16Array.from(C)` boxes each int
+    (identity over the filed code range); `Uint8Array.from(C)` applies
+    ToUint8 (mod 256 -- node-verified: 300->44, -1->255). Spread
+    passes each element to fromCharCode with ToUint16 masking (F967
+    discipline via _js_f996f997_fcc_chr). Disjoint from the
+    `...new Uint16Array(C)` twin (which blocks coded): that production
+    requires the `new` operator, this requires `.from(` -- verified
+    both directions. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "Uint16Array.from(" not in text and "Uint8Array.from(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname in ("RESULT", "String", "Uint16Array", "Uint8Array"):
+            raise _JSExprFail("F1112 bad arr name")
+        codes, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                             state)
+        if not codes:
+            raise _JSExprFail("F1112 empty array")
+        j = _js_expect(text, j, ";")
+        bound = {cname, "RESULT", "String", "Uint16Array", "Uint8Array"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if tname in bound:
+            raise _JSExprFail("F1112 bad ta name")
+        bound.add(tname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Uint16Array")
+        is_u8 = False
+        if m is None:
+            m = _js_match_kw(text, _js_skip_ws(text, j), "Uint8Array")
+            if m is None:
+                raise _JSExprFail("F1112 not a TypedArray")
+            is_u8 = True
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "from")
+        if m is None:
+            raise _JSExprFail("F1112 not .from(")
+        j = _js_expect(text, m, "(")
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if c2 != cname:
+            raise _JSExprFail("F1112 from arg mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        if is_u8:
+            codes = [c % 256 for c in codes]
+        dstr = _js_f996f997_fcc_chr(codes, "F1112")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1112 bad acc name")
+        bound.add(sname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1112 not String")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, j, "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1112 not fromCharCode")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail("F1112 not spread")
+        t2, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        if t2 != tname:
+            raise _JSExprFail("F1112 spread base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1112 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname, state,
+                                           "F1112")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1114_parse_freeze_array(text, j, state, what):
+    """Parse `Object.freeze([INT,...])` at text[j] (F1114).
+
+    Returns (codes, next_index). Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "Object")
+    if m is None:
+        raise _JSExprFail(what + " not Object")
+    j = _js_expect(text, _js_skip_ws(text, m), ".")
+    m = _js_match_kw(text, j, "freeze")
+    if m is None:
+        raise _JSExprFail(what + " not freeze")
+    j = _js_expect(text, m, "(")
+    codes, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                         state)
+    if not codes:
+        raise _JSExprFail(what + " empty array")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    return codes, j
+
+
+def _js_f1114_parse_fcc_spread(text, j, cname, what):
+    """Parse `String.fromCharCode(...C);` at text[j] (F1114).
+
+    The spread base must be the identifier cname. Returns next_index.
+    Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "String")
+    if m is None:
+        raise _JSExprFail(what + " not String")
+    j = _js_expect(text, _js_skip_ws(text, m), ".")
+    m = _js_match_kw(text, j, "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("...", j):
+        raise _JSExprFail(what + " not spread")
+    c2, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+    if c2 != cname:
+        raise _JSExprFail(what + " spread base mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    return j
+
+
+def _js_f1114_stmt_decode(text):
+    """Decode F1114 Object.freeze-wrapped staged reads (whole-text, _decode_layer hook).
+
+    `var|let|const C=Object.freeze([INT,...]);`
+    `var|let|const S=String.fromCharCode(...C);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+    -- OR --
+    `var|let|const S=String.fromCharCode(...Object.freeze([INT,...]));`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): Object.freeze returns its (now
+    non-extensible) argument; the int array is unchanged, so spread
+    passes each code to fromCharCode with ToUint16 masking (F967
+    discipline via _js_f996f997_fcc_chr). Disjoint from the unfrozen
+    twin (which blocks coded): that production binds a bare array
+    literal, this requires the `Object.freeze(` wrapper -- verified
+    both directions. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "Object.freeze(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, dname, j = _js_f96x_decl(text, j)
+        if dname in ("RESULT", "String", "Object"):
+            raise _JSExprFail("F1114 bad name")
+        bound = {dname, "RESULT", "String", "Object"}
+        if _js_match_kw(text, _js_skip_ws(text, j), "Object") is not None:
+            # Production (a): `C=Object.freeze([INT,...]);`
+            cname = dname
+            codes, j = _js_f1114_parse_freeze_array(text, j, state,
+                                                    "F1114")
+            j = _js_expect(text, j, ";")
+            dstr = _js_f996f997_fcc_chr(codes, "F1114")
+            _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            if sname in bound:
+                raise _JSExprFail("F1114 bad acc name")
+            bound.add(sname)
+            j = _js_f1114_parse_fcc_spread(text, j, cname, "F1114")
+        else:
+            # Production (b):
+            # `S=String.fromCharCode(...Object.freeze([INT,...]));`
+            sname = dname
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, j, "String")
+            if m is None:
+                raise _JSExprFail("F1114 not String")
+            j = _js_expect(text, _js_skip_ws(text, m), ".")
+            m = _js_match_kw(text, j, "fromCharCode")
+            if m is None:
+                raise _JSExprFail("F1114 not fromCharCode")
+            j = _js_expect(text, m, "(")
+            j = _js_skip_ws(text, j)
+            if not text.startswith("...", j):
+                raise _JSExprFail("F1114 not spread")
+            codes, j = _js_f1114_parse_freeze_array(
+                text, _js_skip_ws(text, j + 3), state, "F1114")
+            dstr = _js_f996f997_fcc_chr(codes, "F1114")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1114 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname, state,
+                                           "F1114")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1120_stmt_decode(text):
+    """Decode F1120 array-copy staged spread reads (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    then one of:
+      (a) `var|let|const S=String.fromCharCode(...C.slice());`
+      (b) `var|let|const D=[].concat(C);`
+          `var|let|const S=String.fromCharCode(...D);`
+      (c) `var|let|const S=String.fromCharCode(...Array.of(...C));`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `.slice()`, `[].concat(C)`, and
+    `Array.of(...C)` each produce a shallow copy of the flat int
+    array (identity on the code list); spread passes each code to
+    fromCharCode with ToUint16 masking (F967 discipline via
+    _js_f996f997_fcc_chr). Disjoint from the `...[...C]` literal-copy
+    twin (which blocks coded): that production spreads an array
+    literal, these spread the three copy-call forms -- verified both
+    directions. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if (".slice()" not in text and "[].concat(" not in text
+            and "Array.of(" not in text):
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname in ("RESULT", "String", "Array"):
+            raise _JSExprFail("F1120 bad arr name")
+        codes, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                             state)
+        if not codes:
+            raise _JSExprFail("F1120 empty array")
+        j = _js_expect(text, j, ";")
+        bound = {cname, "RESULT", "String", "Array"}
+        dstr = _js_f996f997_fcc_chr(codes, "F1120")
+        # Select the copy production by peeking at the next statement.
+        _, dname, jj = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if dname in bound:
+            raise _JSExprFail("F1120 bad name")
+        jj = _js_skip_ws(text, jj)
+        if _js_match_kw(text, jj, "String") is not None:
+            # Productions (a)/(c): `S=String.fromCharCode(...<copy>);`
+            sname = dname
+            bound.add(sname)
+            j = _js_skip_ws(text, jj)
+            m = _js_match_kw(text, j, "String")
+            if m is None:
+                raise _JSExprFail("F1120 not String")
+            j = _js_expect(text, _js_skip_ws(text, m), ".")
+            m = _js_match_kw(text, j, "fromCharCode")
+            if m is None:
+                raise _JSExprFail("F1120 not fromCharCode")
+            j = _js_expect(text, m, "(")
+            j = _js_skip_ws(text, j)
+            if not text.startswith("...", j):
+                raise _JSExprFail("F1120 not spread")
+            j = _js_skip_ws(text, j + 3)
+            if _js_match_kw(text, j, "Array") is not None:
+                # Production (c): `Array.of(...C)`
+                m = _js_match_kw(text, j, "Array")
+                j = _js_expect(text, _js_skip_ws(text, m), ".")
+                m = _js_match_kw(text, j, "of")
+                if m is None:
+                    raise _JSExprFail("F1120 not Array.of")
+                j = _js_expect(text, m, "(")
+                j = _js_skip_ws(text, j)
+                if not text.startswith("...", j):
+                    raise _JSExprFail("F1120 not inner spread")
+                c2, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+                if c2 != cname:
+                    raise _JSExprFail("F1120 of arg mismatch")
+                j = _js_expect(text, _js_skip_ws(text, j), ")")
+            else:
+                # Production (a): `C.slice()`
+                c2, j = _js_parse_ident(text, j)
+                if c2 != cname:
+                    raise _JSExprFail("F1120 slice base mismatch")
+                j = _js_expect(text, j, ".")
+                m = _js_match_kw(text, j, "slice")
+                if m is None:
+                    raise _JSExprFail("F1120 not slice")
+                j = _js_expect(text, m, "(")
+                j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+        else:
+            # Production (b): `D=[].concat(C);` then
+            # `S=String.fromCharCode(...D);`
+            dcopy = dname
+            bound.add(dcopy)
+            j = _js_skip_ws(text, jj)
+            j = _js_expect(text, j, "[")
+            j = _js_expect(text, _js_skip_ws(text, j), "]")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "concat")
+            if m is None:
+                raise _JSExprFail("F1120 not concat")
+            j = _js_expect(text, m, "(")
+            c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if c2 != cname:
+                raise _JSExprFail("F1120 concat arg mismatch")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            if sname in bound:
+                raise _JSExprFail("F1120 bad acc name")
+            bound.add(sname)
+            j = _js_f1114_parse_fcc_spread(text, j, dcopy, "F1120")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1120 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname, state,
+                                           "F1120")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1111/F1112/F1114/F1120 ----------------------------------------------
+
 
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
@@ -133262,6 +133710,24 @@ def _decode_layer(text):
     # production decoded them and the pre-existing variant order
     # (F441) is preserved. Additive.
     for _stmtdec in (_js_f1110_stmt_decode,):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1111/F1112/F1114/F1120 (wave-403 lane 1): narrow whole-text
+    # statement-sequence decoders -- Array.prototype.flat staged reads,
+    # TypedArray staged reads (Uint16Array.from/Uint8Array.from),
+    # Object.freeze-wrapped staged reads, and array-copy staged spread
+    # reads (C.slice / [].concat(C) / Array.of(...C)). Each returns the
+    # decoded string or None; all filed shapes BREAK on the open tree,
+    # so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Disjoint from F1030
+    # (inline-literal .flat), F1090 (.flatMap anchor), and the
+    # `...[...C]` / `...new Uint16Array(C)` / unfrozen twins by grammar
+    # (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1111_stmt_decode, _js_f1112_stmt_decode,
+                     _js_f1114_stmt_decode, _js_f1120_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
