@@ -115405,6 +115405,531 @@ def _js_f998_stmt_decode(text):
 # -- end F996/F997/F998 ------------------------------------------------
 
 
+# -- F1017/F1018/F1019/F1020 (wave-394 lane 4) ----------------------------
+
+
+def _js_f101x_additive(text, j, state, resolve, what):
+    """Parse `OP (+ OP)*` at text[j] (F1017/F1018); returns (value, next).
+
+    Quoted literals via _js_f99x_parse_str (Annex-B octal escapes fail
+    closed); non-literal operands via resolve(j) -> (value, next).
+    Charges one F452 part per operand (bounded by
+    _JS_EXPR_MAX_PARTS) and bounds the result by _MAX_DECODE_BYTES.
+    A `+` immediately followed by another `+` is engine postfix, not
+    an additive -- fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] in "'\"":
+        v, j = _js_f99x_parse_str(text, j)
+    else:
+        v, j = resolve(j)
+    _js_f96x_charge(state, what + " too many parts")
+    while True:
+        k = _js_skip_ws(text, j)
+        if k < n and text[k] == "+" and text[k + 1:k + 2] != "+":
+            k = _js_skip_ws(text, k + 1)
+            if k < n and text[k] in "'\"":
+                w, k = _js_f99x_parse_str(text, k)
+            else:
+                w, k = resolve(k)
+            v += w
+            _js_f96x_charge(state, what + " too many parts")
+            if len(v) > _MAX_DECODE_BYTES:
+                raise _JSExprFail(what + " result too long")
+            j = k
+            continue
+        return v, j
+
+
+def _js_f101x_obj_lit(text, j, state, what):
+    """Parse `{k1:'v1', ...}` at text[j] (F1018); returns (dict, next).
+
+    Keys are identifiers or string literals (`__proto__` fails closed
+    -- an engine `{__proto__: ...}` literal installs a prototype, not
+    a data property); values are string literals via
+    _js_f99x_parse_str (Annex-B octal fails closed). Duplicate keys:
+    later wins (engine-exact). A trailing comma is engine-legal.
+    Charges one F452 part per property. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "{")
+    props = {}
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "}":
+        return props, j + 1
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            key, j = _js_f99x_parse_str(text, j)
+        elif j < n and text[j] in _JS_IDENT_START:
+            key, j = _js_f99x_ident(text, j)
+        else:
+            raise _JSExprFail(what + " obj key not modeled")
+        if key == "__proto__":
+            raise _JSExprFail(what + " __proto__ not modeled")
+        j = _js_expect(text, j, ":")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            raise _JSExprFail(what + " obj value not a literal")
+        val, j = _js_f99x_parse_str(text, j)
+        props[key] = val
+        _js_f96x_charge(state, what + " too many props")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == "}":
+                return props, j + 1  # trailing comma -- engine-legal
+            continue
+        if j < n and text[j] == "}":
+            return props, j + 1
+        raise _JSExprFail(what + " bad object literal")
+
+
+def _js_f1017_stmt_decode(text):
+    """Decode F1017 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const S=Reflect.construct(String,["l1",...]);` then
+    `var|let|const RESULT=<additive>;` -- Reflect.construct on the
+    String constructor (filed 2026-10-10 by wave-393 attack round 61;
+    F951 models the expression-level construct, but the var-bound
+    read in the RESULT additive never composes, so the filed shape
+    BREAKs). Node-exact (v24.20.0): the String constructor wraps its
+    first argument only (extras are ignored by the engine); `[]`
+    wraps "". A third newTarget argument or non-literal args fail
+    closed (narrow scope). The RESULT additive is string literals
+    plus the bound name (a String object coerces via ToPrimitive --
+    identity on the wrapped string -- in `+`). Returns the decoded
+    string, or None. Never evals.
+    """
+    if "Reflect.construct" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, sname, j = _js_f96x_decl(text, j)
+        if sname in ("String", "Reflect", "RESULT"):
+            return None
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "Reflect")
+        if m is None:
+            return None
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "construct")
+        if m is None:
+            return None
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "String")
+        if m is None:
+            return None
+        j = _js_expect(text, m, ",")
+        j = _js_expect(text, j, "[")
+        lits = []
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "]":
+            j += 1
+        else:
+            while True:
+                j = _js_skip_ws(text, j)
+                if j >= n or text[j] not in "'\"":
+                    return None
+                lit, j = _js_f99x_parse_str(text, j)
+                lits.append(lit)
+                _js_f96x_charge(state, "F1017 too many args")
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j = _js_skip_ws(text, j + 1)
+                    if j < n and text[j] == "]":
+                        j += 1  # trailing comma -- engine-legal
+                        break
+                    continue
+                if j < n and text[j] == "]":
+                    j += 1
+                    break
+                return None
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            # A third argument (newTarget) or any other continuation
+            # fails closed.
+            return None
+        j += 1
+        wrapped = lits[0] if lits else ""
+        state["ops"] += 1  # the Reflect call is obfuscation-shaped
+        j = _js_skip_ws(text, j)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+
+        def _res(p, _sname=sname, _wrapped=wrapped):
+            nm, q = _js_f99x_ident(text, p)
+            if nm != _sname:
+                raise _JSExprFail("F1017 unbound name")
+            return _wrapped, q
+
+        v, j = _js_f101x_additive(text, j, state, _res, "F1017")
+        _js_f96x_expect_semi_end(text, j)
+        return v
+    except _JSExprFail:
+        return None
+
+
+def _js_f1018_stmt_decode(text):
+    """Decode F1018 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const O={...};` then `Object.setPrototypeOf(O,{k:'v'});`
+    then `var|let|const RESULT=<additive>;` -- proto-installed data
+    reads (filed 2026-10-10 by wave-393 attack round 61; F925 models
+    setPrototypeOf only with a bound-name proto for method calls, and
+    no production resolves the installed data properties in an
+    additive). Node-exact (v24.20.0): member reads resolve over the
+    object's own properties first, then the installed prototype (one
+    level); a missing key is engine-undefined -- outside the string
+    discipline, fails closed here. `__proto__` keys fail closed
+    everywhere. Returns the decoded string, or None. Never evals.
+    """
+    if "Object.setPrototypeOf" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, oname, j = _js_f96x_decl(text, j)
+        if oname in ("Object", "RESULT"):
+            return None
+        own, j = _js_f101x_obj_lit(text, j, state, "F1018")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j += 1
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "Object")
+        if m is None:
+            return None
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "setPrototypeOf")
+        if m is None:
+            return None
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        tname, j = _js_f99x_ident(text, j)
+        if tname != oname:
+            return None
+        j = _js_expect(text, j, ",")
+        proto, j = _js_f101x_obj_lit(text, _js_skip_ws(text, j), state,
+                                    "F1018")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j += 1
+        state["ops"] += 1  # the setPrototypeOf call is obfuscation-shaped
+        j = _js_skip_ws(text, j)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+
+        def _res(p, _oname=oname, _own=own, _proto=proto, _n=n):
+            onm, q = _js_f99x_ident(text, p)
+            if onm != _oname:
+                raise _JSExprFail("F1018 unbound target")
+            q = _js_skip_ws(text, q)
+            if q < _n and text[q] == ".":
+                key, q = _js_f99x_ident(text, _js_skip_ws(text, q + 1))
+            elif q < _n and text[q] == "[":
+                q = _js_skip_ws(text, q + 1)
+                if q >= _n or text[q] not in "'\"":
+                    raise _JSExprFail("F1018 key not a literal")
+                key, q = _js_f99x_parse_str(text, q)
+                q = _js_skip_ws(text, q)
+                if q >= _n or text[q] != "]":
+                    raise _JSExprFail("F1018 member not closed")
+                q += 1
+            else:
+                raise _JSExprFail("F1018 not a member read")
+            if key == "__proto__":
+                raise _JSExprFail("F1018 __proto__ read")
+            if key in _own:
+                return _own[key], q
+            if key in _proto:
+                return _proto[key], q
+            raise _JSExprFail("F1018 member unbound")
+
+        v, j = _js_f101x_additive(text, j, state, _res, "F1018")
+        _js_f96x_expect_semi_end(text, j)
+        return v
+    except _JSExprFail:
+        return None
+
+
+def _js_f1019_stmt_decode(text):
+    """Decode F1019 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const A=["l1",...];` then one or more `A.shift();`
+    then `var|let|const RESULT=A.join("sep");` -- shift assembly
+    (filed 2026-10-10 by wave-393 attack round 61; F938 models shift
+    only inside a `while(A.length)` accumulation loop, and F434
+    models `.join` on the array literal itself -- neither reaches
+    this shape). Node-exact (v24.20.0): each shift drops the first
+    element (shifting an empty array is a no-op returning undefined);
+    join concatenates the survivors with the literal separator.
+    Only string-literal elements are modeled; anything else fails
+    closed. Returns the decoded string, or None. Never evals.
+    """
+    if ".shift()" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, aname, j = _js_f96x_decl(text, j)
+        if aname == "RESULT":
+            return None
+        j = _js_expect(text, j, "[")
+        elems = []
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "]":
+            return None  # empty array -- narrow scope
+        while True:
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] not in "'\"":
+                return None
+            lit, j = _js_f99x_parse_str(text, j)
+            elems.append(lit)
+            _js_f96x_charge(state, "F1019 too many elems")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j = _js_skip_ws(text, j + 1)
+                if j < n and text[j] == "]":
+                    j += 1  # trailing comma -- engine-legal
+                    break
+                continue
+            if j < n and text[j] == "]":
+                j += 1
+                break
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            return None
+        j += 1
+        shifts = 0
+        while True:
+            q = _js_skip_ws(text, j)
+            try:
+                nm, q = _js_f99x_ident(text, q)
+            except _JSExprFail:
+                break
+            if nm != aname:
+                break
+            q = _js_skip_ws(text, q)
+            if q >= n or text[q] != ".":
+                break
+            m = _js_match_kw(text, _js_skip_ws(text, q + 1), "shift")
+            if m is None:
+                break
+            try:
+                q = _js_expect(text, m, "(")
+                q = _js_expect(text, q, ")")
+                q = _js_expect(text, q, ";")
+            except _JSExprFail:
+                break
+            shifts += 1
+            _js_f96x_charge(state, "F1019 too many shifts")
+            j = q
+        if shifts == 0:
+            return None
+        rest = elems[shifts:]
+        j = _js_skip_ws(text, j)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        j = _js_skip_ws(text, j)
+        nm, j = _js_f99x_ident(text, j)
+        if nm != aname:
+            return None
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "join")
+        if m is None:
+            return None
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] not in "'\"":
+            return None
+        sep, j = _js_f99x_parse_str(text, j)
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the shift/join sequence is obfuscation-shaped
+        val = sep.join(rest)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1019 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1020_stmt_decode(text):
+    """Decode F1020 statement sequences (whole-text, _decode_layer hook).
+
+    `function T(S,V){return S[0]+V+S[1];}` then zero or more
+    `var|let|const NAME="lit";` bindings, then
+    `var|let|const RESULT=T`lit1${X}lit2`;` -- tagged-template
+    substitution through the modeled tag body (filed 2026-10-10 by
+    wave-393 attack round 61; F463 models tag templates only when
+    literal-only -- any `${` fails closed there). Node-exact
+    (v24.20.0): the engine calls T(strings, X) with strings the
+    cooked literal parts, so the modeled body returns lit1 + X +
+    lit2. Exactly one substitution is modeled; backslash escapes in
+    the literal parts fail closed (no cooking guesses). The
+    substitution is a string literal or a bound name. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "function" not in text or "${" not in text:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        m = _js_match_kw(text, j, "function")
+        if m is None:
+            return None
+        j = _js_skip_ws(text, m)
+        tname, j = _js_f99x_ident(text, j)
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        p1, j = _js_f99x_ident(text, j)
+        j = _js_expect(text, j, ",")
+        j = _js_skip_ws(text, j)
+        p2, j = _js_f99x_ident(text, j)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "return")
+        if m is None:
+            return None
+        j = _js_skip_ws(text, m)
+        q1, j = _js_f99x_ident(text, j)
+        if q1 != p1:
+            return None
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "0":
+            return None
+        j = _js_expect(text, j + 1, "]")
+        j = _js_expect(text, j, "+")
+        j = _js_skip_ws(text, j)
+        q2, j = _js_f99x_ident(text, j)
+        if q2 != p2:
+            return None
+        j = _js_expect(text, j, "+")
+        j = _js_skip_ws(text, j)
+        q3, j = _js_f99x_ident(text, j)
+        if q3 != p1:
+            return None
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "1":
+            return None
+        j = _js_expect(text, j + 1, "]")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ";":
+            j += 1  # optional `;` before `}` -- ASI makes it legal
+        j = _js_expect(text, j, "}")
+        env = {}
+        while True:
+            q = _js_skip_ws(text, j)
+            kw, q2 = _js_match_decl_kw(text, q)
+            if kw is None:
+                break
+            r = _js_skip_ws(text, q2)
+            try:
+                nm, _r2 = _js_f99x_ident(text, r)
+            except _JSExprFail:
+                break
+            if nm == "RESULT":
+                break
+            _, bname, q3 = _js_f96x_decl(text, q)
+            if bname in (tname, "RESULT"):
+                return None
+            q3 = _js_skip_ws(text, q3)
+            if q3 >= n or text[q3] not in "'\"":
+                return None
+            lit, q3 = _js_f99x_parse_str(text, q3)
+            q3 = _js_skip_ws(text, q3)
+            if q3 >= n or text[q3] != ";":
+                return None
+            if bname in env:
+                return None  # rebind: engine-visible, fail closed
+            env[bname] = lit
+            _js_f96x_charge(state, "F1020 too many bindings")
+            j = q3 + 1
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            return None
+        j = _js_skip_ws(text, j)
+        tn, j = _js_f99x_ident(text, j)
+        if tn != tname:
+            return None
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "`":
+            return None
+        j += 1
+        lit1 = []
+        while True:
+            if j >= n:
+                return None
+            c = text[j]
+            if c == "`":
+                return None  # no substitution -- not this production
+            if c == "\\":
+                return None  # escapes fail closed (no cooking)
+            if c == "$" and j + 1 < n and text[j + 1] == "{":
+                break
+            lit1.append(c)
+            j += 1
+            if len(lit1) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F1020 lit1 too long")
+        j += 2  # consume ${
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] in "'\"":
+            sub, j = _js_f99x_parse_str(text, j)
+        else:
+            snm, j = _js_f99x_ident(text, j)
+            if snm not in env:
+                return None
+            sub = env[snm]
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, "}")
+        lit2 = []
+        while True:
+            if j >= n:
+                return None
+            c = text[j]
+            if c == "`":
+                j += 1
+                break
+            if c == "\\":
+                return None  # escapes fail closed (no cooking)
+            if c == "$" and j + 1 < n and text[j + 1] == "{":
+                return None  # second substitution -- narrow scope
+            lit2.append(c)
+            j += 1
+            if len(lit2) > _MAX_DECODE_BYTES:
+                raise _JSExprFail("F1020 lit2 too long")
+        _js_f96x_expect_semi_end(text, j)
+        state["ops"] += 1  # the tagged template is obfuscation-shaped
+        val = "".join(lit1) + sub + "".join(lit2)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1020 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+
+# -- end F1017/F1018/F1019/F1020 ------------------------------------------
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -115718,6 +116243,24 @@ def _decode_layer(text):
     # requiring at least one `o.p=o.q` copy statement. Additive, in
     # F-number order.
     for _stmtdec in (_js_f1003_stmt_decode, _js_f1004_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1017/F1018/F1019/F1020: narrow whole-text statement-sequence
+    # decoders (wave-394 lane 4). Each returns the decoded string or
+    # None; all filed shapes BREAK on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint by leading form: F1017 requires
+    # a Reflect.construct(String,...) declaration, F1018 an
+    # Object.setPrototypeOf statement, F1019 an array literal with
+    # .shift() statements, F1020 a leading function declaration
+    # (the fast-path gate only checks for "function"/"${" substrings;
+    # the decoder itself enforces the leading form and returns None
+    # otherwise). Additive, in F-number order.
+    for _stmtdec in (_js_f1017_stmt_decode, _js_f1018_stmt_decode,
+                     _js_f1019_stmt_decode, _js_f1020_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
