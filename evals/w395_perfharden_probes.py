@@ -310,8 +310,9 @@ def c_sibling_disjointness():
 
 
 # ---------------- D: tail guards + tail statements (wave-379 class)
-# Pinned count as of the wave-394 merge: 8 per-wave _stmtdec loops.
-N_STMTDEC_LOOPS = 8
+# Pinned count as of the wave-395 merge: 11 per-wave _stmtdec loops
+# (wave-394's 8 + lanes 1/2/3).
+N_STMTDEC_LOOPS = 11
 
 
 def d_tail_guards():
