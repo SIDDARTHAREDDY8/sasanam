@@ -117077,6 +117077,557 @@ def _js_f1012_stmt_decode(text):
 # -- end F1009/F1010/F1011/F1012 ------------------------------------------------
 
 
+# -- F1013/F1014/F1015/F1016 (wave-394 lane 3) ----------------------------------
+# Narrow whole-text statement-sequence decoders, hooked in the _stmtdec
+# loop alongside F961-F1004. Each parses a strict whole-text grammar;
+# anything outside the grammar fails closed (returns None -- a miss,
+# never a mis-decode). All shapes node-verified (v24.20.0). Like every
+# other _stmtdec hook these charge no F452 scan budget (pure
+# text-to-string scans; element counts capped at
+# _JS_EXPR_MAX_CODEPOINTS and results at _MAX_DECODE_BYTES), so there
+# is nothing to snapshot/restore on miss (wave-383 rule). No new
+# decision codes, no new re.compile (pin tests unchanged). Never evals.
+
+
+def _js_f1013f1016_parse_str_array(text, j, what):
+    """Parse `["s",...]` at text[j] (F1013/F1016); returns (elems, next).
+
+    Elements are '...'/"..." literals cooked by _js_f99x_parse_str
+    (reused from wave-393 lane 1: Annex-B octal escapes fail closed).
+    Trailing commas are allowed (node). Element count is capped at
+    _JS_EXPR_MAX_CODEPOINTS. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "[")
+    elems = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "]":
+            return elems, j + 1
+        val, j = _js_f99x_parse_str(text, j)
+        elems.append(val)
+        if len(elems) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail(what + " too many elements")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            j += 1
+            continue
+        if j < n and text[j] == "]":
+            return elems, j + 1
+        raise _JSExprFail(what + " bad array")
+
+
+def _js_f1013_stmt_decode(text):
+    """Decode F1013 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const IT=["f1","f2",...].values();`
+    `var|let|const ACC="";`
+    `[var|let|const N;]`
+    `while(!(N=IT.next()).done)ACC+=N.value;` (or `ACC=ACC+N.value;`)
+    `var|let|const RESULT=ACC;`
+    -- manual iterator accumulation (attack round 61; no
+    iterator-protocol production was modeled).
+
+    Node-exact (v24.20.0): `[...].values()` yields an Array Iterator;
+    each `.next()` returns `{value, done}`; member access binds
+    tighter than unary `!`, so `!(N=IT.next()).done` keeps looping
+    until `done` is truthy; `ACC+=N.value` concatenates in iteration
+    order. The accumulator must start as `""` (filed shape); the
+    loop-variable declaration is optional (a bare `N=...` is an
+    implicit global in sloppy mode). Disjoint from F989 (which is
+    `new Map` + for-of accumulation): this requires the `.values()`
+    iterator plus the while-next/done loop. Anything else --
+    non-empty accumulator, `.values()` on a non-literal, a loop body
+    other than the two modeled forms, name collisions, extra
+    statements -- fails closed: a miss, never a mis-decode. Returns
+    the joined string, or None. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        _, it_name, j = _js_f96x_decl(text, j)
+        if it_name == "RESULT":
+            raise _JSExprFail("F1013 bad iterator name")
+        elems, j = _js_f1013f1016_parse_str_array(text, _js_skip_ws(text, j),
+                                            "F1013")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "values")
+        if m is None:
+            raise _JSExprFail("F1013 no values")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        # Accumulator: var|let|const ACC = "";
+        _, acc_name, j = _js_f96x_decl(text, j)
+        if acc_name in ("RESULT", it_name):
+            raise _JSExprFail("F1013 bad accumulator name")
+        acc_init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if acc_init != "":
+            raise _JSExprFail("F1013 accumulator not empty")
+        j = _js_expect(text, j, ";")
+        # Optional loop-variable declaration `var|let|const N;` (no init).
+        loop_name = None
+        jj = _js_skip_ws(text, j)
+        if _js_match_kw(text, jj, "while") is None:
+            kw, k = _js_match_decl_kw(text, jj)
+            if kw is None:
+                raise _JSExprFail("F1013 no loop var")
+            lname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+            if lname == "arguments" or lname in _F611_RESERVED:
+                raise _JSExprFail("F1013 bad loop name")
+            k = _js_expect(text, k, ";")
+            loop_name = lname
+            j = k
+            jj = _js_skip_ws(text, j)
+        m = _js_match_kw(text, jj, "while")
+        if m is None:
+            raise _JSExprFail("F1013 no while")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, "!")
+        j = _js_expect(text, j, "(")
+        assign_name, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if loop_name is None:
+            loop_name = assign_name  # bare implicit-global form
+        elif assign_name != loop_name:
+            raise _JSExprFail("F1013 loop var mismatch")
+        if loop_name in ("RESULT", it_name, acc_name):
+            raise _JSExprFail("F1013 bad loop name")
+        j = _js_expect(text, j, "=")
+        it2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if it2 != it_name:
+            raise _JSExprFail("F1013 iterator mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "next")
+        if m is None:
+            raise _JSExprFail("F1013 no next")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "done")
+        if m is None:
+            raise _JSExprFail("F1013 no done")
+        j = _js_expect(text, m, ")")
+        # Loop body: ACC+=N.value;  or  ACC=ACC+N.value;
+        acc2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if acc2 != acc_name:
+            raise _JSExprFail("F1013 acc mismatch")
+        j = _js_skip_ws(text, j)
+        if j + 1 < n and text[j] == "+" and text[j + 1] == "=":
+            j += 2
+        elif j < n and text[j] == "=" and not text.startswith(("==", "=>"), j):
+            j += 1
+            rhs, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if rhs != acc_name:
+                raise _JSExprFail("F1013 acc rhs mismatch")
+            j = _js_expect(text, j, "+")
+        else:
+            raise _JSExprFail("F1013 bad body")
+        vname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if vname != loop_name:
+            raise _JSExprFail("F1013 value var mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "value")
+        if m is None:
+            raise _JSExprFail("F1013 no value")
+        j = _js_expect(text, m, ";")
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        acc3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if acc3 != acc_name:
+            raise _JSExprFail("F1013 RESULT not accumulator")
+        _js_f96x_expect_semi_end(text, j)
+        val = "".join(elems)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1013 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1014_body_additive(text, j, what):
+    """Parse `return LIT (+ LIT)* ;?` at text[j] (F1014).
+
+    *text* is the cooked body of a `new Function("...")` literal.
+    Terms are '...'/"..." literals via _js_f99x_parse_str (Annex-B
+    octal fails closed). Returns (value, next_index); anything else
+    (non-literal terms, a second statement, trailing input) fails
+    closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "return")
+    if m is None:
+        raise _JSExprFail(what + " body not return")
+    val, j = _js_f99x_parse_str(text, _js_skip_ws(text, m))
+    parts = [val]
+    while True:
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "+":
+            break
+        v2, j = _js_f99x_parse_str(text, _js_skip_ws(text, j + 1))
+        parts.append(v2)
+        if len(parts) > _JS_EXPR_MAX_CODEPOINTS:
+            raise _JSExprFail(what + " too many parts")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        j += 1
+    val = "".join(parts)
+    if len(val) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " body too long")
+    return val, j
+
+
+def _js_f1014_stmt_decode(text):
+    """Decode F1014 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const RESULT=[new] Function("BODY")();`
+    -- new-Function fragment body (attack round 61; no new-Function
+    production was modeled). BODY cooks to `return LIT (+ LIT)* ;?`
+    and the assembled string is the decoded value.
+
+    Node-exact (v24.20.0): `new Function(body)` / `Function(body)`
+    create a function whose body is *body*; the zero-arg call
+    evaluates it. The body grammar is deliberately narrow: a single
+    `return` of an additive chain of string literals. Anything else
+    (extra parameters, a non-return body, non-literal terms, more
+    than one argument) fails closed: a miss, never a mis-decode.
+    Disjoint from every earlier route: no earlier production models
+    `new Function`. Returns the decoded string, or None. Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "new")
+        if m is not None:
+            j = _js_skip_ws(text, m)
+        m = _js_match_kw(text, j, "Function")
+        if m is None:
+            raise _JSExprFail("F1014 no Function")
+        j = _js_expect(text, m, "(")
+        body_lit, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        val, bend = _js_f1014_body_additive(body_lit, 0, "F1014")
+        if bend != len(body_lit):
+            raise _JSExprFail("F1014 body trailing input")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1015_parse_key(text, j, what):
+    """Parse an object-literal key at text[j] (F1015); returns (key, next).
+
+    Identifier keys (ASCII) or non-negative integer-literal keys with
+    no leading zeros. `{01:...}` is legal node (the key is "1",
+    v24.20.0) but outside this narrow grammar, so it fails closed
+    (documented boundary -- a miss, never a mis-decode).
+    `__proto__` and reserved words fail closed (a `__proto__`
+    literal entry sets the prototype in node -- not an own key).
+    Never evals.
+    """
+    n = len(text)
+    if j < n and text[j] in _JS_IDENT_START:
+        kname, j = _js_parse_ident(text, j)
+        if kname == "__proto__" or kname in _F611_RESERVED:
+            raise _JSExprFail(what + " bad key")
+        return kname, j
+    k = j
+    while k < n and text[k] in _ASCII_DIGITS:
+        k += 1
+    digits = text[j:k]
+    if not digits or len(digits) > 10 or \
+            (len(digits) > 1 and digits[0] == "0"):
+        raise _JSExprFail(what + " bad key")
+    return digits, k
+
+
+def _js_f1015_is_int_key(key):
+    """True when *key* is a canonical integer-index key (F1015).
+
+    Node-exact (v24.20.0): ToString(ToUint32(key)) === key and
+    key !== 2**32 - 1. Keys arriving here are ASCII (identifier or
+    digit parse), so `isdigit` is exact.
+    """
+    if not key.isdigit() or (len(key) > 1 and key[0] == "0"):
+        return False
+    return int(key) < 4294967295
+
+
+def _js_f1015_parse_ret_o_k(text, j, obj_name, kparam, what):
+    """Parse `return O[K];?` at text[j] (F1015); returns next_index.
+
+    Shared by the function-callback and block-body-arrow branches:
+    the O[K] read must go through the callback parameter *kparam*
+    on the bound object *obj_name*. Never evals.
+    """
+    n = len(text)
+    on2, j = _js_parse_ident(text, j)
+    if on2 != obj_name:
+        raise _JSExprFail(what + " cb obj mismatch")
+    j = _js_expect(text, j, "[")
+    kp2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if kp2 != kparam:
+        raise _JSExprFail(what + " cb param mismatch")
+    j = _js_expect(text, j, "]")
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == ";":
+        j += 1
+    return j
+
+
+def _js_f1015_stmt_decode(text):
+    """Decode F1015 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const O={K1:"f1",K2:"f2",...};`
+    `var|let|const RESULT=Object.keys(O).map(CB).join("SEP");`
+    -- Object.keys map-join reassembly (attack round 61; no
+    keys-map-join production was modeled). CB is
+    `function[(name)](K){return O[K];?}`,
+    `K=>O[K]`, `(K)=>O[K]`, or `K=>{return O[K];?}`.
+
+    Node-exact (v24.20.0): Object.keys yields integer-index keys
+    ascending first, then string keys in insertion order (duplicate
+    keys collapse, later value wins); `.map` projects each key's
+    value; `.join(SEP)` concatenates with the literal separator.
+    Complements F751 (which, via the F949 top-level rewrite, covers
+    `function(K){return O[K];}` with the semicolon and `K=>O[K]`
+    but rejects the no-semicolon function form, named functions,
+    and block-body arrows): shared shapes decode identically
+    (verified in the lane battery). Disjoint from F1002
+    (gopd-via-getPrototypeOf reads) and F977 (delete/re-add): this
+    requires the `.map(` continuation on the key list. Anything
+    else -- non-literal values, symbol/computed keys, `__proto__`,
+    a non-literal separator, extra statements -- fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        _, obj_name, j = _js_f96x_decl(text, j)
+        if obj_name == "RESULT":
+            raise _JSExprFail("F1015 bad obj name")
+        j = _js_expect(text, j, "{")
+        raw_keys = []
+        values = {}
+        while True:
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == "}":
+                j += 1
+                break
+            kname, j = _js_f1015_parse_key(text, j, "F1015")
+            j = _js_expect(text, j, ":")
+            v, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+            raw_keys.append(kname)
+            values[kname] = v  # later-wins, matching the engine
+            if len(raw_keys) > _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail("F1015 too many keys")
+            j = _js_skip_ws(text, j)
+            if j < n and text[j] == ",":
+                j += 1
+                continue
+            if j < n and text[j] == "}":
+                j += 1
+                break
+            raise _JSExprFail("F1015 bad object")
+        if not raw_keys:
+            raise _JSExprFail("F1015 empty object")
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "Object")
+        if m is None:
+            raise _JSExprFail("F1015 no Object")
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "keys")
+        if m is None:
+            raise _JSExprFail("F1015 no keys")
+        j = _js_expect(text, m, "(")
+        oname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if oname != obj_name:
+            raise _JSExprFail("F1015 obj mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+        if m is None:
+            raise _JSExprFail("F1015 no map")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        # Callback: function[(name)](K){return O[K];?} |
+        #           K=>O[K] | (K)=>O[K] | K=>{return O[K];?}
+        fk = _js_match_kw(text, j, "function")
+        if fk is not None:
+            j = _js_skip_ws(text, fk)
+            if j < n and text[j] in _JS_IDENT_START:
+                _, j = _js_parse_ident(text, j)  # optional name
+            j = _js_expect(text, j, "(")
+            kparam, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, "{")
+            j = _js_skip_ws(text, j)
+            rk = _js_match_kw(text, j, "return")
+            if rk is None:
+                raise _JSExprFail("F1015 map body not return")
+            j = _js_f1015_parse_ret_o_k(text, _js_skip_ws(text, rk),
+                                       obj_name, kparam, "F1015")
+            j = _js_expect(text, j, "}")
+        else:
+            if j < n and text[j] == "(":
+                kparam, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+                j = _js_expect(text, j, ")")
+            else:
+                kparam, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            if j + 1 >= n or text[j:j + 2] != "=>":
+                raise _JSExprFail("F1015 not an arrow")
+            j = _js_skip_ws(text, j + 2)
+            if j < n and text[j] == "{":
+                j = _js_skip_ws(text, j + 1)
+                rk = _js_match_kw(text, j, "return")
+                if rk is None:
+                    raise _JSExprFail("F1015 arrow body not return")
+                j = _js_f1015_parse_ret_o_k(text, _js_skip_ws(text, rk),
+                                           obj_name, kparam, "F1015")
+                j = _js_expect(text, j, "}")
+            else:
+                on2, j = _js_parse_ident(text, j)
+                if on2 != obj_name:
+                    raise _JSExprFail("F1015 cb obj mismatch")
+                j = _js_expect(text, j, "[")
+                kp2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+                if kp2 != kparam:
+                    raise _JSExprFail("F1015 cb param mismatch")
+                j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail("F1015 no join")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        # Node-exact key order: integer-index keys ascending first,
+        # then string keys in first-insertion order (node v24.20.0).
+        int_keys = []
+        str_keys = []
+        seen = set()
+        for kname in raw_keys:
+            if kname in seen:
+                continue
+            seen.add(kname)
+            if _js_f1015_is_int_key(kname):
+                int_keys.append(int(kname))
+            else:
+                str_keys.append(kname)
+        ordered = [str(k) for k in sorted(int_keys)] + str_keys
+        val = sep.join(values[k] for k in ordered)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1015 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1016_stmt_decode(text):
+    """Decode F1016 statement sequences (whole-text, _decode_layer hook).
+
+    `var|let|const A=["f1",...];`
+    `A.push("f2"[,"f3"...]);` (one or more; zero-arg push is a no-op)
+    `var|let|const RESULT=A.join("SEP");`
+    -- push assembly (attack round 61; no push-assembly production
+    was modeled).
+
+    Node-exact (v24.20.0): `push` appends its arguments in order;
+    `join(SEP)` concatenates with the literal separator. Disjoint
+    from F981 (pop-accumulation loop, requires `.splice(`) and F978
+    (requires `.splice(` on the leading array): this requires at
+    least one `.push(` statement and the `.join(` RESULT. Anything
+    else -- push of non-literals, push on another name, a
+    non-literal separator, extra statements -- fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None. Never
+    evals.
+    """
+    n = len(text)
+    try:
+        j = _js_skip_ws(text, 0)
+        _, arr_name, j = _js_f96x_decl(text, j)
+        if arr_name == "RESULT":
+            raise _JSExprFail("F1016 bad array name")
+        elems, j = _js_f1013f1016_parse_str_array(text, _js_skip_ws(text, j),
+                                            "F1016")
+        j = _js_expect(text, j, ";")
+        # One or more A.push(...) statements.
+        pushes = 0
+        while True:
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, j, arr_name)
+            if m is None:
+                break
+            j = _js_expect(text, _js_skip_ws(text, m), ".")
+            m2 = _js_match_kw(text, _js_skip_ws(text, j), "push")
+            if m2 is None:
+                raise _JSExprFail("F1016 not push")
+            j = _js_expect(text, m2, "(")
+            while True:
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ")":
+                    j += 1
+                    break
+                v, j = _js_f99x_parse_str(text, j)
+                elems.append(v)
+                if len(elems) > _JS_EXPR_MAX_CODEPOINTS:
+                    raise _JSExprFail("F1016 too many elements")
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    j += 1
+                    continue
+                if j < n and text[j] == ")":
+                    j += 1
+                    break
+                raise _JSExprFail("F1016 bad push args")
+            j = _js_expect(text, j, ";")
+            pushes += 1
+            if pushes > _JS_EXPR_MAX_CODEPOINTS:
+                raise _JSExprFail("F1016 too many pushes")
+        if not pushes:
+            raise _JSExprFail("F1016 no pushes")
+        _, rname, j = _js_f96x_decl(text, j)
+        if rname != "RESULT":
+            return None
+        aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if aname != arr_name:
+            raise _JSExprFail("F1016 join target mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail("F1016 no join")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        _js_f96x_expect_semi_end(text, j)
+        val = sep.join(elems)
+        if len(val) > _MAX_DECODE_BYTES:
+            raise _JSExprFail("F1016 result too long")
+        return val
+    except _JSExprFail:
+        return None
+
+# -- end F1013/F1014/F1015/F1016 ----------------------------------------
+
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -117234,8 +117785,8 @@ def _decode_layer(text):
                 if len(variants) >= _MAX_CANDIDATES:
                     return variants
     # F961/F962/F964/F967/F968/F969/F970/F971/F972/F973/F974/F986/
-    # F988/F989/F990/F991/F992/F993/F994/F995/F999/F1000/F1001/F1002:
-    # narrow whole-text
+    # F988/F989/F990/F991/F992/F993/F994/F995/F999/F1000/F1001/F1002/
+    # F1013/F1014/F1015/F1016: narrow whole-text
     # statement-sequence decoders. Each returns the decoded string
     # or None; all filed shapes BREAK on the open tree, so no
     # earlier production decoded them and the pre-existing variant
@@ -117252,7 +117803,9 @@ def _decode_layer(text):
                      _js_f992_stmt_decode, _js_f993_stmt_decode,
                      _js_f994_stmt_decode, _js_f995_stmt_decode,
                      _js_f999_stmt_decode, _js_f1000_stmt_decode,
-                     _js_f1001_stmt_decode, _js_f1002_stmt_decode):
+                     _js_f1001_stmt_decode, _js_f1002_stmt_decode,
+                     _js_f1013_stmt_decode, _js_f1014_stmt_decode,
+                     _js_f1015_stmt_decode, _js_f1016_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
