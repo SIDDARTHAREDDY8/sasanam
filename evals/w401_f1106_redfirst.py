@@ -50,9 +50,9 @@ def _codes(s):
 
 _TMPLS = [
     ("assign-idx-loop",
-     "var C={{I}};var O=Object.assign({{}},C);var S='';for(var i=0;i<C.length;i++){{S+=String.fromCharCode(O[i]);}}var RESULT=S;"),
+     "var C={I};var O=Object.assign({{}},C);var S='';for(var i=0;i<C.length;i++){{S+=String.fromCharCode(O[i]);}}var RESULT=S;"),
     ("assign-values-spread",
-     "var C={{I}};var O=Object.assign({{}},C);var S=String.fromCharCode(...Object.values(O));var RESULT=S;"),
+     "var C={I};var O=Object.assign({{}},C);var S=String.fromCharCode(...Object.values(O));var RESULT=S;"),
 ]
 
 

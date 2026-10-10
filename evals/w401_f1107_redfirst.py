@@ -50,7 +50,7 @@ def _codes(s):
 
 _TMPLS = [
     ("spread-forin",
-     "var C={{I}};var O={{...C}};var S='';for(var k in O){{S+=String.fromCharCode(O[k]);}}var RESULT=S;"),
+     "var C={I};var O={{...C}};var S='';for(var k in O){{S+=String.fromCharCode(O[k]);}}var RESULT=S;"),
 ]
 
 

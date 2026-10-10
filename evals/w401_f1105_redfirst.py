@@ -50,7 +50,7 @@ def _codes(s):
 
 _TMPLS = [
     ("proxy-idx-loop",
-     "var P={{k:{{I}}}};var O=new Proxy(P,{{get:function(t,p){{return t[p];}}}});var S='';for(var i=0;i<O.k.length;i++){{S+=String.fromCharCode(O.k[i]);}}var RESULT=S;"),
+     "var P={{k:{I}}};var O=new Proxy(P,{{get:function(t,p){{return t[p];}}}});var S='';for(var i=0;i<O.k.length;i++){{S+=String.fromCharCode(O.k[i]);}}var RESULT=S;"),
 ]
 
 

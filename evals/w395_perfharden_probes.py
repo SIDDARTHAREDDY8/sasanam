@@ -319,7 +319,7 @@ def c_sibling_disjointness():
 # lane 5's F1100/F1101/F1102 loop -- real code-count change,
 # wave-385 rule: repoint is justified by the added loops;
 # asserted by counting the dispatch loops on the merged tree).
-N_STMTDEC_LOOPS = 31
+N_STMTDEC_LOOPS = 32
 
 def d_tail_guards():
     """Every per-wave `_stmtdec` dispatch loop in _decode_layer keeps
