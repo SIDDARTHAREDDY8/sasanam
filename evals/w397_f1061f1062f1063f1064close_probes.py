@@ -458,9 +458,9 @@ def test_p6_perf():
 
 def _green_check():
     """Depth-1 green check on w396's attack battery (carries F1048-F1064
-    OPEN pins). Honor GOV_SKIP_GREEN. The F1061/F1062/F1063/F1064 OPEN
-    pins are EXPECTED to flip (now closed); the footer pin flips too;
-    anything else breaking is real."""
+    pins). Honor GOV_SKIP_GREEN. The F1061/F1062/F1063/F1064 pins were
+    flipped to _closed at the wave-397 merge: expect all 4 as HELD
+    closed pins; anything breaking is real."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return ("HELD", "green(w396_attack): skipped via GOV_SKIP_GREEN=1")
     child = os.path.join(REPO_ROOT, "evals", "w396_attack_probes.py")
@@ -469,32 +469,32 @@ def _green_check():
     env = dict(os.environ)
     env["GOV_SKIP_GREEN"] = "1"
     env["TMPDIR"] = tmpd
-    expected_flips = ("test_r64_f1061_open", "test_r64_f1062_open",
-                      "test_r64_f1063_open", "test_r64_f1064_open")
+    expected_closed = ("test_r64_f1061_closed", "test_r64_f1062_closed",
+                       "test_r64_f1063_closed", "test_r64_f1064_closed")
     try:
         r = subprocess.run([sys.executable, child],
                            capture_output=True, text=True, env=env,
                            timeout=600, cwd=REPO_ROOT)
-        real, flips = [], []
+        real, closed_ok = [], []
         footer_held = True
         for line in r.stdout.splitlines():
             if ": BREAK" in line:
                 nm = line.split(":")[0].strip()
-                if nm in expected_flips:
-                    flips.append(nm)
-                else:
-                    real.append(nm)
-            if line.startswith("HELD: test_b0_footer_state"):
+                real.append(nm)
+            elif ": HELD" in line:
+                nm = line.split(":")[0].strip()
+                if nm in expected_closed:
+                    closed_ok.append(nm)
+            if line.startswith("test_b0_footer_state: HELD"):
                 footer_held = True
-            if line.startswith("BREAK: test_b0_footer_state"):
+            if line.startswith("test_b0_footer_state: BREAK"):
                 footer_held = False
         tally = (r.stdout.strip().splitlines() or ["?"])[-1] if r.stdout else "?"
-        # The lane tree preserves the merge footer line verbatim, so the
-        # child's footer pin stays HELD; only the 4 now-closed pins flip.
-        ok = (not real and len(flips) == 4 and footer_held)
+        # The merge flipped the 4 pins to _closed; they must all report HELD.
+        ok = (not real and len(closed_ok) == 4 and footer_held)
         return (("HELD" if ok else "BREAK"),
-                "green(w396_attack): %d real BREAK %s; flips %d/4; footer_held=%s; tally=%s"
-                % (len(real), sorted(real), len(flips), footer_held, tally))
+                "green(w396_attack): %d real BREAK %s; closed %d/4; footer_held=%s; tally=%s"
+                % (len(real), sorted(real), len(closed_ok), footer_held, tally))
     except Exception as e:  # noqa: BLE001
         return ("BREAK", "green check error: %r" % e)
 

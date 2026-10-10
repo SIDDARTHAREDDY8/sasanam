@@ -12419,3 +12419,6 @@ Next free finding: **F1065**. **F988-F1051 CLOSED (64, wave-393 lanes 1-5 + wave
 # Wave-397 lane 3: F1056-F1060 CLOSED (5); F1048-F1055, F1061-F1064 OPEN (12); next free F1065
 # Wave-397 attack round 65: F1065-F1073 filed OPEN (9, first-filing 2026-10-10 09:55 UTC, $0 spend)
 Next free finding: **F1074**. **F988-F1047 CLOSED (60, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4).** **F1048-F1073 OPEN (26, wave-396 attack round 64 + wave-397 attack round 65).**
+
+# Wave-397 merge: F1048-F1064 CLOSED (17); F1065-F1073 OPEN (9, wave-397 attack round 65, first-filing 2026-10-10 09:55 UTC, $0 spend); next free F1074
+Next free finding: **F1074**. **F988-F1064 CLOSED (77, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4 + wave-397 lanes 1-4).** **F1065-F1073 OPEN (9, wave-397 attack round 65).**

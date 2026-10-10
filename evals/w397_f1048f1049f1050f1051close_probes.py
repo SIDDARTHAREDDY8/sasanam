@@ -48,7 +48,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143  # no new decision codes
 VERIFIER_PIN = 33  # VERIFIER_TAXONOMY_PIN, untouched
 RE_COMPILE_COUNT = 28  # zero new re.compile( in gov/dlp.py -- audited count
-STMTDEC_LOOPS = 15  # +1 dispatch loop (F1048-F1051), real code-count change
+STMTDEC_LOOPS = 18  # wave-397 merge: lanes 1+2+3+4 each add one dispatch loop (14 -> 18, real code-count change, wave-385 rule)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -302,16 +302,17 @@ def test_p4_sibling_pins():
         'var e=new Error("%s");var RESULT=e.message;' % _CRED,
         # F1044-F1047 (wave-396 lane 4) still block.
         'var o={0:120,1:111,2:120,3:98,4:45};var s="";for(var k in o){s+=String.fromCharCode(o[k]);}var RESULT=s+"0123456789abcdef";',
-    ]
-    still_open = [
-        # F1052 Headers (lane 2's seam) still misses.
+        # F1052 Headers (wave-397 lane 2, now CLOSED) blocks.
         'var h=new Headers({"X-A":"%s","X-B":"%s"});var RESULT=h.get("X-A")+h.get("X-B");' % (_F1, _F2),
         'var h=new Headers({"X-A":"%s","X-B":"%s"});var s="";h.forEach(function(v,k){s+=v;});var RESULT=s;' % (_F1, _F2),
-        # F1058 TextEncoder/TextDecoder (lane 3's seam) still misses.
+        # F1058 TextEncoder/TextDecoder (wave-397 lane 3, now CLOSED) blocks.
         'var enc=new TextEncoder();var p=[enc.encode("%s"),enc.encode("%s")];var dec=new TextDecoder();var RESULT=dec.decode(p[0])+dec.decode(p[1]);' % (_F1, _F2),
-        # F1063 WeakMap staged-array (lane 4's seam) still misses.
+        # F1063 WeakMap staged-array (wave-397 lane 4, now CLOSED) blocks.
         'var wm=new WeakMap();var k={};wm.set(k,["%s","%s"]);var RESULT=wm.get(k)[0]+wm.get(k)[1];' % (_F1, _F2),
     ]
+    # All F1048-F1064 now closed at merge; nothing in this lane's sibling
+    # set remains open.
+    still_open = []
     bad_blocked = [s for s in blocked if not _blocked(s)]
     bad_open = [s for s in still_open if not _misses(s)]
     ok = not bad_blocked and not bad_open

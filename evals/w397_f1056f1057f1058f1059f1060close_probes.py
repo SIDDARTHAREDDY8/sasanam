@@ -478,35 +478,35 @@ def test_p4_sibling_f970_closed():
 
 
 @_t
-def test_p4_sibling_f1054_open():
-    """F1054 (OPEN, lane 2): match-group reads still miss."""
+def test_p4_sibling_f1054_closed():
+    """F1054 CLOSED (wave-397 lane 2, merge-reconciled): match-group reads block."""
     p = ('var m="k1=xoxb-01 k2=23456789abcdef".match(/k1=(?<x>\\S+)\\sk2=(?<y>\\S+)/);'
          'var RESULT=m.groups.x+m.groups.y;')
-    return _check("sibling-f1054-open", _misses(p), "still misses")
+    return _check("sibling-f1054-closed", _blocked(p), "blocked")
 
 
 @_t
-def test_p4_sibling_f1055_open():
-    """F1055 (OPEN, lane 2): JSON.parse reviver still misses."""
+def test_p4_sibling_f1055_closed():
+    """F1055 CLOSED (wave-397 lane 2, merge-reconciled): JSON.parse reviver reads block."""
     p = ('var o=JSON.parse(\'{"a":"xoxb-01","b":"23456789abcdef"}\',(k,v)=>v);'
          'var RESULT=o.a+o.b;')
-    return _check("sibling-f1055-open", _misses(p), "still misses")
+    return _check("sibling-f1055-closed", _blocked(p), "blocked")
 
 
 @_t
-def test_p4_sibling_f1061_open():
-    """F1061 (OPEN, lane 4): Map.get dual-staged still misses."""
+def test_p4_sibling_f1061_closed():
+    """F1061 CLOSED (wave-397 lane 4, merge-reconciled): Map.get dual-staged reads block."""
     p = ('var m=new Map([["a","xoxb-01"],["b","23456789abcdef"]]);'
          'var RESULT=m.get("a")+m.get("b");')
-    return _check("sibling-f1061-open", _misses(p), "still misses")
+    return _check("sibling-f1061-closed", _blocked(p), "blocked")
 
 
 @_t
-def test_p4_sibling_f1048_open():
-    """F1048 (OPEN, lane 1): Error cause-chain still misses."""
+def test_p4_sibling_f1048_closed():
+    """F1048 CLOSED (wave-397 lane 1, merge-reconciled): Error cause-chain reads block."""
     p = ('var e=new Error("a",{cause:new Error("b",{cause:"xoxb-01"})});'
          'var RESULT=e.cause.cause+"23456789abcdef";')
-    return _check("sibling-f1048-open", _misses(p), "still misses")
+    return _check("sibling-f1048-closed", _blocked(p), "blocked")
 
 
 # --------------------------------------- p5: honest text stays quiet
@@ -609,16 +609,14 @@ def test_p7_green_check():
         if bad or nshapes == 0:
             bad_notes.append("%s: %d bad / %d shapes" % (battery, bad, nshapes))
     out = _run_battery("w396_attack_probes.py")
-    broke = [line.split()[0] for line in out.splitlines()
-             if re.match(r"^test_r64_f10(56|57|58|59|60)_open: BREAK", line)]
-    other_broke = [line for line in out.splitlines()
-                   if ": BREAK" in line and "f1056" not in line
-                   and "f1057" not in line and "f1058" not in line
-                   and "f1059" not in line and "f1060" not in line]
-    if len(broke) != 5:
-        bad_notes.append("attack battery: expected 5 now-closed pins BREAK, got %d" % len(broke))
-    if other_broke:
-        bad_notes.append("attack battery unexpected BREAKs: %s" % other_broke[:3])
+    closed_ok = [line.split()[0] for line in out.splitlines()
+                 if re.match(r"^test_r64_f10(56|57|58|59|60)_closed: HELD", line)]
+    real_break = [line for line in out.splitlines()
+                  if ": BREAK" in line and "test_r64_f10" in line]
+    if len(closed_ok) != 5:
+        bad_notes.append("attack battery: expected 5 now-closed pins HELD, got %d" % len(closed_ok))
+    if real_break:
+        bad_notes.append("attack battery unexpected BREAKs: %s" % real_break[:3])
     ok = not bad_notes
     return _check("green", ok, "bad=[%s]" % "; ".join(bad_notes))
 

@@ -316,7 +316,6 @@ def c_sibling_disjointness():
 # + lane 4's F1061-F1063 loop -- real code-count change,
 # wave-385 rule: repoint is justified by the added loops).
 N_STMTDEC_LOOPS = 18
-N_STMTDEC_LOOPS = 15
 
 
 def d_tail_guards():

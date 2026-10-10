@@ -372,7 +372,9 @@ def test_p5_honest_text():
         vis + '\n<div data-testid="submit-btn">Quarterly figures attached.</div>',
         # rendered analogs / out-of-scope carriers
         vis + '\n<meta name="description" content="Quarterly report summary">',
-        vis + '\n<title>Quarterly Report</title>',
+        # F1064 (wave-397 lane 4): HTML <title> prose now routes by the
+        # F1064 close-when (carrier, not rendered) -- moved out of the
+        # quiet set at merge; asserted routed below.
         # F1024/F1034 honest set
         vis + '\nThe CSS content: property sets generated text.',
         vis + '\nSee [1] for details.\n\n[1]: https://example.com/report.pdf',
@@ -387,6 +389,10 @@ def test_p5_honest_text():
                        consequential=False)
     if routed:
         bad.append("read-only-routed")
+    # F1064 merge reconciliation (wave-397): HTML <title> prose is a carrier
+    # by the F1064 close-when and must route (no longer in the quiet set)
+    if not instruction_shaped(vis + '\n<title>Quarterly Report</title>'):
+        bad.append("title-not-routed")
     ok = not bad
     return ("HELD" if ok else "BREAK",
             "honest text quiet %d/%d; bad=%s"

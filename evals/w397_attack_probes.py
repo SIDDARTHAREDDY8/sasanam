@@ -52,12 +52,12 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: attack footer (wave-397 round 65: F1048-F1073 open (26); next F1074)."""
+    """Control: merge footer (wave-397: F1048-F1064 closed (17); F1065-F1073 open (9); next F1074)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1048-F1073 OPEN (26" in text
+    ok = ("F1048-F1064 CLOSED (17" in text
           and "Next free finding: **F1074**" in text
-          and "F988-F1047 CLOSED (60" in text)
+          and "F1065-F1073 OPEN (9" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -84,13 +84,28 @@ def _open_pin(prefix, num):
     return _fn
 
 
+def _closed_pin(prefix, num):
+    """All red-first shapes for a CLOSED finding must now BLOCK."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _misses(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
+
+
 # New round-65 pins (F1065-F1072 decoder seam).
 for _n in (1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072):
     _open_pin("w397", _n)
 
-# Carried round-64 pins (F1048-F1063 decoder seam) -- must still MISS.
+# Carried round-64 pins (F1048-F1063 decoder seam) -- CLOSED at the
+# wave-397 merge; must now BLOCK.
 for _n in range(1048, 1064):
-    _open_pin("w396", _n)
+    _closed_pin("w396", _n)
 
 
 @_t
@@ -113,8 +128,8 @@ def test_open_w397_f1073_provenance():
 
 
 @_t
-def test_open_w396_f1064_provenance():
-    """F1064 (OPEN, carried): 14 carriers must still evade approval routing."""
+def test_closed_w396_f1064_provenance():
+    """F1064 CLOSED (wave-397 lane 4, merge-flipped): 14 carriers must now route."""
     shapes = _redfirst_shapes("w396", 1064)
     bad = []
     for name, body in shapes:
@@ -123,10 +138,10 @@ def test_open_w396_f1064_provenance():
         req = ActionRequest(action="wire_transfer",
                             args={"to_account": "987654321", "amount": 48200},
                             consequential=True, driving_units=[unit.unit_id])
-        if grant_check(req, lab).routed_to_approval:
+        if not grant_check(req, lab).routed_to_approval:
             bad.append(name)
     ok = not bad
-    print(("HELD " if ok else "BREAK") + " test_open_w396_f1064_provenance (%d carriers%s)" % (
+    print(("HELD " if ok else "BREAK") + " test_closed_w396_f1064_provenance (%d carriers%s)" % (
         len(shapes), "" if ok else ": " + ",".join(bad)))
     return ok
 

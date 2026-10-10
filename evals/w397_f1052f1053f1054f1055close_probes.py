@@ -578,17 +578,19 @@ def test_s_f1056_still_open():
 
 
 @_t
-def test_s_f1050_still_open():
+def test_s_f1050_now_closed():
+    # F1050 CLOSED (wave-397 lane 1, merge-reconciled): URLSearchParams reads block.
     p = ('var u=new URLSearchParams("k1=xoxb-01&k2=23456789abcdef");'
          'var RESULT=u.get("k1")+u.get("k2");')
-    return _check("f1050-still-open", _misses(p))
+    return _check("f1050-now-closed", _blocked(p))
 
 
 @_t
-def test_s_f1051_still_open():
+def test_s_f1051_now_closed():
+    # F1051 CLOSED (wave-397 lane 1, merge-reconciled): FormData reads block.
     p = ('var f=new FormData();f.append("a","xoxb-01");'
          'f.append("b","23456789abcdef");var RESULT=f.get("a")+f.get("b");')
-    return _check("f1051-still-open", _misses(p))
+    return _check("f1051-now-closed", _blocked(p))
 
 
 @_t
@@ -716,8 +718,8 @@ def _run_battery(name):
 @_t
 def test_p7_green_check():
     """Depth-1 green check: lane red-firsts 0 BREAK; attack battery shows
-    exactly the 4 expected flips (F1052-F1055 now block, flipped to
-    _closed at merge); all other round-64 pins still miss."""
+    the 4 F1052-F1055 pins as _closed/HELD (flipped at merge);
+    no other round-64 pin BREAKs."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return _check("green-skip", True, "skipped (GOV_SKIP_GREEN=1)")
     bad_notes = []
@@ -731,17 +733,16 @@ def test_p7_green_check():
         if bad or nshapes == 0:
             bad_notes.append("%s: %d bad / %d shapes" % (battery, bad, nshapes))
     out = _run_battery("w396_attack_probes.py")
-    flipped = [l for l in out.splitlines()
-               if ": BREAK" in l and any("f105%d" % d in l for d in (2, 3, 4, 5))]
-    still_open = [l for l in out.splitlines()
-                  if ": BREAK" in l and "test_r64_f10" in l
-                  and not any("f105%d" % d in l for d in (2, 3, 4, 5))]
-    # every other round-64 pin must still miss (HELD), exactly the 4
-    # now-closed pins flip to BREAK(blocked)
-    if len(flipped) != 4:
-        bad_notes.append("attack flips=%d (want 4): %s" % (len(flipped), flipped[:4]))
-    if still_open:
-        bad_notes.append("attack unexpected BREAKs: %s" % still_open[:3])
+    closed_ok = [l for l in out.splitlines()
+                 if ": HELD" in l
+                 and any("test_r64_f105%d_closed" % d in l for d in (2, 3, 4, 5))]
+    real_break = [l for l in out.splitlines()
+                  if ": BREAK" in l and "test_r64_f10" in l]
+    # the 4 now-closed pins must report HELD as _closed; no r64 pin may BREAK
+    if len(closed_ok) != 4:
+        bad_notes.append("attack closed=%d (want 4): %s" % (len(closed_ok), closed_ok[:4]))
+    if real_break:
+        bad_notes.append("attack unexpected BREAKs: %s" % real_break[:3])
     ok = not bad_notes
     return _check("green", ok, "bad=[%s]" % "; ".join(bad_notes))
 
