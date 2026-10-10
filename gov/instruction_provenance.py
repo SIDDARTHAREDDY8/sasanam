@@ -774,6 +774,265 @@ def _has_hidden_data_attr(text):
     return False
 
 
+# F1064: fourteen further hidden-instruction carriers beyond F1024 /
+# F1034 / F1047. Same construction: substantive PROSE-SHAPED text in a
+# carrier never rendered to the human reader is instruction-shaped by
+# construction (the F1024 rationale); machine tokens, short labels,
+# and empty carriers are honest text, quiet. No re.compile() here
+# (module-level count stays as audited); patterns ride the re
+# module's cache. All detectors run on the zero-width-stripped norm
+# (F1024) so ZWSP mangling of the carrier markup cannot evade them.
+
+
+def _f1064_tag_regions(text, tag):
+    """Yield (open_tag_text, inner_text) for each `<tag>...</tag>` region.
+
+    An UNTERMINATED open tag scans to end of text (fail-closed: in
+    HTML error recovery the rest is hidden from the human either way;
+    the F1024 unterminated-`<!--` rule). Never evals.
+    """
+    for m in re.finditer(r"<%s\b[^>]*>" % tag, text, re.I):
+        start = m.end()
+        close = re.search(r"</%s\s*>" % tag, text[start:], re.I)
+        end = start + close.start() if close else len(text)
+        yield m.group(0), text[start:end]
+
+
+def _f1064_hidden_element_prose(text, hidden_check):
+    """True when an element passing hidden_check(open_tag) carries
+    prose-shaped inner text (F1064 helper).
+
+    Inner markup is stripped before the prose test. Never evals.
+    """
+    for m in re.finditer(r"<([A-Za-z][\w-]*)\b[^>]*>", text, re.I):
+        if not hidden_check(m.group(0)):
+            continue
+        start = m.end()
+        close = re.search(r"</%s\s*>" % m.group(1), text[start:], re.I)
+        end = start + close.start() if close else len(text)
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", text[start:end])):
+            return True
+    return False
+
+
+def _f1064_hidden_class_names(text, prop, value):
+    """Class names whose `<style>` rules declare `prop: value` (F1064).
+
+    Strict `.cls{...prop: value...}` rules only; complex selectors
+    (descendant, attribute, pseudo) fail closed (not matched). Never
+    evals.
+    """
+    hidden = set()
+    pat = (r"\.([A-Za-z_][\w-]*)\s*\{[^}]*?%s\s*:\s*%s\b"
+           % (re.escape(prop), re.escape(value)))
+    for region in _scan_element_regions(text, "style"):
+        for m in re.finditer(pat, region, re.I):
+            hidden.add(m.group(1).lower())
+    return hidden
+
+
+def _has_hidden_display_none(text):
+    """True when prose hides in a display:none element (F1064).
+
+    Inline `style="display:none"` or a class whose `<style>` rule
+    declares display:none. Hidden from the human reader (the F1024
+    rationale). Never evals.
+    """
+    hidden_classes = _f1064_hidden_class_names(text, "display", "none")
+
+    def _check(open_tag):
+        style, has_style = _f1047_attr_value(open_tag, "style")
+        if has_style and re.search(r"(?:^|;)\s*display\s*:\s*none\b",
+                                   style, re.I):
+            return True
+        cls, has_cls = _f1047_attr_value(open_tag, "class")
+        return (has_cls and bool(hidden_classes)
+                and any(c.lower() in hidden_classes
+                        for c in cls.split()))
+
+    return _f1064_hidden_element_prose(text, _check)
+
+
+def _has_hidden_visibility_hidden(text):
+    """True when prose hides in a visibility:hidden element (F1064).
+
+    Inline style or a class whose `<style>` rule declares
+    visibility:hidden. Never evals.
+    """
+    hidden_classes = _f1064_hidden_class_names(text, "visibility",
+                                                "hidden")
+
+    def _check(open_tag):
+        style, has_style = _f1047_attr_value(open_tag, "style")
+        if has_style and re.search(
+                r"(?:^|;)\s*visibility\s*:\s*hidden\b", style, re.I):
+            return True
+        cls, has_cls = _f1047_attr_value(open_tag, "class")
+        return (has_cls and bool(hidden_classes)
+                and any(c.lower() in hidden_classes
+                        for c in cls.split()))
+
+    return _f1064_hidden_element_prose(text, _check)
+
+
+def _has_hidden_hidden_attr(text):
+    """True when prose hides in an element with the `hidden` attribute
+    (F1064). `<div hidden>prose</div>` is never rendered. The
+    `aria-hidden` / `data-hidden` attributes are NOT this carrier --
+    `aria-hidden="true"` content is visually rendered (excluded via
+    the hyphen lookbehinds). Never evals.
+    """
+    def _check(open_tag):
+        return re.search(r"(?<![\w-])hidden(?![\w-])", open_tag,
+                         re.I) is not None
+
+    return _f1064_hidden_element_prose(text, _check)
+
+
+def _has_hidden_html_title(text):
+    """True when prose hides in the HTML `<title>` (F1064).
+
+    The document title is not page content -- in the dual-target
+    harness the human sees the rendered body, not the tab title (the
+    F1024 rationale). Single-token titles are honest text, quiet.
+    Never evals.
+    """
+    for region in _scan_element_regions(text, "title"):
+        if _is_prose_shaped(region):
+            return True
+    return False
+
+
+def _has_hidden_img_alt(text):
+    """True when prose hides in an `<img alt>` (F1064).
+
+    Alt text renders only when the image fails to load; in the
+    harness it is hidden from the human reader (the F1024
+    rationale). Short alts (`alt="logo"`) are honest text, quiet.
+    Never evals.
+    """
+    for m in re.finditer(r"<img\b[^>]*>", text, re.I):
+        alt, has_alt = _f1047_attr_value(m.group(0), "alt")
+        if has_alt and _is_prose_shaped(alt):
+            return True
+    return False
+
+
+def _has_hidden_title_attr(text):
+    """True when prose hides in a `title` attribute (F1064).
+
+    Tooltips are hover-only -- hidden from the human reader unless
+    hovered (the F1024 rationale). Short titles are honest text,
+    quiet. Never evals.
+    """
+    for m in re.finditer(r"\btitle\s*=\s*", text, re.I):
+        rest = text[m.end():].lstrip()
+        if rest and rest[0] in "\"'":
+            inner, _ = _scan_quoted_string(rest, 0)
+        else:
+            um = re.match(r"[^\s>]+", rest)
+            inner = um.group(0) if um else ""
+        if _is_prose_shaped(inner):
+            return True
+    return False
+
+
+def _has_hidden_dialog(text):
+    """True when prose hides in a `<dialog>` without the `open`
+    attribute (F1064). A closed dialog is never rendered; `<dialog
+    open>` is rendered and stays quiet. Never evals.
+    """
+    for open_tag, region in _f1064_tag_regions(text, "dialog"):
+        if re.search(r"(?<![\w-])open(?![\w-])", open_tag, re.I):
+            continue
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+            return True
+    return False
+
+
+def _has_hidden_popover(text):
+    """True when prose hides in an element with the `popover`
+    attribute (F1064). Popovers are hidden until shown. Never evals.
+    """
+    def _check(open_tag):
+        return re.search(r"(?<![\w-])popover(?![\w-])", open_tag,
+                         re.I) is not None
+
+    return _f1064_hidden_element_prose(text, _check)
+
+
+def _has_hidden_vtt_note(text):
+    """True when prose hides in a WebVTT NOTE block (F1064).
+
+    NOTE blocks are comments -- never rendered as captions (the
+    F1024 rationale). Rendered cue text stays quiet. Never evals.
+    """
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        m = re.match(r"NOTE(?:\s+(.*))?$", lines[i].strip())
+        if not m:
+            i += 1
+            continue
+        buf = []
+        j = i + 1
+        while j < len(lines) and lines[j].strip():
+            buf.append(lines[j].strip())
+            j += 1
+        body = ((m.group(1) or "") + " " + " ".join(buf)).strip()
+        if _is_prose_shaped(body):
+            return True
+        i = j
+    return False
+
+
+def _has_hidden_xmp_desc(text):
+    """True when prose hides in XMP `dc:description` metadata (F1064).
+
+    XMP metadata is never rendered. Never evals.
+    """
+    for region in _scan_element_regions(text, "dc:description"):
+        if _is_prose_shaped(region):
+            return True
+    return False
+
+
+def _has_hidden_meta_descriptions(text):
+    """True when prose hides in og:/twitter: meta descriptions (F1064).
+
+    `<meta property="og:description">` and `<meta
+    name="twitter:description">` are social-card metadata -- never
+    rendered in the page body (the F1024 rationale). Honest machine
+    tokens stay quiet. Never evals.
+    """
+    for m in re.finditer(r"<meta\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        prop, has_prop = _f1047_attr_value(tag, "property")
+        name, has_name = _f1047_attr_value(tag, "name")
+        if not ((has_prop and prop.lower() == "og:description")
+                or (has_name
+                    and name.lower() == "twitter:description")):
+            continue
+        content, has_content = _f1047_attr_value(tag, "content")
+        if has_content and _is_prose_shaped(content):
+            return True
+    return False
+
+
+def _has_hidden_hidden_option(text):
+    """True when prose hides in `<option hidden>` (F1064).
+
+    Hidden options are never shown in the dropdown. Never evals.
+    """
+    for open_tag, region in _f1064_tag_regions(text, "option"):
+        if re.search(r"(?<![\w-])hidden(?![\w-])", open_tag,
+                     re.I) is None:
+            continue
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+            return True
+    return False
+
+
 def instruction_shaped(text):
     """Deterministic heuristic: does this unit read like an instruction
     to the agent? A stand-in for the plan-trace / intent-slicing
@@ -805,14 +1064,34 @@ def instruction_shaped(text):
     # <title>/<desc>, <meta itemprop>, aria-label, <input type=hidden>,
     # and data-* attributes. Prose-shaped text in these carriers is
     # instruction-shaped by construction; machine tokens stay quiet.
-    return (_has_hidden_jsonld(norm)
+    if (_has_hidden_jsonld(norm)
             or _has_hidden_template(norm)
             or _has_hidden_svg_title(norm)
             or _has_hidden_svg_desc(norm)
             or _has_hidden_meta_itemprop(norm)
             or _has_hidden_aria_label(norm)
             or _has_hidden_input_value(norm)
-            or _has_hidden_data_attr(norm))
+            or _has_hidden_data_attr(norm)):
+        return True
+    # F1064: the same construction for fourteen further
+    # hidden-from-human carriers -- display:none (inline and
+    # class-based), visibility:hidden, the hidden attribute, HTML
+    # <title>, img alt, title attributes, <dialog>, popover, VTT
+    # NOTE blocks, XMP dc:description, og:/twitter: meta
+    # descriptions, and <option hidden>. All detectors run on the
+    # zero-width-stripped norm (F1024).
+    return (_has_hidden_display_none(norm)
+            or _has_hidden_visibility_hidden(norm)
+            or _has_hidden_hidden_attr(norm)
+            or _has_hidden_html_title(norm)
+            or _has_hidden_img_alt(norm)
+            or _has_hidden_title_attr(norm)
+            or _has_hidden_dialog(norm)
+            or _has_hidden_popover(norm)
+            or _has_hidden_vtt_note(norm)
+            or _has_hidden_xmp_desc(norm)
+            or _has_hidden_meta_descriptions(norm)
+            or _has_hidden_hidden_option(norm))
 
 
 class ActionRequest(object):
