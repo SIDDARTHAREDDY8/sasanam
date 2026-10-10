@@ -132473,6 +132473,292 @@ def _js_f1110_stmt_decode(text):
 # -- end F1110 -------------------------------------------------------------
 
 
+def _js_f1121_parse_forof(text, j, cname, itname, sname, what):
+    """Parse the F1121 top-level for-await-of loop at text[j].
+
+    `for await (var|let|const X of C|IT){S+=String.fromCharCode(X);}`
+    with NO async-IIFE wrapper: node v24.20.0 accepts top-level
+    `await` in scripts (verified via script file and `node --check`),
+    so the wrapper is not required. `await` is REQUIRED -- the sync
+    twins are F1091's (bound IT, declared var) or an earlier hook's
+    (plain for-of). The of-source must be the plain array C or the
+    bound values-iterator IT: the inline `C.values()` twin is
+    F1110's (fails closed on the `.`), the `C.entries()` destructure
+    twin is F1091's/F1122's (no destructure admitted here). The loop
+    variable must be declared -- the undeclared twin is F1122's.
+    Returns next_index. Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+    if m is None:
+        raise _JSExprFail(what + " not for")
+    j = _js_skip_ws(text, m)
+    m2 = _js_match_kw(text, j, "await")
+    if m2 is None:
+        raise _JSExprFail(what + " not await")
+    j = _js_skip_ws(text, m2)
+    j = _js_expect(text, j, "(")
+    kw, k2 = _js_match_decl_kw(text, _js_skip_ws(text, j))
+    if kw is None:
+        raise _JSExprFail(what + " loop var not declared")
+    j = _js_skip_ws(text, k2)
+    if j < len(text) and text[j] == "[":
+        raise _JSExprFail(what + " no destructure")
+    vname, j = _js_parse_ident(text, j)
+    m = _js_match_kw(text, _js_skip_ws(text, j), "of")
+    if m is None:
+        raise _JSExprFail(what + " not of")
+    j = _js_skip_ws(text, m)
+    nm, j = _js_parse_ident(text, j)
+    if nm == cname:
+        jj = _js_skip_ws(text, j)
+        if jj < len(text) and text[jj] == ".":
+            # The inline `C.values()` twin is F1110's; the
+            # `C.entries()` twin is F1091's/F1122's.
+            raise _JSExprFail(what + " not plain C")
+    elif itname is not None and nm == itname:
+        pass
+    else:
+        raise _JSExprFail(what + " bad source")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    j = _js_f1091_parse_accum(text, j, sname, vname, what)
+    j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_f1121_stmt_decode(text):
+    """Decode F1121 top-level for-await iteration-protocol staged
+    assembly reads (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `[var|let|const IT=C.values();]`
+    `var|let|const S='';for await (var|let|const X of C|IT){S+=String.fromCharCode(X);}`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): node accepts top-level `await` in scripts
+    (verified via script file and `node --check`), so `for await`
+    over the int array or the bound values-iterator assembles
+    fromCharCode(c0)+fromCharCode(c1)+... with no async wrapper.
+    The wrapper-bearing twins are F1091's (the wrapper fails this
+    hook closed at the array declaration); the sync twins are
+    F1091's (`await` is required here); the inline `C.values()`
+    twin is F1110's; the undeclared-var twin is F1122's. Disjoint
+    from F1091/F1110/F1122 by grammar (documented per parser).
+    F1091 stays CLOSED -- this hook closes only the F1121 residual,
+    filed as its own finding. Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None. Never
+    evals.
+    """
+    if "fromCharCode(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail("F1121 bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail("F1121 empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, "F1121")
+        # Optional `var IT=C.values();` binding (the bound-iterator
+        # production stages the iterator before the accumulator).
+        itname = None
+        _save = j
+        try:
+            _, itname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            if itname in ("RESULT", cname):
+                raise _JSExprFail("F1121 bad it name")
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if nm != cname:
+                raise _JSExprFail("F1121 it source mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "values")
+            if m is None:
+                raise _JSExprFail("F1121 not values")
+            j = _js_expect(text, m, "(")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, ";")
+        except _JSExprFail:
+            j = _save
+            itname = None
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname) or sname == itname:
+            raise _JSExprFail("F1121 bad acc name")
+        jj = _js_skip_ws(text, j)
+        init, j = _js_f99x_parse_str(text, jj)
+        if init != "":
+            raise _JSExprFail("F1121 acc not empty")
+        j = _js_expect(text, j, ";")
+        j = _js_f1121_parse_forof(text, j, cname, itname, sname,
+                                  "F1121")
+        return _js_f1091_parse_tail(text, j, sname, dstr, state,
+                                    "F1121", False)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1122_parse_forof(text, j, cname, itname, sname, what):
+    """Parse the F1122 undeclared loop-variable for-of at text[j].
+
+    `for (X of IT){S+=String.fromCharCode(X);}` where X is a bare
+    identifier (node binds it as a sloppy-mode global, v24.20.0
+    verified -- in strict mode it would throw, and failing closed
+    there is honest too), `for (X of C){...}` (bare identifier over
+    the plain array -- the declared twin `for(var X of C)` is an
+    earlier hook's production), or
+    `for ([I,C2] of C.entries()){S+=String.fromCharCode(C2);}`.
+    The loop variable must NOT be declared -- the declared twins are
+    F1091's (bound IT / entries destructure) or F1110's (inline
+    C.values()). `await` is not admitted (not a filed shape; the
+    await twin is F1121's). The of-source must be the plain array C,
+    the bound values-iterator IT, or `C.entries()`: the inline
+    `C.values()` twin is F1110's (fails closed on the method name).
+    Returns next_index. Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+    if m is None:
+        raise _JSExprFail(what + " not for")
+    j = _js_skip_ws(text, m)
+    m2 = _js_match_kw(text, j, "await")
+    if m2 is not None:
+        raise _JSExprFail(what + " no await")
+    j = _js_expect(text, j, "(")
+    kw, _k2 = _js_match_decl_kw(text, _js_skip_ws(text, j))
+    if kw is not None:
+        raise _JSExprFail(what + " loop var declared")
+    j = _js_skip_ws(text, j)
+    entries = False
+    if j < len(text) and text[j] == "[":
+        j = _js_skip_ws(text, j + 1)
+        _i1, j = _js_parse_ident(text, j)
+        j = _js_expect(text, j, ",")
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, "]")
+        vname = c2
+        entries = True
+    else:
+        vname, j = _js_parse_ident(text, j)
+    m = _js_match_kw(text, _js_skip_ws(text, j), "of")
+    if m is None:
+        raise _JSExprFail(what + " not of")
+    j = _js_skip_ws(text, m)
+    nm, j = _js_parse_ident(text, j)
+    if nm == cname:
+        jj = _js_skip_ws(text, j)
+        if jj >= len(text) or text[jj] != ".":
+            if entries:
+                # `for([i,c] of C)` destructures ints -- node throws
+                # (not iterable); fail closed.
+                raise _JSExprFail(what + " destructure needs entries")
+            # Bare `for(x of C)`: undeclared loop variable over the
+            # plain array -- F1122's production (the declared twin
+            # `for(var x of C)` is an earlier hook's; this hook
+            # requires the loop var to be undeclared, so the twins
+            # stay disjoint).
+        else:
+            j = _js_expect(text, jj, ".")
+            m = _js_match_kw(text, j, "entries")
+            if m is None:
+                raise _JSExprFail(what + " bad C method")
+            j = _js_expect(text, m, "(")
+            j = _js_expect(text, j, ")")
+            if not entries:
+                raise _JSExprFail(what + " entries needs destructure")
+    elif itname is not None and nm == itname:
+        if entries:
+            raise _JSExprFail(what + " destructure needs entries")
+    else:
+        raise _JSExprFail(what + " bad source")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    j = _js_f1091_parse_accum(text, j, sname, vname, what)
+    j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_f1122_stmt_decode(text):
+    """Decode F1122 undeclared loop-variable iteration-protocol
+    staged assembly reads (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `[var|let|const IT=C.values();]`
+    `var|let|const S='';for (X of C|IT){S+=String.fromCharCode(X);}`
+    or `var|let|const S='';for ([I,C2] of C.entries()){S+=String.fromCharCode(C2);}`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): in sloppy mode node binds the bare loop
+    identifier as a global, so the loop assembles
+    fromCharCode(c0)+fromCharCode(c1)+... identically to the
+    declared twin; the undeclared destructure over `C.entries()`
+    binds the element to the second name exactly like F1091's
+    declared twin. The declared twins are F1091's (a declaration
+    keyword fails this hook closed); the inline `C.values()` twin
+    is F1110's; the await twin is F1121's. Disjoint from
+    F1091/F1110/F1121 by grammar (documented per parser). F1091
+    stays CLOSED -- this hook closes only the F1122 residual, filed
+    as its own finding. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "fromCharCode(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail("F1122 bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail("F1122 empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, "F1122")
+        # Optional `var IT=C.values();` binding (the bound-iterator
+        # production stages the iterator before the accumulator;
+        # the entries() production has no binding).
+        itname = None
+        _save = j
+        try:
+            _, itname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            if itname in ("RESULT", cname):
+                raise _JSExprFail("F1122 bad it name")
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if nm != cname:
+                raise _JSExprFail("F1122 it source mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "values")
+            if m is None:
+                raise _JSExprFail("F1122 not values")
+            j = _js_expect(text, m, "(")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, ";")
+        except _JSExprFail:
+            j = _save
+            itname = None
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname) or sname == itname:
+            raise _JSExprFail("F1122 bad acc name")
+        jj = _js_skip_ws(text, j)
+        init, j = _js_f99x_parse_str(text, jj)
+        if init != "":
+            raise _JSExprFail("F1122 acc not empty")
+        j = _js_expect(text, j, ";")
+        j = _js_f1122_parse_forof(text, j, cname, itname, sname,
+                                  "F1122")
+        return _js_f1091_parse_tail(text, j, sname, dstr, state,
+                                    "F1122", False)
+    except _JSExprFail:
+        return None
+
+
+# -- end F1121/F1122 ---------------------------------------------------------
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -133262,6 +133548,26 @@ def _decode_layer(text):
     # production decoded them and the pre-existing variant order
     # (F441) is preserved. Additive.
     for _stmtdec in (_js_f1110_stmt_decode,):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1121/F1122 (wave-403 lane 4): top-level for-await
+    # iteration-protocol staged assembly reads (F1091 residual: F1091
+    # admits await only inside the async-IIFE wrapper, but node
+    # accepts top-level await in scripts) and undeclared
+    # loop-variable iteration-protocol staged assembly reads (F1091
+    # residual: F1091 requires a declaration keyword, but sloppy
+    # mode binds a bare identifier as a global). Disjoint from F1091
+    # (wrapper/await/declaration) and F1110 (inline C.values()
+    # of-source) by grammar (documented per hook). F1091 stays
+    # CLOSED -- these hooks close only the F1121/F1122 residuals,
+    # filed as their own findings. The filed shapes BREAK on the open
+    # tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1121_stmt_decode, _js_f1122_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
