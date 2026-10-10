@@ -49,7 +49,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 28  # wave-401 lane 5: 27 + 1 new dispatch loop (real code-count change)
+N_STMTDEC_LOOPS_PIN = 31  # wave-401 merge: 27 + 4 lane loops (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -321,15 +321,16 @@ def test_p5_sibling_hooks_hold():
 
 @_t
 def test_p5_still_open_miss():
-    """Round-68 findings must still MISS on this tree."""
+    """Merged tree: F1090 (lane 1) and F1099 (lane 2) are closed --
+    their shapes must now BLOCK."""
     shapes = [
-        # F1090 higher-order reduce twin.
+        # F1090 higher-order reduce twin (closed wave-401 lane 1).
         "var C=%s;var S=C.reduce(function(a,c){return a+String.fromCharCode(c);},'');var RESULT=S;",
-        # F1099 arbitrary property-name member read.
+        # F1099 arbitrary property-name member read (closed wave-401 lane 2).
         "var O={k:%s};var S='';for(var I=0;I<O.k.length;I++){S+=String.fromCharCode(O.k[I]);}var RESULT=S;",
     ]
-    bad = [p[:40] for p in shapes if _blocked(p % _codes(SECRET_S))]
-    return (not bad, "%d/%d still-open miss%s"
+    bad = [p[:40] for p in shapes if not _blocked(p % _codes(SECRET_S))]
+    return (not bad, "%d/%d merged-tree closed shapes block%s"
             % (len(shapes) - len(bad), len(shapes),
                "" if not bad else ": " + ",".join(bad)))
 
@@ -367,10 +368,10 @@ def test_p7_perf_200_sites():
 # ---------------- g0: green check ----------------
 
 def _green_check():
-    """Depth-1 green check on w400's attack battery (carries F1093-F1102
-    open pins). Honor GOV_SKIP_GREEN. On this tree F1100/F1101/F1102 are
-    now CLOSED, so exactly their three open-pin tests flip to BREAK;
-    every other pin must stay HELD."""
+    """Depth-1 green check on w400's attack battery (carries F1090-F1102
+    pins). Honor GOV_SKIP_GREEN. On the merged tree all F1090-F1102 pins
+    are flipped to closed, so the w400 battery must show 0 BREAK;
+    anything breaking is real."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w400_attack): skipped via GOV_SKIP_GREEN=1")
     import tempfile
@@ -388,14 +389,10 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[0] in ("BREAK", "HELD"):
                 (real if parts[0] == "BREAK" else held).append(parts[1])
-        expect_flip = {"test_open_w400_f1100", "test_open_w400_f1101",
-                       "test_open_w400_f1102"}
-        flips = expect_flip & set(real)
-        other_break = set(real) - expect_flip
-        ok = flips == expect_flip and not other_break
+        # Merged tree: all w400 pins flipped to closed; 0 BREAK expected.
+        ok = not real
         return (ok,
-                "green(w400_attack): flips %d/3, other_break=%s"
-                % (len(flips), sorted(other_break)))
+                "green(w400_attack): %d BREAK (expect 0)" % len(real))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
 

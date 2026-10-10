@@ -185,14 +185,14 @@ def _pin_tests():
 
 
 def _green_check():
-    """Depth-1 green check on the wave-400 attack battery: the F1098
-    OPEN pin is EXPECTED to flip (now routes); anything else breaking
-    is real. Honors GOV_SKIP_GREEN."""
+    """Depth-1 green check on the wave-400 attack battery. On the merged
+    tree all F1090-F1102 pins are flipped to closed, so the w400 battery
+    must show 0 BREAK; anything breaking is real. Honors GOV_SKIP_GREEN."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return ("HELD", "green(w400_attack): skipped via GOV_SKIP_GREEN=1")
     child = os.path.join(REPO_ROOT, "evals", "w400_attack_probes.py")
-    tmpd = "/var/tmp/g401lane4-green"
-    os.makedirs(tmpd, exist_ok=True)
+    import tempfile
+    tmpd = tempfile.mkdtemp(prefix="g401m-lane4-green-", dir="/var/tmp")
     env = dict(os.environ)
     env["GOV_SKIP_GREEN"] = "1"
     env["TMPDIR"] = tmpd
@@ -214,10 +214,11 @@ def _green_check():
                     real.append(nm)
         tally = (r.stdout.strip().split("\n") or ["?"])[-1] \
             if r.stdout else "?"
-        ok = not real and len(flips) >= 1
+        # Merged tree: all w400 pins flipped to closed; 0 BREAK expected.
+        ok = not real
         return (("HELD" if ok else "BREAK"),
-                "green(w400_attack): %d real BREAK %s; flips %d; tally=%s"
-                % (len(real), sorted(real), len(flips), tally))
+                "green(w400_attack): %d BREAK (expect 0); tally=%s"
+                % (len(real), tally))
     except Exception as e:  # noqa: BLE001
         return ("BREAK", "green(w400_attack): %r" % (e,))
 

@@ -54,7 +54,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 28  # wave-401 lane 2: 27 + 1 new dispatch loop (real code-count change)
+N_STMTDEC_LOOPS_PIN = 31  # wave-401 merge: 27 + 4 lane loops (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -263,8 +263,8 @@ def test_fail_closed():
 @_t
 def test_sibling_decoder_pins():
     """F1069/F1075/F1083/F1089 still block their filed shapes; the
-    still-OPEN F1090/F1091/F1095/F1096/F1097/F1098(decoder)/F1100/F1101/
-    F1102 shapes still miss."""
+    F1090/F1091/F1095/F1096/F1097/F1100/F1101/F1102 shapes now BLOCK
+    (closed by wave-401 lanes 1/3/5 on the merged tree)."""
     c = _codes(SECRET_S)
     blocked = [
         ("f1069-weakref", "var r=new WeakRef({c:%s});var RESULT=String.fromCharCode(...r.deref().c);" % c),
@@ -274,18 +274,16 @@ def test_sibling_decoder_pins():
         ("f1089-spread", "var O={v:%s};var RESULT=String.fromCharCode(...O.v);" % c),
     ]
     bad = [n for n, p in blocked if not _blocked(p)]
-    still_open = []
-    for num in (1090, 1091, 1095, 1096, 1097):
+    # Merged tree: lanes 1/3/5 closed these; their shapes must now block.
+    now_closed = []
+    for num in (1090, 1091, 1095, 1096, 1097, 1100, 1101, 1102):
         for name, payload in _redfirst_shapes("w400", num):
-            still_open.append((name, payload))
-    for num in (1100, 1101, 1102):
-        for name, payload in _redfirst_shapes("w400", num):
-            still_open.append((name, payload))
-    bad += [n for n, p in still_open if not _misses(p)]
+            now_closed.append((name, payload))
+    bad += [n for n, p in now_closed if not _blocked(p)]
     ok = not bad
     print(("HELD " if ok else "BREAK") +
-          " test_sibling_decoder_pins (%d blocked, %d open%s)" %
-          (len(blocked), len(still_open), "" if ok else ": " + ",".join(bad)))
+          " test_sibling_decoder_pins (%d blocked%s)" %
+          (len(blocked) + len(now_closed), "" if ok else ": " + ",".join(bad)))
     return ok
 
 
@@ -330,9 +328,9 @@ def test_perf_200_sites():
 
 @_t
 def test_green_w400():
-    """Depth-1 green check on w400's attack battery (carries F1090-F1099
-    OPEN pins). Honor GOV_SKIP_GREEN. The F1092/F1093/F1094/F1099 OPEN
-    pins are EXPECTED to flip (now closed); the footer pin flips too;
+    """Depth-1 green check on w400's attack battery (carries F1090-F1102
+    pins). Honor GOV_SKIP_GREEN. On the merged tree all F1090-F1102 pins
+    are flipped to closed, so the w400 battery must show 0 BREAK;
     anything else breaking is real."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         print("HELD  test_green_w400 (skipped: GOV_SKIP_GREEN=1)")
@@ -343,8 +341,7 @@ def test_green_w400():
     env["GOV_SKIP_GREEN"] = "1"
     env["TMPDIR"] = tmpd
     child = os.path.join(REPO_ROOT, "evals", "w400_attack_probes.py")
-    expected_flips = ("test_open_w400_f1092", "test_open_w400_f1093",
-                      "test_open_w400_f1094", "test_open_w400_f1099")
+    expected_flips = ()  # merged tree: all w400 pins flipped to closed
     try:
         r = subprocess.run([sys.executable, child],
                            capture_output=True, text=True, env=env,
@@ -363,14 +360,13 @@ def test_green_w400():
             if line.startswith("BREAK test_b0_footer_state"):
                 footer_held = False
         tally = (r.stdout.strip().split("\n") or ["?"])[-1] if r.stdout else "?"
-        # The lane tree preserves the merge footer line verbatim, so the
-        # child's footer pin stays HELD; the 4 now-closed OPEN pins flip
-        # HELD->BREAK (their shapes now block). Anything else breaking
-        # is real.
-        ok = (not real and len(flips) == 4 and footer_held)
+        # On the merged tree the w400 battery is fully green (all pins
+        # flipped to closed); the footer pin stays HELD. Anything
+        # breaking is real.
+        ok = (not real and footer_held)
         print(("HELD " if ok else "BREAK") +
-              " test_green_w400 (real=%s flips=%d/4 footer_held=%s tally=%s)" %
-              (sorted(real), len(flips), footer_held, tally))
+              " test_green_w400 (real=%s footer_held=%s tally=%s)" %
+              (sorted(real), footer_held, tally))
         return ok
     except Exception as e:
         print("BREAK test_green_w400 (exec failed: %s)" % e)

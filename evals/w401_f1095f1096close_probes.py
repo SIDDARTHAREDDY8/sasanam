@@ -47,7 +47,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 28  # wave-400 merge: 27 + this lane's loop (real code-count change)
+N_STMTDEC_LOOPS_PIN = 31  # wave-401 merge: 27 + 4 lane loops (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -297,15 +297,17 @@ def test_p4_sibling_f1083():
 
 @_t
 def test_p4_still_open():
-    # F1093, F1094, F1097-F1102 must still MISS -- no incidental closure.
+    # Merged tree: F1093/F1094/F1097/F1099/F1100/F1101/F1102 are closed
+    # by wave-401 lanes 1/2/5 -- their shapes must now BLOCK (no
+    # incidental-open regression).
     bad = []
     for num in (1093, 1094, 1097, 1099, 1100, 1101, 1102):
         for sname, shape in _redfirst_shapes(num, prefix="w400"):
-            if _blocked(shape):
+            if not _blocked(shape):
                 bad.append("f%d/%s" % (num, sname))
     # F1098 is the provenance seam -- check via the attack battery's
     # carried pin instead (instruction_shaped harness).
-    return (not bad, "still-open miss, incidental=%d" % len(bad))
+    return (not bad, "merged-tree closed shapes block, missed=%d" % len(bad))
 
 
 # ---------------- p5: honest text ----------------
@@ -371,7 +373,7 @@ def _green_check():
                 (real if parts[0] == "BREAK" else held).append(parts[1])
         # On this tree F1095/F1096 are closed: exactly their open pins
         # flip; everything else must hold.
-        expect_break = {"test_open_w400_f1095", "test_open_w400_f1096"}
+        expect_break = set()  # merged tree: all w400 pins flipped to closed
         missing_break = expect_break - set(real)
         extra_break = set(real) - expect_break
         ok = not missing_break and not extra_break

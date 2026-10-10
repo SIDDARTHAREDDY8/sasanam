@@ -62,7 +62,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 28  # wave-401 lane 1: 27 + 1 lane loop (real code-count change)
+N_STMTDEC_LOOPS_PIN = 31  # wave-401 merge: 27 + 4 lane loops (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -462,9 +462,9 @@ def test_p6_perf():
 
 def _green_check():
     """Depth-1 green check on w400's attack battery (carries
-    F1090-F1102 pins). Honor GOV_SKIP_GREEN. On this tree
-    F1090/F1091/F1097 are now CLOSED, so exactly their three open-pin
-    tests flip to BREAK; every other pin must stay HELD."""
+    F1090-F1102 pins). Honor GOV_SKIP_GREEN. On the merged tree all
+    F1090-F1102 pins are flipped to closed, so the w400 battery must
+    show 0 BREAK; anything breaking is real."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w400_attack): skipped via GOV_SKIP_GREEN=1")
     import tempfile
@@ -482,10 +482,9 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[0] in ("BREAK", "HELD"):
                 (real if parts[0] == "BREAK" else held).append(parts[1])
-        # On this tree F1090/F1091/F1097 are closed: exactly their
-        # open-pin tests BREAK; nothing else may.
-        expect_break = {"test_open_w400_f1090", "test_open_w400_f1091",
-                        "test_open_w400_f1097"}
+        # On the merged tree every w400 pin is flipped to closed:
+        # 0 BREAK expected; anything breaking is real.
+        expect_break = set()
         ok = set(real) == expect_break
         return (ok,
                 "green(w400_attack): %d BREAK (expect %d: %s)"

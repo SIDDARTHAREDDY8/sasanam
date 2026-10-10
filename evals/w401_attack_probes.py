@@ -51,13 +51,14 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-400 merge footer + round-69 footer
-    (F1093-F1109 OPEN (17); next free F1110)."""
+    """Control: wave-401 merge footer (F1090-F1102 CLOSED (13);
+    F1103-F1109 OPEN (7); next free F1110; corrects wave-400 footer)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("# Wave-400: F1083-F1092 CLOSED (10); F1093-F1102 OPEN (10); next free F1103" in text
+    ok = ("# Wave-401: F1090-F1102 CLOSED (13); F1103-F1109 OPEN (7); next free F1110" in text
           and "Next free finding: **F1110**" in text
-          and "F1093-F1109 OPEN (17" in text)
+          and "F1103-F1109 OPEN (7" in text
+          and "CORRECTS wave-400 footer error" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -84,7 +85,21 @@ def _open_pin(prefix, num):
     return _fn
 
 
-# New round-69 pins (F1103-F1108 decoder seam).
+def _closed_pin(prefix, num):
+    """All red-first shapes for a CLOSED finding must now BLOCK."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _misses(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
+
+
+# New round-69 pins (F1103-F1108 decoder seam) -- still OPEN.
 for _n in (1103, 1104, 1105, 1106, 1107, 1108):
     _open_pin("w401", _n)
 
@@ -101,28 +116,28 @@ def test_open_w401_f1109_provenance():
     return ok
 
 
-# Carried round-68 pins (F1093-F1097, F1099 decoder seam) -- still OPEN.
+# Carried round-68 pins (F1093-F1097, F1099 decoder seam) -- CLOSED on the
+# merged tree (wave-401 lanes 1-3).
 for _n in (1093, 1094, 1095, 1096, 1097, 1099):
-    _open_pin("w400", _n)
+    _closed_pin("w400", _n)
 
 
 @_t
-def test_open_w400_f1098_provenance():
-    """F1098 carriers must still evade the seam (instruction_shaped harness,
-    matching w400_f1098_redfirst.py)."""
+def test_closed_w400_f1098_provenance():
+    """F1098 carriers must now be flagged by the seam (CLOSED wave-401 lane 4;
+    instruction_shaped harness, matching w400_f1098_redfirst.py)."""
     shapes = _redfirst_shapes("w400", 1098)
-    bad = [name for name, payload in shapes if instruction_shaped(payload)]
+    bad = [name for name, payload in shapes if not instruction_shaped(payload)]
     ok = not bad
-    print(("HELD " if ok else "BREAK") + " test_open_w400_f1098_provenance (%d carriers%s)" % (
+    print(("HELD " if ok else "BREAK") + " test_closed_w400_f1098_provenance (%d carriers%s)" % (
         len(shapes), "" if ok else ": " + ",".join(bad)))
     return ok
 
 
 # Wave-400 lane-2 self-files renumbered F1090->F1100, F1091->F1101, F1092->F1102
-# per wave-272 (attack round 68's F1090-F1092 filed 13:33 UTC precede lane 2's
-# 13:38 UTC filings) -- still OPEN.
+# per wave-272 -- CLOSED on the merged tree (wave-401 lane 5).
 for _n in (1100, 1101, 1102):
-    _open_pin("w400", _n)
+    _closed_pin("w400", _n)
 
 
 @_t
@@ -140,8 +155,8 @@ def test_green_w400():
         print("HELD  test_green_w400 (skipped: GOV_SKIP_GREEN=1)")
         return True
     env = dict(os.environ, GOV_SKIP_GREEN="1")
-    tmpd = "/var/tmp/g401attack-green"
-    os.makedirs(tmpd, exist_ok=True)
+    import tempfile
+    tmpd = tempfile.mkdtemp(prefix="g401m-attack-green-", dir="/var/tmp")
     env["TMPDIR"] = tmpd
     r = subprocess.run(
         [sys.executable, os.path.join(REPO_ROOT, "evals", "w400_attack_probes.py")],
