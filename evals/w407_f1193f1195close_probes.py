@@ -73,7 +73,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 29  # +1 _JS_WS_COMPACT_RE in this lane's follow-up
-N_STMTDEC_LOOPS_PIN = 49  # wave-407 merged  # +1 dispatch loop in this lane (F1193/F1194/F1195)
+N_STMTDEC_LOOPS_PIN = 50  # wave-408 lane 4: +1 dispatch loop  # +1 dispatch loop in this lane (F1193/F1194/F1195)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
