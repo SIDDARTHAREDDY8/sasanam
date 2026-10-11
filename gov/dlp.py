@@ -166431,6 +166431,1226 @@ def _js_f1384_stmt_decode(text):
         return None
 
 
+def _js_f1385_parse_filter_cb(text, j, arr_name, bound, what):
+    """Parse the F1385 filter callback at text[j].
+
+    `function(c){return c;}` (truthy filter) or
+    `function(c,i){return i<ARR.length;}` (always-true), where c/i are
+    fresh identifiers and ARR is the staged array name. Returns
+    (next_index, truthy_only). Node-exact (v24.20.0): the 1-param form
+    keeps only truthy codes (drops 0); the 2-param form keeps every
+    element. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is None:
+        raise _JSExprFail(what + " not function")
+    j = _js_expect(text, m, "(")
+    p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    _js_f1028f1029_check_fresh_name(p1, bound, {"String"}, what)
+    j = _js_skip_ws(text, j)
+    p2 = None
+    if j < n and text[j] == ",":
+        p2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if p2 == p1:
+            raise _JSExprFail(what + " duplicate params")
+        _js_f1028f1029_check_fresh_name(p2, bound, {"String"}, what)
+        j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    m2 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m2 is None:
+        raise _JSExprFail(what + " no return")
+    j = _js_skip_ws(text, m2)
+    if p2 is None:
+        q, j = _js_parse_ident(text, j)
+        if q != p1:
+            raise _JSExprFail(what + " not truthy filter")
+        truthy_only = True
+    else:
+        q, j = _js_parse_ident(text, j)
+        if q != p2:
+            raise _JSExprFail(what + " not index test")
+        j = _js_expect(text, _js_skip_ws(text, j), "<")
+        aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if aname != arr_name:
+            raise _JSExprFail(what + " length base mismatch")
+        j = _js_expect(text, j, ".")
+        m3 = _js_match_kw(text, j, "length")
+        if m3 is None:
+            raise _JSExprFail(what + " no length")
+        j = m3
+        truthy_only = False
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return j, truthy_only
+
+
+def _js_f1385_stmt_decode(text):
+    """Decode F1385 filter callback-twin staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.filter(<cb>);` where `<cb>` is
+      `function(c){return c;}` or `function(c,i){return i<C.length;}`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the 1-param form keeps only truthy codes,
+    so the hook fails closed when any code is 0 (a miss, never a
+    mis-decode -- node-verified [120,0,111] filters to length 2); the
+    2-param form (`i<C.length` always true) is the identity. Disjoint
+    from F1360 (which requires the `Boolean` callback) and F1248
+    (side-effect accumulation, which requires a block-body callback
+    with an accumulator push) by grammar -- the filed shapes BREAK on
+    the open tree, so no earlier production decoded them. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if ".filter(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1385"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if c2 != cname:
+            raise _JSExprFail(what + " filter base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "filter")
+        if m is None:
+            raise _JSExprFail(what + " not filter")
+        j = _js_expect(text, m, "(")
+        j, truthy_only = _js_f1385_parse_filter_cb(text, j, cname,
+                                                   bound, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        if truthy_only and 0 in arr:
+            raise _JSExprFail(what + " zero code dropped")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1386_stmt_decode(text):
+    """Decode F1386 reduce push-accumulator staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.reduce(function(a,c){a.push(c);return a;},[]);`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the reducer pushes every element into the
+    `[]` accumulator and returns it, so D is a copy of C. Disjoint
+    from F1358 (reduceRight string accumulation) and F906/F907
+    (return-current callbacks) by grammar -- the filed shape BREAKs
+    on the open tree, so no earlier production decoded it. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if ".reduce(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1386"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if c2 != cname:
+            raise _JSExprFail(what + " reduce base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "reduce")
+        if m is None:
+            raise _JSExprFail(what + " not reduce")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(p1, bound, {"String"}, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if p2 == p1:
+            raise _JSExprFail(what + " duplicate params")
+        _js_f1028f1029_check_fresh_name(p2, bound, {"String"}, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if a2 != p1:
+            raise _JSExprFail(what + " push target mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "push")
+        if m is None:
+            raise _JSExprFail(what + " not push")
+        j = _js_expect(text, m, "(")
+        q, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if q != p2:
+            raise _JSExprFail(what + " push elem mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        r2, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if r2 != p1:
+            raise _JSExprFail(what + " not accum return")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1387_stmt_decode(text):
+    """Decode F1387 Array concat staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=[].concat(C);` or `var|let|const D=C.concat([]);`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `[].concat(C)` and `C.concat([])` both
+    produce a fresh copy of C. Disjoint from F1113
+    (String.prototype.concat loop accumulation -- different builtin)
+    by grammar -- the filed shapes BREAK on the open tree, so no
+    earlier production decoded them. Anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".concat(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1387"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == "[":
+            # `[].concat(C)` form.
+            j = _js_expect(text, _js_skip_ws(text, j + 1), "]")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "concat")
+            if m is None:
+                raise _JSExprFail(what + " not concat")
+            j = _js_expect(text, m, "(")
+            c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if c2 != cname:
+                raise _JSExprFail(what + " concat arg mismatch")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+        else:
+            # `C.concat([])` form.
+            c2, j = _js_parse_ident(text, j)
+            if c2 != cname:
+                raise _JSExprFail(what + " concat base mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "concat")
+            if m is None:
+                raise _JSExprFail(what + " not concat")
+            j = _js_expect(text, m, "(")
+            j = _js_expect(text, _js_skip_ws(text, j), "[")
+            j = _js_expect(text, _js_skip_ws(text, j), "]")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1388f1394_parse_push_cb(text, j, acc_name, bound, what):
+    """Parse `function(c){ACC.push(c);return true|false;}` at text[j].
+
+    Shared by F1388 (every/some) and F1394 (find). Returns
+    (next_index, ret_bool). Node-exact (v24.20.0). Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is None:
+        raise _JSExprFail(what + " not function")
+    j = _js_expect(text, m, "(")
+    p, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    _js_f1028f1029_check_fresh_name(p, bound, {"String"}, what)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if a2 != acc_name:
+        raise _JSExprFail(what + " push target mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "push")
+    if m is None:
+        raise _JSExprFail(what + " not push")
+    j = _js_expect(text, m, "(")
+    q, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if q != p:
+        raise _JSExprFail(what + " push elem mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail(what + " no return")
+    j = _js_skip_ws(text, m)
+    n = len(text)
+    if text.startswith("true", j) and (j + 4 >= n
+                                       or text[j + 4] not in _JS_IDENT_CONT):
+        ret_bool = True
+        j += 4
+    elif text.startswith("false", j) and (j + 5 >= n
+                                          or text[j + 5] not in _JS_IDENT_CONT):
+        ret_bool = False
+        j += 5
+    else:
+        raise _JSExprFail(what + " bad return const")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return j, ret_bool
+
+
+def _js_f1388_stmt_decode(text):
+    """Decode F1388 every/some array-accumulation staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=[];`
+    `C.every(function(c){D.push(c);return true;});` or
+    `C.some(function(c){D.push(c);return false;});`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `every` with an always-true callback and
+    `some` with an always-false callback both iterate every element,
+    so D is a copy of C (the callback must return the matching
+    constant or the hook fails closed). Disjoint from F1270
+    (findIndex S+= side-effect accumulation -- the S+= forms of
+    find/every/some are modeled; array-push forms are not) by grammar
+    -- the filed shapes BREAK on the open tree, so no earlier
+    production decoded them. Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None. Never
+    evals.
+    """
+    if ".every(" not in text and ".some(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1388"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ";")
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if c2 != cname:
+            raise _JSExprFail(what + " iter base mismatch")
+        j = _js_expect(text, j, ".")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "every")
+        if m is not None:
+            expect_true = True
+            j = m
+        else:
+            m = _js_match_kw(text, j, "some")
+            if m is None:
+                raise _JSExprFail(what + " not every/some")
+            expect_true = False
+            j = m
+        j = _js_expect(text, j, "(")
+        j, ret_bool = _js_f1388f1394_parse_push_cb(text, j, dname,
+                                                   bound, what)
+        if ret_bool != expect_true:
+            raise _JSExprFail(what + " callback not total")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1389_stmt_decode(text):
+    """Decode F1389 toPrecision map codec (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(c){return Number(c.toPrecision(3));});`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `Number(c.toPrecision(3))` is the identity
+    for integer codes below 1000 (node-verified: (120).toPrecision(3)
+    is "120", (999).toPrecision(3) is "999", (0).toPrecision(3) is
+    "0.00"); codes >= 1000 round to 3 significant digits
+    (node-verified: (1001).toPrecision(3) is "1.00e+3" -> 1000), so
+    the hook fails closed when any code is >= 1000 (a miss, never a
+    mis-decode). The precision argument must be exactly 3. Disjoint
+    from F1356 (toFixed codec) and F1366 (toExponential codec) by
+    grammar -- the filed shape BREAKs on the open tree, so no earlier
+    production decoded it. Anything else fails closed: a miss, never
+    a mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if ".toPrecision(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1389"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        if any(cp >= 1000 for cp in arr):
+            raise _JSExprFail(what + " precision rounds")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String", "Number"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if c2 != cname:
+            raise _JSExprFail(what + " map base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "map")
+        if m is None:
+            raise _JSExprFail(what + " not map")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        p, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(p, bound, {"String"}, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        j = _js_skip_ws(text, m)
+        m = _js_match_kw(text, j, "Number")
+        if m is None:
+            raise _JSExprFail(what + " not Number")
+        j = _js_expect(text, m, "(")
+        q, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if q != p:
+            raise _JSExprFail(what + " codec arg mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "toPrecision")
+        if m is None:
+            raise _JSExprFail(what + " not toPrecision")
+        j = _js_expect(text, m, "(")
+        prec, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if prec != 3:
+            raise _JSExprFail(what + " bad precision")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1390_stmt_decode(text):
+    """Decode F1390 copyWithin no-op staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.slice();`
+    `D.copyWithin(0,0,D.length);` (or `D.copyWithin(0);`)
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `.slice()` with no arguments copies the
+    array; `copyWithin(0,0,D.length)` and `copyWithin(0)` both copy
+    the whole array onto itself starting at index 0 -- a no-op, so D
+    is a copy of C. Any other copyWithin argument shape fails closed.
+    Disjoint from F1365 (splice(0) copy staging -- different builtin)
+    by grammar -- the filed shape BREAKs on the open tree, so no
+    earlier production decoded it. Anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".copyWithin(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1390"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if c2 != cname:
+            raise _JSExprFail(what + " slice base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        d2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if d2 != dname:
+            raise _JSExprFail(what + " copyWithin base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "copyWithin")
+        if m is None:
+            raise _JSExprFail(what + " not copyWithin")
+        j = _js_expect(text, m, "(")
+        tgt, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if tgt != 0:
+            raise _JSExprFail(what + " nonzero target")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == ",":
+            start, j = _js_parse_fcc_number(text,
+                                            _js_skip_ws(text, j + 1))
+            if start != 0:
+                raise _JSExprFail(what + " nonzero start")
+            j = _js_expect(text, _js_skip_ws(text, j), ",")
+            d3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if d3 != dname:
+                raise _JSExprFail(what + " end base mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "length")
+            if m is None:
+                raise _JSExprFail(what + " no length")
+            j = m
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1391_parse_at_loop(text, j, arr_name, acc_name, bound, what):
+    """Parse the F1391 `.at()` staging loop at text[j].
+
+    `for(var|let I=0;I<ARR.length;(++)I|I++){ACC.push(ARR.at(I));}`
+    Returns next_index. Node-exact (v24.20.0): `.at(I)` with
+    0<=I<length is `ARR[I]`; the counter is incremented so `const`
+    fails closed (node throws "Assignment to constant variable").
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "for")
+    if m is None:
+        raise _JSExprFail(what + " no for")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    kw, k = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail(what + " loop var not declared")
+    if kw == "const":
+        raise _JSExprFail(what + " const loop var")
+    j = k
+    loop_name, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    _js_f1028f1029_check_fresh_name(loop_name, bound, {"String"},
+                                    what)
+    j = _js_skip_ws(text, j)
+    j = _js_expect(text, j, "=")
+    zero, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+    if zero != 0:
+        raise _JSExprFail(what + " loop not from 0")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    iname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iname != loop_name:
+        raise _JSExprFail(what + " loop var mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "<")
+    aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if aname != arr_name:
+        raise _JSExprFail(what + " loop array mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+    if m is None:
+        raise _JSExprFail(what + " no length")
+    j = _js_expect(text, _js_skip_ws(text, m), ";")
+    j = _js_skip_ws(text, j)
+    if j + 1 < n and text[j] == "+" and text[j + 1] == "+":
+        j = _js_skip_ws(text, j + 2)
+        iname, j = _js_parse_ident(text, j)
+    else:
+        iname, j = _js_parse_ident(text, j)
+        j = _js_skip_ws(text, j)
+        if not (j + 1 < n and text[j] == "+" and text[j + 1] == "+"):
+            raise _JSExprFail(what + " no incr")
+        j = _js_skip_ws(text, j + 2)
+    if iname != loop_name:
+        raise _JSExprFail(what + " incr var mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if a2 != acc_name:
+        raise _JSExprFail(what + " push target mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "push")
+    if m is None:
+        raise _JSExprFail(what + " not push")
+    j = _js_expect(text, m, "(")
+    a3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if a3 != arr_name:
+        raise _JSExprFail(what + " at base mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "at")
+    if m is None:
+        raise _JSExprFail(what + " not at")
+    j = _js_expect(text, m, "(")
+    iname2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iname2 != loop_name:
+        raise _JSExprFail(what + " at index mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return j
+
+
+def _js_f1391_stmt_decode(text):
+    """Decode F1391 `.at()` index staging loop (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=[];`
+    `for(var|let i=0;i<C.length;i++){D.push(C.at(i));}`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `C.at(i)` with 0<=i<C.length is `C[i]`,
+    so the loop copies every element into D. Disjoint from the
+    round-66-80 triaged single `.at(i)` indexed reads (already
+    blocked -- this is the full-array staging loop, a different
+    production) by grammar -- the filed shape BREAKs on the open
+    tree, so no earlier production decoded it. Anything else fails
+    closed: a miss, never a mis-decode. Returns the decoded string,
+    or None. Never evals.
+    """
+    if ".at(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1391"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ";")
+        j = _js_f1391_parse_at_loop(text, j, cname, dname, bound,
+                                    what)
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1392_stmt_decode(text):
+    """Decode F1392 JSON number-array roundtrip staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=JSON.parse(JSON.stringify(C));`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `JSON.parse(JSON.stringify(C))` is a deep
+    copy for an array of integer literals, so D is element-identical
+    to C. Disjoint from F571 (stringify/parse round-trip -- that
+    closure covers string literals, arrays of string literals, and
+    F535 object literals; arrays of NUMBER literals are not modeled)
+    by grammar -- the filed shape BREAKs on the open tree, so no
+    earlier production decoded it. Anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "JSON.parse(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1392"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String", "JSON"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "JSON")
+        if m is None:
+            raise _JSExprFail(what + " not JSON")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "parse")
+        if m is None:
+            raise _JSExprFail(what + " not parse")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "JSON")
+        if m is None:
+            raise _JSExprFail(what + " not JSON")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "stringify")
+        if m is None:
+            raise _JSExprFail(what + " not stringify")
+        j = _js_expect(text, m, "(")
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if c2 != cname:
+            raise _JSExprFail(what + " stringify arg mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1393_stmt_decode(text):
+    """Decode F1393 Array.from staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=Array.from(C);` or
+    `var|let|const D=Array.from(C,function(c){return c;});`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `Array.from(C)` copies the array; the
+    2-arg form with the identity map callback copies it too. The map
+    callback must be exactly `function(c){return c;}` with a fresh
+    parameter -- any other callback fails closed. Disjoint from F1112
+    (TypedArray staged reads -- different builtin) by grammar -- the
+    filed shapes BREAK on the open tree, so no earlier production
+    decoded them. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "Array.from(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1393"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String", "Array"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Array")
+        if m is None:
+            raise _JSExprFail(what + " not Array")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "from")
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = _js_expect(text, m, "(")
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if c2 != cname:
+            raise _JSExprFail(what + " from arg mismatch")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            m = _js_match_kw(text, j, "function")
+            if m is None:
+                raise _JSExprFail(what + " not function")
+            j = _js_expect(text, m, "(")
+            p, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            _js_f1028f1029_check_fresh_name(p, bound, {"String"},
+                                            what)
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), "{")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+            if m is None:
+                raise _JSExprFail(what + " no return")
+            q, j = _js_parse_ident(text, _js_skip_ws(text, m))
+            if q != p:
+                raise _JSExprFail(what + " not identity")
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
+            j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1394_stmt_decode(text):
+    """Decode F1394 find array-accumulation staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=[];`
+    `C.find(function(c){D.push(c);return false;});`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `find` stops at the first truthy callback
+    return; the callback always returns false, so every element is
+    visited and pushed -- D is a copy of C. Disjoint from F1270
+    (findIndex S+= side-effect accumulation -- different callback and
+    different accumulation target) by grammar -- the filed shape
+    BREAKs on the open tree, so no earlier production decoded it.
+    Anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
+    """
+    if ".find(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1394"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ";")
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if c2 != cname:
+            raise _JSExprFail(what + " find base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "find")
+        if m is None:
+            raise _JSExprFail(what + " not find")
+        j = _js_expect(text, m, "(")
+        j, ret_bool = _js_f1388f1394_parse_push_cb(text, j, dname,
+                                                   bound, what)
+        if ret_bool:
+            raise _JSExprFail(what + " callback not total")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1395_stmt_decode(text):
+    """Decode F1395 reverse double-reverse staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.slice();`
+    `D.reverse();D.reverse();`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `.slice()` with no arguments copies the
+    array; two in-place reverses restore the original order, so D is
+    a copy of C. A single reverse would invert the order and fails
+    closed (the grammar requires exactly two). Novel builtin class
+    (no prior reverse finding) -- disjoint by construction; the filed
+    shape BREAKs on the open tree, so no earlier production decoded
+    it. Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ".reverse(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1395"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if c2 != cname:
+            raise _JSExprFail(what + " slice base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        for _ in range(2):
+            d2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if d2 != dname:
+                raise _JSExprFail(what + " reverse base mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "reverse")
+            if m is None:
+                raise _JSExprFail(what + " not reverse")
+            j = _js_expect(text, m, "(")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1396_parse_keys_loop(text, j, arr_name, acc_name, bound, what):
+    """Parse the F1396 keys-iterator loop at text[j].
+
+    `for(var|let|const K of ARR.keys()){ACC.push(ARR[K]);}`
+    Returns next_index. Node-exact (v24.20.0): `C.keys()` on a dense
+    array yields 0..length-1, so the loop copies every element.
+    `const` is node-legal in for-of (the binding is never reassigned).
+    Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "for")
+    if m is None:
+        raise _JSExprFail(what + " no for")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    kw, k = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail(what + " loop var not declared")
+    j = k
+    loop_name, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    _js_f1028f1029_check_fresh_name(loop_name, bound, {"String"},
+                                    what)
+    m = _js_match_kw(text, _js_skip_ws(text, j), "of")
+    if m is None:
+        raise _JSExprFail(what + " not for-of")
+    j = m
+    aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if aname != arr_name:
+        raise _JSExprFail(what + " iter array mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "keys")
+    if m is None:
+        raise _JSExprFail(what + " not keys")
+    j = _js_expect(text, m, "(")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if a2 != acc_name:
+        raise _JSExprFail(what + " push target mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "push")
+    if m is None:
+        raise _JSExprFail(what + " not push")
+    j = _js_expect(text, m, "(")
+    a3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if a3 != arr_name:
+        raise _JSExprFail(what + " push base mismatch")
+    j = _js_expect(text, j, "[")
+    k2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if k2 != loop_name:
+        raise _JSExprFail(what + " push index mismatch")
+    j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    return j
+
+
+def _js_f1396_stmt_decode(text):
+    """Decode F1396 Array keys-iterator staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=[];`
+    `for(var|let|const k of C.keys()){D.push(C[k]);}`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `C.keys()` on a dense int array yields
+    0..length-1, so the loop pushes every element -- D is a copy of
+    C. Disjoint from F1364 (Object.entries forEach-built -- different
+    iterator and different source) by grammar -- the filed shape
+    BREAKs on the open tree, so no earlier production decoded it.
+    Anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
+    """
+    if ".keys(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1396"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ";")
+        j = _js_f1396_parse_keys_loop(text, j, cname, dname, bound,
+                                      what)
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -167982,6 +169202,21 @@ def _decode_layer(text):
             _add(_sdec)
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
+
+
+
+    for _stmtdec in (_js_f1385_stmt_decode, _js_f1386_stmt_decode,
+                     _js_f1387_stmt_decode, _js_f1388_stmt_decode,
+                     _js_f1389_stmt_decode, _js_f1390_stmt_decode,
+                     _js_f1391_stmt_decode, _js_f1392_stmt_decode,
+                     _js_f1393_stmt_decode, _js_f1394_stmt_decode,
+                     _js_f1395_stmt_decode, _js_f1396_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
 
     # F1360-F1364 (wave-414 lane 1): filter Boolean-callback staging,
     # map index-param staging, Object.keys/values/entries forEach-built
