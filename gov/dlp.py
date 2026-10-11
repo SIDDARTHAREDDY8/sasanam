@@ -178158,18 +178158,20 @@ def _js_f1558_stmt_decode(text):
     `var|let|const S=C.map(function(c){return String.fromCharCode(c);}).join('');`
     (or the `c=>String.fromCharCode(c)` arrow twin)
     `var|let|const T=S.replace(/./g,function(m){return m;});`
+    (or the F1591 `(m)=>m` arrow twin; F1592 admits /./gsu-style flags)
     `var|let|const RESULT=<additive of string literals and T>;`
     then end-of-text.
 
     Node-exact (v24.20.0): `String.prototype.replace` with an identity
     replacer returns the subject unchanged for every input -- the regex
     never matters (unmatched spans are preserved verbatim, matched
-    spans are replaced by themselves), so T == S == dstr. Disjoint
-    from F1380 (string-arg replace) and F1272 (regex-arg replace with
-    `$1`) by grammar -- the replacer must be exactly
-    `function(m){return m;}` with the returned ident bound to the
-    parameter. Anything else fails closed: a miss, never a
-    mis-decode. Returns the decoded string, or None. Never evals.
+    spans are replaced by themselves), so T == S == dstr. The replacer
+    must be exactly `function(m){return m;}` or the `(m)=>m` arrow with
+    the returned ident bound to the parameter; the regex must be `/./`
+    with a flags run containing `g`. Disjoint from F1380 (string-arg
+    replace) and F1272 (regex-arg replace with `$1`) by grammar.
+    Anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
     """
     if ".replace(" not in text or ".map(" not in text:
         return None
@@ -178207,26 +178209,48 @@ def _js_f1558_stmt_decode(text):
             raise _JSExprFail(what + " not replace")
         j = _js_expect(text, m, "(")
         j = _js_skip_ws(text, j)
-        if not text.startswith("/./g", j):
+        if not text.startswith("/./", j):
             raise _JSExprFail(what + " bad regex")
-        j += 4
+        j += 3
+        # F1592: flags run after /./ -- the identity replacer makes the
+        # regex irrelevant (T == S for every input, v24.20.0), so any
+        # flag combination containing g is node-exact. Filed: /./gsu.
+        fstart = j
+        while j < len(text) and text[j] in "gimsuy":
+            j += 1
+        if "g" not in text[fstart:j]:
+            raise _JSExprFail(what + " regex missing g flag")
         j = _js_expect(text, _js_skip_ws(text, j), ",")
         j = _js_skip_ws(text, j)
+        # Replacer twin: function(m){return m;} or the F1591 arrow
+        # (m)=>m. Both are the identity on every match -- node-exact
+        # (v24.20.0). Anything else fails closed.
         m = _js_match_kw(text, j, "function")
-        if m is None:
-            raise _JSExprFail(what + " replacer not function")
-        j = _js_expect(text, m, "(")
-        p, j = _js_parse_ident(text, _js_skip_ws(text, j))
-        j = _js_expect(text, j, ")")
-        j = _js_expect(text, _js_skip_ws(text, j), "{")
-        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
-        if m is None:
-            raise _JSExprFail(what + " no return")
-        q, j = _js_parse_ident(text, _js_skip_ws(text, m))
-        if q != p:
-            raise _JSExprFail(what + " replacer not identity")
-        j = _js_expect(text, j, ";")
-        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        if m is not None:
+            j = _js_expect(text, m, "(")
+            p, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, _js_skip_ws(text, j), "{")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+            if m is None:
+                raise _JSExprFail(what + " no return")
+            q, j = _js_parse_ident(text, _js_skip_ws(text, m))
+            if q != p:
+                raise _JSExprFail(what + " replacer not identity")
+            j = _js_expect(text, j, ";")
+            j = _js_expect(text, _js_skip_ws(text, j), "}")
+        elif text.startswith("(", j):
+            jj = _js_skip_ws(text, j + 1)
+            p, jj = _js_parse_ident(text, jj)
+            jj = _js_skip_ws(text, _js_expect(text, _js_skip_ws(text, jj), ")"))
+            if not text.startswith("=>", jj):
+                raise _JSExprFail(what + " not arrow replacer")
+            q, jj = _js_parse_ident(text, _js_skip_ws(text, jj + 2))
+            if q != p:
+                raise _JSExprFail(what + " arrow replacer not identity")
+            j = jj
+        else:
+            raise _JSExprFail(what + " replacer not function/arrow")
         j = _js_expect(text, j, ")")
         j = _js_expect(text, j, ";")
         _js_f96x_charge(state, what + " replace")
@@ -178242,6 +178266,8 @@ def _js_f1559_stmt_decode(text):
     `var|let|const C=[INT,...];`
     `var|let|const D=C.map(String);`
     `var|let|const T=D.join(',').split(',').map(Number);`
+    (F1593: `join()` with no args -- default separator ","; F1594:
+    `x=>Number(x)` arrow twin for the Number callback)
     `var|let|const RESULT=T.map(function(c){return String.fromCharCode(c);}).join('');`
     (or the `c=>String.fromCharCode(c)` arrow twin)
     then end-of-text.
@@ -178294,9 +178320,16 @@ def _js_f1559_stmt_decode(text):
         if m is None:
             raise _JSExprFail(what + " not join")
         j = _js_expect(text, m, "(")
-        lit, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
-        if lit != ",":
-            raise _JSExprFail(what + " join sep not comma")
+        jj = _js_skip_ws(text, j)
+        if jj < len(text) and text[jj] == ")":
+            # F1593: join() with no arguments -- the default separator
+            # is "," (v24.20.0), so the roundtrip is still the identity.
+            j = jj
+        else:
+            lit, j = _js_f99x_parse_str(text, jj)
+            if lit != ",":
+                raise _JSExprFail(what + " join sep not comma")
+            j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
         j = _js_expect(text, j, ".")
         m = _js_match_kw(text, j, "split")
@@ -178312,9 +178345,46 @@ def _js_f1559_stmt_decode(text):
         if m is None:
             raise _JSExprFail(what + " not map2")
         j = _js_expect(text, m, "(")
-        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
-        if nm != "Number":
-            raise _JSExprFail(what + " map fn not Number")
+        jj = _js_skip_ws(text, j)
+        if text.startswith("(", jj):
+            # F1594: arrow twin (x)=>Number(x) -- the identity on decimal
+            # strings, node-exact (v24.20.0).
+            jj = _js_skip_ws(text, jj + 1)
+            p, jj = _js_parse_ident(text, jj)
+            jj = _js_expect(text, _js_skip_ws(text, jj), ")")
+            jj = _js_skip_ws(text, jj)
+            if not text.startswith("=>", jj):
+                raise _JSExprFail(what + " not arrow Number")
+            jj = _js_skip_ws(text, jj + 2)
+            nm2, jj = _js_parse_ident(text, jj)
+            if nm2 != "Number":
+                raise _JSExprFail(what + " arrow map fn not Number")
+            jj = _js_expect(text, _js_skip_ws(text, jj), "(")
+            q, jj = _js_parse_ident(text, _js_skip_ws(text, jj))
+            if q != p:
+                raise _JSExprFail(what + " arrow arg mismatch")
+            jj = _js_expect(text, _js_skip_ws(text, jj), ")")
+            j = jj
+        else:
+            nm, jj2 = _js_parse_ident(text, jj)
+            jj3 = _js_skip_ws(text, jj2)
+            if nm == "Number" and jj3 < len(text) and text[jj3] == ")":
+                j = jj3
+            elif text.startswith("=>", jj3):
+                # F1594: arrow twin x=>Number(x) (no parens).
+                p = nm
+                jj = _js_skip_ws(text, jj3 + 2)
+                nm2, jj = _js_parse_ident(text, jj)
+                if nm2 != "Number":
+                    raise _JSExprFail(what + " arrow map fn not Number")
+                jj = _js_expect(text, _js_skip_ws(text, jj), "(")
+                q, jj = _js_parse_ident(text, _js_skip_ws(text, jj))
+                if q != p:
+                    raise _JSExprFail(what + " arrow arg mismatch")
+                jj = _js_expect(text, _js_skip_ws(text, jj), ")")
+                j = jj
+            else:
+                raise _JSExprFail(what + " map fn not Number/arrow")
         j = _js_expect(text, j, ")")
         j = _js_expect(text, j, ";")
         _js_f96x_charge(state, what + " roundtrip")
@@ -178329,6 +178399,7 @@ def _js_f1560_stmt_decode(text):
 
     `var|let|const C=[INT,...];`
     `var|let|const D=Object.assign([],C);`
+    (F1595: `Object.assign(new Array(),C)` twin)
     `var|let|const RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');`
     (or the `c=>String.fromCharCode(c)` arrow twin)
     then end-of-text.
@@ -178361,8 +178432,20 @@ def _js_f1560_stmt_decode(text):
         if m is None:
             raise _JSExprFail(what + " not assign")
         j = _js_expect(text, m, "(")
-        j = _js_expect(text, _js_skip_ws(text, j), "[")
-        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        jj = _js_skip_ws(text, j)
+        if text.startswith("[", jj):
+            j = _js_expect(text, _js_skip_ws(text, jj + 1), "]")
+        elif _js_match_kw(text, jj, "new") is not None:
+            # F1595: Object.assign(new Array(), C) -- new Array() is a
+            # fresh empty array, so the copy is node-exact (v24.20.0).
+            mm = _js_match_kw(text, jj, "new")
+            nm, jj = _js_parse_ident(text, _js_skip_ws(text, mm))
+            if nm != "Array":
+                raise _JSExprFail(what + " not new Array")
+            jj = _js_expect(text, _js_skip_ws(text, jj), "(")
+            j = _js_expect(text, _js_skip_ws(text, jj), ")")
+        else:
+            raise _JSExprFail(what + " bad assign target")
         j = _js_expect(text, _js_skip_ws(text, j), ",")
         nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
         if nm != cname:
@@ -178381,18 +178464,21 @@ def _js_f1561_stmt_decode(text):
 
     `var|let|const C=[INT,...];`
     `function g(){var A=Array.prototype.slice.call(arguments);return A.map(function(c){return String.fromCharCode(c);}).join('');}`
-    (the map callback also admits the `c=>String.fromCharCode(c)` arrow twin)
+    (F1596: `function g(x)` one unused param; F1597: `var g=function(){...};`
+    function-expression twin; the map callback also admits the
+    `c=>String.fromCharCode(c)` arrow twin)
     `var|let|const RESULT=g(...C);`
     then end-of-text.
 
     Node-exact (v24.20.0): `g(...C)` spreads the code array as
     g's arguments; `Array.prototype.slice.call(arguments)` materialises
-    a dense copy A; the map+join readout is dstr. The function must
-    take zero declared parameters and its body must be exactly the
-    two statements -- anything else fails closed. Disjoint from
-    F1529 (`g.apply(null,C)`) by grammar -- the filed shape BREAKs on
-    the open tree. A miss, never a mis-decode. Returns the decoded
-    string, or None. Never evals.
+    a dense copy A; the map+join readout is dstr. The function takes
+    zero declared parameters or one unused parameter (never `arguments`
+    or a bound name), and its body must be exactly the two statements
+    -- anything else fails closed. Disjoint from F1529
+    (`g.apply(null,C)`) by grammar -- the filed shape BREAKs on the
+    open tree. A miss, never a mis-decode. Returns the decoded string,
+    or None. Never evals.
     """
     if ".slice.call(arguments)" not in text:
         return None
@@ -178404,13 +178490,42 @@ def _js_f1561_stmt_decode(text):
         bound = {cname, "RESULT", "String", "Array", "arguments"}
         j = _js_skip_ws(text, j)
         m = _js_match_kw(text, j, "function")
-        if m is None:
-            raise _JSExprFail(what + " not function decl")
-        gname, j = _js_parse_ident(text, _js_skip_ws(text, m))
-        _js_f1028f1029_check_fresh_name(gname, bound,
-                                        {"String", "Array"}, what)
-        bound.add(gname)
+        if m is not None:
+            # function declaration: function g(...) {...}
+            gname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+            _js_f1028f1029_check_fresh_name(gname, bound,
+                                            {"String", "Array"}, what)
+            bound.add(gname)
+            is_expr = False
+        else:
+            # F1597: function expression: var g=function(...) {...};
+            # (_js_f96x_decl returns j-after-=, so no "=" to consume.)
+            _, gname, jj = _js_f96x_decl(text, j)
+            _js_f1028f1029_check_fresh_name(gname, bound,
+                                            {"String", "Array"}, what)
+            bound.add(gname)
+            mm = _js_match_kw(text, _js_skip_ws(text, jj), "function")
+            if mm is None:
+                raise _JSExprFail(what + " not function")
+            j = mm
+            is_expr = True
         j = _js_expect(text, _js_skip_ws(text, j), "(")
+        jj = _js_skip_ws(text, j)
+        if jj < len(text) and text[jj] == ")":
+            j = jj
+        else:
+            # F1596: one unused declared parameter -- the body is exactly
+            # the two fixed statements and never references it, so the
+            # decode stays node-exact (v24.20.0). The name must not
+            # collide with bound names (notably `arguments`).
+            uparam, jj = _js_parse_ident(text, jj)
+            if uparam in bound:
+                raise _JSExprFail(what + " param collides")
+            bound.add(uparam)
+            jj = _js_skip_ws(text, jj)
+            if jj >= len(text) or text[jj] != ")":
+                raise _JSExprFail(what + " bad params")
+            j = jj
         j = _js_expect(text, _js_skip_ws(text, j), ")")
         j = _js_expect(text, _js_skip_ws(text, j), "{")
         _, aname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
@@ -178456,6 +178571,8 @@ def _js_f1561_stmt_decode(text):
         j = _js_expect(text, j, ")")
         j = _js_expect(text, j, ";")
         j = _js_expect(text, _js_skip_ws(text, j), "}")
+        if is_expr:
+            j = _js_expect(text, _js_skip_ws(text, j), ";")
         _js_f96x_charge(state, what + " body")
         _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
         if rname != "RESULT":
@@ -178483,18 +178600,20 @@ def _js_f1562_stmt_decode(text):
 
     `var|let|const C=[INT,...];`
     `var|let|const D=C.flat(0);`
+    (F1598: `C.flat(0.0)`; F1599: `C.flat(-0)` -- zero-valued twins)
     `var|let|const RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');`
     (or the `c=>String.fromCharCode(c)` arrow twin)
     then end-of-text.
 
     Node-exact (v24.20.0): `.flat(0)` flattens zero levels but still
     returns a fresh array -- a shallow copy of C -- so the readout is
-    dstr. Disjoint from F1432 (flat(depth>=2) double-nested) and
-    F1349 (flat()/flat(1) single-nested) by grammar: only the
-    literal `0` is admitted; F1534 (flat(1+1) computed) is a
-    different production. The filed shape BREAKs on the open tree.
-    Anything else fails closed: a miss, never a mis-decode. Returns
-    the decoded string, or None. Never evals.
+    dstr; `0.0` and `-0` are zero-valued depths with the same result.
+    Disjoint from F1432 (flat(depth>=2) double-nested) and F1349
+    (flat()/flat(1) single-nested) by grammar: only the filed
+    zero-depth shapes (`0`, `0.0`, `-0`) are admitted; F1534
+    (flat(1+1) computed) is a different production. The filed shape
+    BREAKs on the open tree. Anything else fails closed: a miss, never
+    a mis-decode. Returns the decoded string, or None. Never evals.
     """
     if ".flat(" not in text:
         return None
@@ -178516,9 +178635,19 @@ def _js_f1562_stmt_decode(text):
             raise _JSExprFail(what + " not flat")
         j = _js_expect(text, m, "(")
         j = _js_skip_ws(text, j)
-        if j >= len(text) or text[j] != "0":
+        # F1598/F1599: 0.0 and -0 are zero-valued depths -- flat() with
+        # a zero depth returns a shallow copy, node-exact (v24.20.0).
+        # Only the filed shapes (0, 0.0, -0) are admitted; anything else
+        # fails closed.
+        if text.startswith("-0", j):
+            j += 2
+        elif text.startswith("0.0", j):
+            j += 3
+        elif j < len(text) and text[j] == "0":
+            j += 1
+        else:
             raise _JSExprFail(what + " flat depth not 0")
-        j = _js_skip_ws(text, j + 1)
+        j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
         j = _js_expect(text, j, ";")
         _js_f96x_charge(state, what + " flat")

@@ -1673,6 +1673,27 @@ def _has_hidden_iframe_fallback(text):
     return False
 
 
+def _has_hidden_optgroup_text(text):
+    """True when *text* carries prose-shaped text directly inside an
+    `<optgroup>` element (not in `<option>` children).
+
+    F1590: browsers do not render non-option text in the dropdown, so
+    it is hidden from the human viewer, yet it is instruction-shaped
+    by construction (the F1024 rationale). Distinct from F1415/F1416
+    (object/applet attributes) and F1460-F1462 (iframe/fencedframe/rp
+    fallback) -- different element. Machine-token text stays quiet
+    via the prose-shape gate. Never evals.
+    """
+    for region in _scan_element_regions(text, "optgroup"):
+        # strip option children -- only direct text counts
+        direct = re.sub(r"<option\b[^>]*>.*?</option\s*>", "", region,
+                        flags=re.I | re.S)
+        direct = re.sub(r"<[^>]*>", "", direct)
+        if _is_prose_shaped(direct):
+            return True
+    return False
+
+
 def _has_hidden_fencedframe_fallback(text):
     """True when *text* carries prose-shaped text as `<fencedframe>` fallback content.
 
@@ -2639,9 +2660,15 @@ def instruction_shaped(text):
     # and from `_has_hidden_ruby_annotation` (F1462: rt/rtc only);
     # documented per detector. Machine-token fallbacks stay quiet
     # via the prose-shape gate. Never evals.
+    # F1590: `<optgroup>` direct text -- non-option text is not rendered
+    # in the dropdown, so prose there is hidden from the human reader
+    # (the F1024 rationale). Disjoint from F1460-F1462 (different
+    # element); documented per detector. Machine-token text stays
+    # quiet via the prose-shape gate. Never evals.
     return (_has_hidden_iframe_fallback(norm)
             or _has_hidden_fencedframe_fallback(norm)
-            or _has_hidden_rp_fallback(norm))
+            or _has_hidden_rp_fallback(norm)
+            or _has_hidden_optgroup_text(norm))
 
 
 class ActionRequest(object):
