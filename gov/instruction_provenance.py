@@ -1579,6 +1579,82 @@ def _has_hidden_command_label(text):
     return False
 
 
+def _has_hidden_aria_braillelabel(text):
+    """True when prose hides in an `aria-braillelabel` attribute (F1413).
+
+    F1413: the braille-label attribute is exposed only to braille
+    display users -- not rendered as page-body text -- so prose there
+    is hidden from the human reader (the F1024 rationale). Distinct
+    from F1047 (aria-label, CLOSED: `_has_hidden_aria_label` matches
+    only the aria-label attribute name). Honest machine tokens stay
+    quiet via the substantive-prose gate (3+ words). Never evals.
+    """
+    for m in re.finditer(r"<\w+\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "aria-braillelabel")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_aria_brailleroledescription(text):
+    """True when prose hides in an `aria-brailleroledescription`
+    attribute (F1414).
+
+    F1414: the braille role-description attribute is exposed only to
+    braille display users -- not rendered as page-body text -- so
+    prose there is hidden from the human reader (the F1024 rationale).
+    Distinct from F1047 (aria-label, CLOSED: the braille
+    role-description attribute is not modeled). Honest machine tokens
+    stay quiet via the substantive-prose gate (3+ words). Never evals.
+    """
+    for m in re.finditer(r"<\w+\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag,
+                                         "aria-brailleroledescription")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_object_standby(text):
+    """True when prose hides in an `<object standby>` attribute (F1415).
+
+    F1415: the standby attribute is the loading message for an
+    `<object>` element -- never rendered as page-body text -- so prose
+    there is hidden from the human reader (the F1024 rationale).
+    Distinct from the round-66-80 object-fallback triage (different
+    attribute; fallback content, not the standby attribute). Honest
+    machine tokens stay quiet via the substantive-prose gate (3+
+    words). Never evals.
+    """
+    for m in re.finditer(r"<object\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "standby")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_applet_alt(text):
+    """True when prose hides in an `<applet alt>` attribute (F1416).
+
+    F1416: the alt attribute of `<applet>` is the fallback text --
+    never rendered as page-body text when the applet loads -- so prose
+    there is hidden from the human reader (the F1024 rationale).
+    Distinct from `_has_hidden_img_alt` (matches only `<img>`
+    elements; the applet alt attribute is unmodeled). Honest machine
+    tokens stay quiet via the substantive-prose gate (3+ words).
+    Never evals.
+    """
+    for m in re.finditer(r"<applet\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "alt")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
 def _has_hidden_hidden_option(text):
     """True when prose hides in `<option hidden>` (F1064).
 
@@ -2478,8 +2554,29 @@ def instruction_shaped(text):
     # download>`) and every earlier carrier by element+attribute;
     # documented per detector. Honest machine tokens stay quiet via
     # the prose-shape gate. Never evals.
-    return (_has_hidden_isindex_prompt(norm)
-            or _has_hidden_command_label(norm))
+    if (_has_hidden_isindex_prompt(norm)
+            or _has_hidden_command_label(norm)):
+        return True
+    # F1413/F1414: `aria-braillelabel` and `aria-brailleroledescription`
+    # -- braille-only attributes, never rendered as page-body text, so
+    # prose there is hidden from the human reader (the F1024 rationale).
+    # Disjoint from F1047 (`aria-label`, CLOSED: different attribute
+    # names) and from each other (different attributes); documented per
+    # detector. Honest machine tokens stay quiet via the
+    # substantive-prose gate (3+ words). Never evals.
+    if (_has_hidden_aria_braillelabel(norm)
+            or _has_hidden_aria_brailleroledescription(norm)):
+        return True
+    # F1415/F1416: `<object standby>` and `<applet alt>` -- the standby
+    # loading message and the applet fallback text are never rendered
+    # as page-body text, so prose there is hidden from the human reader
+    # (the F1024 rationale). Disjoint from the round-66-80
+    # object-fallback triage (F1415: different attribute) and from
+    # `_has_hidden_img_alt` (F1416: `<img>`-only); documented per
+    # detector. Honest machine tokens stay quiet via the
+    # substantive-prose gate (3+ words). Never evals.
+    return (_has_hidden_object_standby(norm)
+            or _has_hidden_applet_alt(norm))
 
 
 class ActionRequest(object):
