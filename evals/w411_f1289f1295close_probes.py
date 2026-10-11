@@ -164,7 +164,8 @@ def test_p0_footer():
     ok = ("# Wave-411 lane 1 (2026-10-11)" in src
           and "F1289-F1295 CLOSED (7" in src
           and "F1260-F1288 CLOSED (29" in src
-          and "next free F1323" in src)
+          and "F1323-F1327 filed OPEN (5" in src
+          and "next free F1328" in src)
     for n in range(1289, 1296):
         ok = ok and src.count("(F%d filed" % n) == 1
     ok = (ok and src.count("[CLOSED 2026-10-11 wave-411 lane 1") == 7)
