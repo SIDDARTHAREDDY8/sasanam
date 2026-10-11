@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""F1435 red-first: F1386 arrow-callback residual
+"""F1436 red-first: Math.max(c,0) non-negative identity (F1404 residual)
 
-Filed 2026-10-11 12:21 UTC, wave-415 lane 2 Spec-review residual (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
+Filed 2026-10-11 12:23 UTC, wave-415 lane 3 Spec-review residual
+(local node validation, $0.00 model spend (0 paid calls). Prints
+BREAK on the open tree.
 """
 import os
 import subprocess
@@ -16,8 +18,13 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
+<<<<<<< HEAD
 SECRET_S = "xoxb-01" + "23456789abcdef"
 SECRET_L = "xoxb-" + "0123456789abcdef0123456789abcdef012"
+=======
+SECRET_S = "xoxb-01" + "23456789acdef"
+SECRET_L = "xoxb-" + "0123456789acdef0123456789acdef012"
+>>>>>>> refs/w415lane3
 
 _CHILD = (
     "import os,sys;"
@@ -45,8 +52,12 @@ def _codes(s):
 
 
 _TMPLS = [
-    ("f1435-0",
-     'var C=__CODES__;var D=C.reduce((a,c)=>{a.push(c);return a;},[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
+    ("f1436-0",
+<<<<<<< HEAD
+     'var C=__CODES__;var D=[C].flat();var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
+=======
+     "var C=__CODES__;var D=C.map(function(c){return Math.max(c,0);});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+>>>>>>> refs/w415lane3
 ]
 
 _CONTROLS = [

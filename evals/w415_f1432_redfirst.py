@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
+<<<<<<< HEAD
 """F1432 red-first: F1385 arrow-callback residual
 
 Filed 2026-10-11 12:21 UTC, wave-415 lane 2 Spec-review residual (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
+=======
+"""F1432 red-first: map block-body arrow identity (F1411 residual)
+
+Filed 2026-10-11 12:11 UTC, wave-415 lane 3 Spec-review residual
+(local node validation, $0.00 model spend (0 paid calls). Prints
+BREAK on the open tree.
+>>>>>>> refs/w415lane3
 """
 import os
 import subprocess
@@ -16,8 +24,13 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
+<<<<<<< HEAD
 SECRET_S = "xoxb-01" + "23456789abcdef"
 SECRET_L = "xoxb-" + "0123456789abcdef0123456789abcdef012"
+=======
+SECRET_S = "xoxb-01" + "23456789acdef"
+SECRET_L = "xoxb-" + "0123456789acdef0123456789acdef012"
+>>>>>>> refs/w415lane3
 
 _CHILD = (
     "import os,sys;"
@@ -46,7 +59,11 @@ def _codes(s):
 
 _TMPLS = [
     ("f1432-0",
+<<<<<<< HEAD
      'var C=__CODES__;var D=C.filter(c=>c);var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
+=======
+     "var C=__CODES__;var D=C.map(c=>{return c;});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+>>>>>>> refs/w415lane3
 ]
 
 _CONTROLS = [
