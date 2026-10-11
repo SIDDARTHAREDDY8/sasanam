@@ -1655,6 +1655,57 @@ def _has_hidden_applet_alt(text):
     return False
 
 
+def _has_hidden_iframe_fallback(text):
+    """True when *text* carries prose-shaped text as `<iframe>` fallback content.
+
+    F1460: fallback content renders only when iframes are unsupported,
+    so on any modern agent/host it is hidden from the human reader
+    (the F1024 rationale). Distinct from `_has_hidden_iframe_srcdoc`
+    (srcdoc attribute) and `_has_hidden_iframe_name` (name attribute)
+    -- this models only the element's inner fallback content.
+    Machine-token fallbacks stay quiet via the prose-shape gate.
+    Never evals.
+    """
+    for region in _scan_element_regions(text, "iframe"):
+        inner = re.sub(r"<[^>]*>", "", region)
+        if _is_prose_shaped(inner):
+            return True
+    return False
+
+
+def _has_hidden_fencedframe_fallback(text):
+    """True when *text* carries prose-shaped text as `<fencedframe>` fallback content.
+
+    F1461: fallback content renders only when fencedframe is
+    unsupported, so on any modern agent/host it is hidden from the
+    human reader (the F1024 rationale). No existing detector models
+    fencedframe (novel element). Machine-token fallbacks stay quiet
+    via the prose-shape gate. Never evals.
+    """
+    for region in _scan_element_regions(text, "fencedframe"):
+        inner = re.sub(r"<[^>]*>", "", region)
+        if _is_prose_shaped(inner):
+            return True
+    return False
+
+
+def _has_hidden_rp_fallback(text):
+    """True when *text* carries prose-shaped text in a `<rp>` element.
+
+    F1462: rp fallback parentheses render only when ruby is
+    unsupported, so on any modern agent/host prose there is hidden
+    from the human reader (the F1024 rationale). Distinct from
+    `_has_hidden_ruby_annotation` (rt/rtc elements, different
+    elements). Honest fallback parentheses (")" / "(") stay quiet
+    via the prose-shape gate. Never evals.
+    """
+    for region in _scan_element_regions(text, "rp"):
+        inner = re.sub(r"<[^>]*>", "", region)
+        if _is_prose_shaped(inner):
+            return True
+    return False
+
+
 def _has_hidden_hidden_option(text):
     """True when prose hides in `<option hidden>` (F1064).
 
@@ -2575,8 +2626,22 @@ def instruction_shaped(text):
     # `_has_hidden_img_alt` (F1416: `<img>`-only); documented per
     # detector. Honest machine tokens stay quiet via the
     # substantive-prose gate (3+ words). Never evals.
-    return (_has_hidden_object_standby(norm)
-            or _has_hidden_applet_alt(norm))
+    if (_has_hidden_object_standby(norm)
+            or _has_hidden_applet_alt(norm)):
+        return True
+    # F1460/F1461/F1462: `<iframe>` / `<fencedframe>` fallback content
+    # and `<rp>` fallback content -- fallback regions never rendered
+    # as page-body text on a modern host, so prose there is hidden
+    # from the human reader (the F1024 rationale). Disjoint from
+    # `_has_hidden_iframe_srcdoc` / `_has_hidden_iframe_name`
+    # (F1460: attributes, not inner content), from
+    # `_has_hidden_media_fallback` (F1460/F1461: video/audio only),
+    # and from `_has_hidden_ruby_annotation` (F1462: rt/rtc only);
+    # documented per detector. Machine-token fallbacks stay quiet
+    # via the prose-shape gate. Never evals.
+    return (_has_hidden_iframe_fallback(norm)
+            or _has_hidden_fencedframe_fallback(norm)
+            or _has_hidden_rp_fallback(norm))
 
 
 class ActionRequest(object):
