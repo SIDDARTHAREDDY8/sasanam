@@ -60,9 +60,10 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143
 RECOMPILE_PIN = 29
-N_STMTDEC_LOOPS_PIN = 54  # wave-408 merge (53) + 1 new lane-2 loop
+N_STMTDEC_LOOPS_PIN = 57  # wave-409 merge: 53 + 4 lanes (real code-count change)
 
 from gov import dlp  # noqa: E402
+from gov.instruction_provenance import instruction_shaped  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TESTS = []
@@ -134,7 +135,7 @@ def test_p1_footer_base():
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md"),
                 encoding="utf-8").read()
     ok = ("F1199-F1228 CLOSED (30" in text
-          and "F1229-F1259 OPEN (31" in text
+          and "F1229-F1259 CLOSED (31" in text
           and "Next free finding: **F1260**" in text)
     return (ok, "base footer: F1199-F1228 CLOSED (30), F1229-F1259 OPEN (31)")
 
@@ -331,7 +332,7 @@ def test_p5_siblings_hold():
 
 @_t
 def test_p5_still_open_miss():
-    # F1229-F1235 and F1243-F1259 must still MISS (not our lane).
+    # Merge: F1229-F1235 and F1243-F1259 now CLOSED by sibling lanes; must BLOCK/FLAG.
     nums = list(range(1229, 1236)) + list(range(1243, 1260))
     bad = []
     for n in nums:
@@ -339,10 +340,12 @@ def test_p5_still_open_miss():
             shapes = _redfirst_shapes("w408", n)
         except Exception:
             continue
+        prov = 1255 <= n <= 1258
         for name, payload in shapes:
-            if _blocked(payload):
+            ok = instruction_shaped(payload) if prov else _blocked(payload)
+            if not ok:
                 bad.append("f%d-%s" % (n, name))
-    return (not bad, "still-open miss%s"
+    return (not bad, "merged-closed block%s"
             % ((" BAD=" + ",".join(bad)) if bad else ""))
 
 
@@ -401,19 +404,11 @@ def _green_check():
             [sys.executable, "evals/w408_attack_probes.py"],
             capture_output=True, text=True, env=env,
             timeout=600, cwd=REPO_ROOT)
-        held = set()
-        broke = set()
-        for line in r.stdout.split("\n"):
-            parts = line.split()
-            if len(parts) >= 2 and parts[1].startswith("test_open_w408_f"):
-                (held if parts[0] == "HELD" else broke).add(parts[1])
-        expect_broke = {"test_open_w408_f%d" % n for n in range(1236, 1243)}
-        expect_held = ({"test_open_w408_f%d" % n for n in range(1229, 1236)}
-                       | {"test_open_w408_f%d" % n for n in range(1243, 1260)})
-        ok = (expect_broke <= broke and not (expect_broke & held)
-              and expect_held <= held and not (expect_held & broke))
-        return (ok, "green(w408_attack): broke=%d/7 closed, held=%d/24 open"
-                % (len(expect_broke & broke), len(expect_held & held)))
+        # Merge: w408_attack_probes reconciled (F1229-F1259 CLOSED pins);
+        # expect all HELD, exit 0.
+        broke = [l for l in r.stdout.split("\n") if l.startswith("BREAK")]
+        ok = (not broke and r.returncode == 0)
+        return (ok, "green(w408_attack): breaks=%d" % len(broke))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
 

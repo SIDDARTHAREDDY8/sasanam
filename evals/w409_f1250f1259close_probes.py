@@ -67,7 +67,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 29
-N_STMTDEC_LOOPS_PIN = 54  # wave-409 lane 4: +1 dispatch loop (F1250/F1251/F1252/F1253/F1254/F1259)
+N_STMTDEC_LOOPS_PIN = 57  # wave-409 merge: 53 + 4 lanes (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -163,7 +163,7 @@ def test_p0_footer():
         src = f.read()
     ok = ("# Wave-409 lane 4 (2026-10-11)" in src
           and "F1250-F1259 CLOSED (10" in src
-          and "F1229-F1249 OPEN (21" in src
+          and "F1229-F1259 CLOSED (31" in src
           and "next free F1260" in src)
     for n in range(1250, 1260):
         ok = ok and src.count("(F%d filed" % n) == 1
@@ -434,7 +434,7 @@ def test_p6_perf():
 
 @_t
 def test_p7_other_opens_miss():
-    """F1229-F1249 (attack round 76 decoder opens, other lanes) still MISS.
+    """Merge: F1229-F1249 now CLOSED by sibling lanes; must BLOCK.
 
     Note: instruction_shaped is NOT checked here -- these are
     decoder-seam findings, and instruction_shaped flagging a JS
@@ -445,9 +445,9 @@ def test_p7_other_opens_miss():
     for n in range(1229, 1250):
         shapes = _redfirst_shapes("w408", n)
         for name, payload in shapes:
-            if _blocked(payload):
+            if not _blocked(payload):
                 bad.append("f%d:%s" % (n, name))
-    return (not bad, "other opens still miss%s"
+    return (not bad, "merged-closed block%s"
             % ("" if not bad else ": " + ",".join(bad[:5])))
 
 
@@ -473,15 +473,16 @@ def _green_check():
         held = set()
         broken = set()
         for line in out.split("\n"):
-            m = re.search(r"(HELD|BREAK)\s+test_open_w408_f(\d+)", line)
+            m = re.search(r"(HELD|BREAK)\s+test_closed_w408_f(\d+)", line)
             if m:
                 (held if m.group(1) == "HELD" else broken).add(int(m.group(2)))
-        expected_broken = set(range(1250, 1260))
-        expected_held = set(range(1229, 1250))
-        ok = (expected_broken <= broken and not (expected_broken & held)
-              and expected_held <= held)
-        return (ok, "green(w408_attack): flipped=%d/10 held=%d/21%s"
-                % (len(expected_broken & broken), len(expected_held & held),
+        # Merge: w408_attack_probes reconciled (F1229-F1259 CLOSED pins);
+        # expect all 31 closed pins HELD, no BREAKs. Non-vacuous: require
+        # the expected pin set to be present.
+        expected = set(range(1229, 1260))
+        ok = (not broken and expected <= held and r.returncode == 0)
+        return (ok, "green(w408_attack): held=%d/31 breaks=%d%s"
+                % (len(expected & held), len(broken),
                    "" if ok else " MISMATCH"))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)

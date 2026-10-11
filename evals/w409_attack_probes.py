@@ -109,15 +109,7 @@ for _n in range(1260, 1283):
 for _n in range(1283, 1289):
     _open_prov_pin("w409", _n)
 
-# Round-76 decoder pins carried forward (F1229-F1254 + F1259) -- still OPEN.
-for _n in range(1229, 1255):
-    _open_pin("w408", _n)
-_open_pin("w408", 1259)
-
-# Round-76 provenance pins carried forward (F1255-F1258) -- still OPEN.
-for _n in range(1255, 1259):
-    _open_prov_pin("w408", _n)
-
+# Round-76 pins (F1229-F1259) now CLOSED -- covered by w408_attack_probes.
 
 @_t
 def test_c0_junk_quiet():
@@ -130,7 +122,7 @@ def test_c0_junk_quiet():
 
 @_t
 def test_green_w408():
-    """Depth-1 green check on w408's battery (carries F1229-F1259 OPEN pins)."""
+    """Depth-1 green check on w408's battery (now carries F1229-F1259 CLOSED pins)."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         print("HELD  test_green_w408 (skipped: GOV_SKIP_GREEN=1)")
         return True

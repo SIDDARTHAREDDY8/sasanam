@@ -58,7 +58,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 29
-STMTDEC_PIN = 54  # wave-408 merge: 53 + 1 lane (real code-count change)
+STMTDEC_PIN = 57  # wave-409 merge: 53 + 4 lanes (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -264,7 +264,7 @@ def test_p0_stmtdec_pin():
 
 @_t
 def test_p0_footer_state():
-    """Lane-local: F1229-F1235 stamped CLOSED; F1236-F1259 OPEN."""
+    """Merge: F1229-F1259 stamped CLOSED (wave-409 lanes 1-4)."""
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         text = f.read()
     bad = []
@@ -274,8 +274,8 @@ def test_p0_footer_state():
             bad.append("F%d-not-closed" % num)
     for num in range(1236, 1260):
         m = re.search(r"\(F%d filed .*?; LOW, (OPEN|\[CLOSED)" % num, text)
-        if not m or not m.group(1) == "OPEN":
-            bad.append("F%d-not-open" % num)
+        if not m or not m.group(1).startswith("[CLOSED"):
+            bad.append("F%d-not-closed" % num)
     ok = not bad
     print(("HELD " if ok else "BREAK") + " test_p0_footer_state%s"
           % ("" if ok else ": " + ",".join(bad)))
@@ -384,20 +384,14 @@ def test_green_w408():
             capture_output=True, text=True, timeout=600, env=env,
             cwd=tmpd)
         out = (r.stdout or "") + (r.stderr or "")
-        # Expect exactly the F1229-F1235 pins to flip (7 findings x pins).
-        # Parse BREAK lines; all other pins must HELD.
+        # Merge: w408_attack_probes is reconciled (F1229-F1259 CLOSED pins);
+        # expect it fully green (all HELD, exit 0).
         broke = [l for l in out.split("\n") if l.startswith("BREAK")]
-        # F1229-F1235 pins contain f1229..f1235 in their names
-        expected = [l for l in broke if re.search(r"f122[9]|f123[0-5]", l)]
-        unexpected = [l for l in broke if not re.search(r"f122[9]|f123[0-5]", l)]
-        ok = (len(expected) >= 7 and not unexpected and r.returncode != 0)
-        # The battery exits nonzero when pins break; that's expected.
-        # What matters: ONLY the F1229-F1235 pins broke.
+        ok = (not broke and r.returncode == 0)
         print(("HELD " if ok else "BREAK") +
-              " test_green_w408 (expected flips=%d unexpected=%d)"
-              % (len(expected), len(unexpected)))
+              " test_green_w408 (breaks=%d)" % len(broke))
         if not ok:
-            print("  unexpected breaks:", unexpected[:5])
+            print("  breaks:", broke[:5])
         return ok
     except Exception as e:
         print("BREAK test_green_w408 (exec failed: %s)" % e)

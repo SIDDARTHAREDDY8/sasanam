@@ -59,9 +59,10 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 29
-STMTDEC_PIN = 54  # wave-409 lane 3: base 53 + 1 new loop (real code-count change)
+STMTDEC_PIN = 57  # wave-409 merge: 53 + 4 lanes (real code-count change)
 
 from gov import dlp  # noqa: E402
+from gov.instruction_provenance import instruction_shaped  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 TESTS = []
@@ -417,13 +418,15 @@ def test_sibling_closed_still_hit():
 
 @_t
 def test_still_open():
-    """F1229-F1242, F1250-F1259 (other lanes' scope) still MISS."""
+    """Merge: F1229-F1242, F1250-F1259 now CLOSED by sibling lanes; must BLOCK/FLAG."""
     bad = []
     total = 0
     for num in list(range(1229, 1243)) + list(range(1250, 1260)):
         for name, payload in _redfirst_shapes("w408", num):
             total += 1
-            if _misses(payload):
+            prov = 1255 <= num <= 1258
+            hit = instruction_shaped(payload) if prov else not _misses(payload)
+            if hit:
                 continue
             bad.append("f%d" % num)
             break
@@ -502,17 +505,14 @@ def test_green_w408():
         r = subprocess.run([sys.executable, child],
                            capture_output=True, text=True, env=env,
                            timeout=900, cwd=os.path.join(REPO_ROOT, "evals"))
-        held, broke = set(), set()
-        for line in (r.stdout or "").split("\n"):
-            parts = line.split()
-            if len(parts) >= 2 and parts[1].startswith("test_open_w408_f"):
-                (held if parts[0] == "HELD" else broke).add(parts[1])
-        expect_broke = {"test_open_w408_f%d" % n for n in range(1243, 1250)}
-        ok = (expect_broke <= broke and not (expect_broke & held))
+        # Merge: w408_attack_probes reconciled (F1229-F1259 CLOSED pins);
+        # expect all HELD, exit 0.
+        broke = [l for l in (r.stdout or "").split("\n") if l.startswith("BREAK")]
+        ok = (not broke and r.returncode == 0)
         print(("HELD " if ok else "BREAK") +
-              " test_green_w408 (broke=%d held=%d)" % (len(broke), len(held)))
+              " test_green_w408 (breaks=%d)" % len(broke))
         if not ok:
-            print("  broke: %s" % sorted(broke))
+            print("  breaks: %s" % broke[:5])
             print("  held: %s" % sorted(held))
         return ok
     except Exception as e:

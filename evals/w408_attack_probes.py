@@ -56,13 +56,13 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-408 merged footer (F1199-F1228 CLOSED (30);
-    F1229-F1259 OPEN (31); next free F1260)."""
+    """Control: wave-409 merged footer (F1229-F1259 CLOSED (31);
+    F1260-F1288 OPEN (29); next free F1289)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1199-F1228 CLOSED (30" in text
-          and "F1229-F1259 OPEN (31" in text
-          and "next free F1260" in text)
+    ok = ("F1229-F1259 CLOSED (31" in text
+          and "F1260-F1288 OPEN (29" in text
+          and "next free F1289" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -103,14 +103,18 @@ def _open_prov_pin(prefix, num):
     return _fn
 
 
-# New round-76 decoder pins (F1229-F1254 + F1259) -- still OPEN. (F1228 renumbered to F1259; lane 4's F1228 CLOSED.)
-for _n in range(1229, 1255):
-    _open_pin("w408", _n)
-_open_pin("w408", 1259)
-
-# New round-76 provenance pins (F1255-F1258) -- still OPEN.
-for _n in range(1255, 1259):
-    _open_prov_pin("w408", _n)
+def _closed_prov_pin(prefix, num):
+    """All red-first shapes for a CLOSED provenance finding must now FLAG."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _quiet(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
 
 def _closed_pin(prefix, num):
     """All red-first shapes for a CLOSED decoder finding must now BLOCK."""
@@ -124,6 +128,18 @@ def _closed_pin(prefix, num):
         return ok
     _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
     return _fn
+
+# Round-76 decoder pins (F1229-F1254 + F1259) -- CLOSED by wave-409 lanes 1-4.
+for _n in range(1229, 1255):
+    _closed_pin("w408", _n)
+_closed_pin("w408", 1259)
+
+# Round-76 provenance pins (F1255-F1258) -- CLOSED by wave-409 lane 4.
+for _n in range(1255, 1259):
+    _closed_prov_pin("w408", _n)
+
+
+
 
 
 # Round-75 pins carried forward -- CLOSED by wave-408 lanes.
