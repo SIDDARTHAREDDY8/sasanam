@@ -1019,6 +1019,31 @@ def _has_hidden_meta_descriptions(text):
     return False
 
 
+def _has_hidden_meta_plain_description(text):
+    """True when prose hides in a plain `<meta name="description">`
+    content attribute (F1151).
+
+    F1151: F1064's `_has_hidden_meta_descriptions` covers only the
+    og: (`property="og:description"`) and twitter:
+    (`name="twitter:description"`) social-card variants. The plain
+    `<meta name="description">` is page metadata, never rendered in
+    the page body, so prose in its content attribute is hidden from
+    the human reader (the F1024 rationale). Honest machine tokens
+    stay quiet. Disjoint from F1064's variants (`name="description"`
+    != `name="twitter:description"`; the og: variant uses the
+    `property` attribute, not `name`). Never evals.
+    """
+    for m in re.finditer(r"<meta\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        name, has_name = _f1047_attr_value(tag, "name")
+        if not (has_name and name.lower() == "description"):
+            continue
+        content, has_content = _f1047_attr_value(tag, "content")
+        if has_content and _is_prose_shaped(content):
+            return True
+    return False
+
+
 def _has_hidden_hidden_option(text):
     """True when prose hides in `<option hidden>` (F1064).
 
@@ -1488,6 +1513,25 @@ def _has_hidden_vtt_cue_text(text):
     return False
 
 
+def _has_hidden_track_label(text):
+    """True when prose hides in a `<track>` label attribute (F1152).
+
+    F1152: the `label` attribute of a `<track>` element is never
+    rendered inline -- it surfaces only in a player captions menu --
+    so prose there is hidden from the human reader (the F1024
+    rationale). Disjoint from the round-68 `<track
+    kind="descriptions">` triage-out (that covered the `kind`
+    attribute value, not `label`) and from F1085's WebVTT cue payload
+    text (a different shape: cue payloads, not element attributes).
+    Honest machine tokens stay quiet. Never evals.
+    """
+    for m in re.finditer(r"<track\b[^>]*>", text, re.I):
+        label, has_label = _f1047_attr_value(m.group(0), "label")
+        if has_label and _is_prose_shaped(label):
+            return True
+    return False
+
+
 def _has_hidden_img_longdesc(text):
     """True when prose hides in an `<img longdesc>` (F1085).
 
@@ -1782,8 +1826,19 @@ def instruction_shaped(text):
     # rendered inline in the consuming view. Disjoint from F1073's
     # <annotation> and F1079's <maction> toggle <mtext> (different
     # elements, documented per detector).
-    return (_has_hidden_ruby_annotation(norm)
-            or _has_hidden_mphantom(norm))
+    if (_has_hidden_ruby_annotation(norm)
+            or _has_hidden_mphantom(norm)):
+        return True
+    # F1151/F1152: the same construction for two further
+    # hidden-from-human carriers -- plain `<meta name="description">`
+    # content and the `<track>` label attribute. Both are
+    # metadata/chrome never rendered inline in the consuming view,
+    # so prose there is hidden from the human reader (the F1024
+    # rationale). Disjoint from F1064's og:/twitter: meta
+    # descriptions and from the round-68 track-kind triage-out
+    # (documented per detector).
+    return (_has_hidden_meta_plain_description(norm)
+            or _has_hidden_track_label(norm))
 
 
 class ActionRequest(object):
