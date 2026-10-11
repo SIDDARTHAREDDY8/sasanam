@@ -1543,6 +1543,42 @@ def _has_hidden_area_download(text):
     return False
 
 
+def _has_hidden_isindex_prompt(text):
+    """True when prose hides in an `<isindex prompt>` attribute (F1368).
+
+    F1368: the (obsolete) isindex element is dropped by the HTML5
+    parser -- never rendered as page-body text -- so prose in its
+    prompt attribute is hidden from the human reader (the F1024
+    rationale). Honest machine tokens (abc123xyz) stay quiet via the
+    prose-shape gate. Disjoint from every earlier carrier by
+    element+attribute. Never evals.
+    """
+    for m in re.finditer(r"<isindex\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "prompt")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_command_label(text):
+    """True when prose hides in a `<command label>` attribute (F1369).
+
+    F1369: the (obsolete) command element is dropped by the HTML5
+    parser -- never rendered as page-body text -- so prose in its
+    label attribute is hidden from the human reader (the F1024
+    rationale). Honest machine tokens (abc123xyz) stay quiet via the
+    prose-shape gate. Disjoint from every earlier carrier by
+    element+attribute. Never evals.
+    """
+    for m in re.finditer(r"<command\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "label")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
 def _has_hidden_hidden_option(text):
     """True when prose hides in `<option hidden>` (F1064).
 
@@ -2432,7 +2468,18 @@ def instruction_shaped(text):
     # download attribute is the suggested filename, never rendered
     # as page-body text (the F1024 rationale). Honest filenames
     # stay quiet via the prose-shape gate. Never evals.
-    return _has_hidden_area_download(norm)
+    if _has_hidden_area_download(norm):
+        return True
+    # F1368/F1369: `<isindex prompt>` and `<command label>` -- two
+    # further obsolete-element attribute carriers. Both elements are
+    # dropped by the HTML5 parser (never rendered as page-body
+    # text), so prose in their attributes is hidden from the human
+    # reader (the F1024 rationale). Disjoint from F1359 (`<area
+    # download>`) and every earlier carrier by element+attribute;
+    # documented per detector. Honest machine tokens stay quiet via
+    # the prose-shape gate. Never evals.
+    return (_has_hidden_isindex_prompt(norm)
+            or _has_hidden_command_label(norm))
 
 
 class ActionRequest(object):
