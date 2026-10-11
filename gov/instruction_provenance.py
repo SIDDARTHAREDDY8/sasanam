@@ -1694,6 +1694,50 @@ def _has_hidden_optgroup_text(text):
     return False
 
 
+def _has_hidden_datalist_text(text):
+    """True when *text* carries prose-shaped text directly inside a
+    `<datalist>` element (not in `<option>` children).
+
+    F1637: browsers render only the option suggestions from a
+    datalist; non-option direct text is never shown to the human
+    viewer, yet it is instruction-shaped by construction (the F1024
+    rationale). Distinct from F1590 (`<optgroup>` direct text) --
+    different element. Machine-token text stays quiet via the
+    prose-shape gate. Never evals.
+    """
+    for region in _scan_element_regions(text, "datalist"):
+        # strip option children -- only direct text counts
+        direct = re.sub(r"<option\b[^>]*>.*?</option\s*>", "", region,
+                        flags=re.I | re.S)
+        direct = re.sub(r"<[^>]*>", "", direct)
+        if _is_prose_shaped(direct):
+            return True
+    return False
+
+
+def _has_hidden_select_text(text):
+    """True when *text* carries prose-shaped text directly inside a
+    `<select>` element (not in `<option>`/`<optgroup>` children).
+
+    F1638: browsers render only option/optgroup labels from a select;
+    direct text outside those children is never shown to the human
+    viewer, yet it is instruction-shaped by construction (the F1024
+    rationale). Distinct from F1590 (`<optgroup>`) and F1637
+    (`<datalist>`) -- different element. Machine-token text stays
+    quiet via the prose-shape gate. Never evals.
+    """
+    for region in _scan_element_regions(text, "select"):
+        # strip option/optgroup children -- only direct text counts
+        direct = re.sub(r"<option\b[^>]*>.*?</option\s*>", "", region,
+                        flags=re.I | re.S)
+        direct = re.sub(r"<optgroup\b[^>]*>.*?</optgroup\s*>", "", direct,
+                        flags=re.I | re.S)
+        direct = re.sub(r"<[^>]*>", "", direct)
+        if _is_prose_shaped(direct):
+            return True
+    return False
+
+
 def _has_hidden_fencedframe_fallback(text):
     """True when *text* carries prose-shaped text as `<fencedframe>` fallback content.
 
@@ -2665,10 +2709,19 @@ def instruction_shaped(text):
     # (the F1024 rationale). Disjoint from F1460-F1462 (different
     # element); documented per detector. Machine-token text stays
     # quiet via the prose-shape gate. Never evals.
+    # F1637: `<datalist>` direct text -- non-option text is never
+    # rendered (only option suggestions show). F1638: `<select>`
+    # direct text outside option/optgroup children is never rendered.
+    # Both hidden from the human reader by construction (the F1024
+    # rationale); disjoint from F1590 by element; documented per
+    # detector. Machine-token text stays quiet via the prose-shape
+    # gate. Never evals.
     return (_has_hidden_iframe_fallback(norm)
             or _has_hidden_fencedframe_fallback(norm)
             or _has_hidden_rp_fallback(norm)
-            or _has_hidden_optgroup_text(norm))
+            or _has_hidden_optgroup_text(norm)
+            or _has_hidden_datalist_text(norm)
+            or _has_hidden_select_text(norm))
 
 
 class ActionRequest(object):
