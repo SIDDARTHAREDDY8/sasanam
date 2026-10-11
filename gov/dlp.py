@@ -179416,6 +179416,573 @@ def _js_f1569_stmt_decode(text):
                                                 sname, state, what)
     except _JSExprFail:
         return None
+# ---------------------------------------------------------------------------
+# Wave-420 lane 4 (F1600-F1607): flat(false) shallow copy, spread-literal
+# copy staging, concat-with-spread trailing-comma staging, one-statement
+# EM-SPACE trim readout, flatMap 1-param null-thisArg staging,
+# padStart-default-padString staging, sort-without-slice staging, and
+# non-swapped substring identity readout decoders.
+# ---------------------------------------------------------------------------
+
+def _js_f1600_stmt_decode(text):
+    """Decode F1600 flat(false) shallow-copy staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.flat(false);`
+    `var|let|const RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');`
+    (or the `c=>String.fromCharCode(c)` arrow twin)
+    then end-of-text.
+
+    Node-exact (v24.20.0): `.flat(false)` coerces `false` to 0 --
+    flattens zero levels but still returns a fresh array, a shallow
+    copy of C, so the readout is dstr. Disjoint from F1562
+    (flat(0) literal), F1432 (flat(depth>=2)), F1349 (flat()/flat(1)),
+    and F1534 (flat(1+1) computed) by grammar -- the filed shape
+    BREAKs on the open tree. Anything else fails closed: a miss, never
+    a mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if ".flat(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1600"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"}, what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " flat base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "flat")
+        if m is None:
+            raise _JSExprFail(what + " not flat")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        m2 = _js_match_kw(text, j, "false")
+        if m2 is None:
+            raise _JSExprFail(what + " flat arg not false")
+        j = _js_skip_ws(text, m2)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " flat")
+        return _js_f1558f1563_parse_mapjoin_result(text, j, dname, dstr,
+                                                   state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1601_stmt_decode(text):
+    """Decode F1601 spread-literal copy staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=[...C];`
+    `var|let|const RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');`
+    (or the `c=>String.fromCharCode(c)` arrow twin)
+    then end-of-text.
+
+    Node-exact (v24.20.0): `[...C]` spreads C's elements into a fresh
+    array literal -- a shallow copy of C -- so the readout is dstr.
+    Disjoint from F1563 (`[].concat(...C)`), F1387 (`[].concat(C)` /
+    `C.concat([])` no-spread), and F1538 (`[].concat(...[C])` spread of
+    a singleton literal) by grammar -- the filed shape BREAKs on the
+    open tree. Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "[..." not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1601"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"}, what)
+        bound.add(dname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail(what + " not spread")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        if nm != cname:
+            raise _JSExprFail(what + " spread arg mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " spreadlit")
+        return _js_f1558f1563_parse_mapjoin_result(text, j, dname, dstr,
+                                                   state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1602_stmt_decode(text):
+    """Decode F1602 concat-with-spread trailing-comma staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=[].concat(...C,);`
+    `var|let|const RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');`
+    (or the `c=>String.fromCharCode(c)` arrow twin)
+    then end-of-text.
+
+    Node-exact (v24.20.0): `[].concat(...C,)` spreads C's elements as
+    concat arguments (the trailing comma is a no-op in the argument
+    list), producing a fresh array copy of C, so the readout is dstr.
+    Disjoint from F1563 (`[].concat(...C)` no trailing comma),
+    F1387, and F1538 by grammar -- the filed shape BREAKs on the open
+    tree. Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ".concat(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1602"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"}, what)
+        bound.add(dname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "concat")
+        if m is None:
+            raise _JSExprFail(what + " not concat")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail(what + " not spread")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        if nm != cname:
+            raise _JSExprFail(what + " spread arg mismatch")
+        # F1602: the trailing comma is REQUIRED (disjoint from F1563's
+        # no-trailing-comma form by grammar).
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " concat")
+        return _js_f1558f1563_parse_mapjoin_result(text, j, dname, dstr,
+                                                   state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1603_stmt_decode(text):
+    """Decode F1603 one-statement EM-SPACE trim readout (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const RESULT=('<ws>'+S+'<ws>').trim();` (ws non-empty, whitespace-only)
+    then end-of-text.
+
+    Node-exact (v24.20.0): the parenthesized concatenation is
+    whitespace-padded S; `.trim()` removes the padding. The trim is the
+    identity iff S neither starts nor ends with a trim-whitespace code
+    point (checked via _js_f1272_check_trim_safe) and the affixes are
+    whitespace-only (checked against _F1272_TRIM_WS, which includes
+    U+2003 EM SPACE). Disjoint from F1272 (one-statement wrapper with a
+    different RESULT shape) and F1549 (two-statement T+RESULT) by
+    grammar -- the filed shape BREAKs on the open tree. Anything else
+    fails closed: a miss, never a mis-decode. Returns the decoded
+    string, or None. Never evals.
+    """
+    if ".trim()" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1603"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+        bound = {cname, "RESULT", "String"}
+        sname, j = _js_f1206f1212_parse_h_mapjoin(text, j, cname,
+                                                 bound, state, what)
+        _js_f1272_check_trim_safe(dstr, what)
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        pre, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if not pre or any(ch not in _F1272_TRIM_WS for ch in pre):
+            raise _JSExprFail(what + " pre not ws")
+        j = _js_expect(text, _js_skip_ws(text, j), "+")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " concat base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "+")
+        suf, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if not suf or any(ch not in _F1272_TRIM_WS for ch in suf):
+            raise _JSExprFail(what + " suf not ws")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "trim")
+        if m is None:
+            raise _JSExprFail(what + " not trim")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        if j != len(text):
+            raise _JSExprFail(what + " trailing")
+        _js_f96x_charge(state, what + " trim1")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1604_stmt_decode(text):
+    """Decode F1604 flatMap 1-param null-thisArg staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const E=C.flatMap(<cb>,null);` where `<cb>` is
+      `function(c){return [String.fromCharCode(c)];}` (exactly 1 param) or
+      `(c)=>[String.fromCharCode(c)]` / `c=>[String.fromCharCode(c)]`,
+    `var|let|const S=E.join('');`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the 1-param callback returns the singleton
+    `[String.fromCharCode(c)]` per element; flatMap flattens one level
+    so E is the char array; the null thisArg is never read by a
+    1-param callback that does not reference `this`. Disjoint from
+    F1546 (1-param, []/"x" thisArg), F1350 (1-param, no thisArg), F1377
+    (2-param), F1449 (3-param), F1504 (4+ param, {} thisArg), F1518
+    (4-param null thisArg) by grammar -- the filed shape BREAKs on the
+    open tree. Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ".flatMap(" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1604"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+        bound = {cname, "RESULT", "String"}
+        _, ename, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(ename, bound, {"String"}, what)
+        bound.add(ename)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " flatMap base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "flatMap")
+        if m is None:
+            raise _JSExprFail(what + " not flatMap")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        m2 = _js_match_kw(text, j, "function")
+        if m2 is not None:
+            j = _js_expect(text, m2, "(")
+            p, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            _js_f1028f1029_check_fresh_name(p, bound, {"String"}, what)
+            j = _js_skip_ws(text, j)
+            if j < len(text) and text[j] == ",":
+                raise _JSExprFail(what + " not 1-param")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, _js_skip_ws(text, j), "{")
+            m3 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+            if m3 is None:
+                raise _JSExprFail(what + " no return")
+            j = _js_expect(text, _js_skip_ws(text, m3), "[")
+            j = _js_f1090f1091f1097_parse_fcc1(text, _js_skip_ws(text, j),
+                                               p, what)
+            j = _js_expect(text, j, "]")
+            j = _js_expect(text, j, ";")
+            j = _js_expect(text, _js_skip_ws(text, j), "}")
+        else:
+            n = len(text)
+            if j < n and text[j] == "(":
+                p, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+                _js_f1028f1029_check_fresh_name(p, bound, {"String"},
+                                                what)
+                j = _js_skip_ws(text, j)
+                if j < n and text[j] == ",":
+                    raise _JSExprFail(what + " not 1-param")
+                j = _js_expect(text, j, ")")
+            else:
+                p, j = _js_parse_ident(text, j)
+                _js_f1028f1029_check_fresh_name(p, bound, {"String"},
+                                                what)
+            j = _js_skip_ws(text, j)
+            if not text.startswith("=>", j):
+                raise _JSExprFail(what + " not arrow")
+            j = _js_expect(text, _js_skip_ws(text, j + 2), "[")
+            j = _js_f1090f1091f1097_parse_fcc1(text, _js_skip_ws(text, j),
+                                               p, what)
+            j = _js_expect(text, j, "]")
+        # F1604: the thisArg must be the null literal (disjoint from
+        # F1546's []/"x" thisArg and F1350's no-thisArg by grammar).
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != ",":
+            raise _JSExprFail(what + " no thisArg")
+        j = _js_skip_ws(text, j + 1)
+        m4 = _js_match_kw(text, j, "null")
+        if m4 is None:
+            raise _JSExprFail(what + " thisArg not null")
+        j = _js_skip_ws(text, m4)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " flatMap")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"}, what)
+        bound.add(sname)
+        nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm2 != ename:
+            raise _JSExprFail(what + " join base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "":
+            raise _JSExprFail(what + " join sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        return _js_f1397f1412_parse_result_tail(text, j, dstr,
+                                                sname, state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1605_stmt_decode(text):
+    """Decode F1605 padStart default-padString staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const P=S.padStart(S.length+INT);`  (no padString argument)
+    `var|let|const RESULT=P.slice(-S.length);`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `S.padStart(T)` with no padString argument
+    uses a single space; T>=|S| prepends spaces; `.slice(-S.length)`
+    takes the last |S| chars = S. The admitted target-length grammar
+    (`S.length`, `S.length+INT`, `S.length-INT`, bare INT) is the same
+    narrow subset as F1547; anything else fails closed. Disjoint from
+    F1547 (explicit padString), F1505/F1506 (per-char dynamic no-op),
+    F1507 (fixed-5), F1519 (per-char pad+slice(-1)) by grammar -- the
+    filed shape BREAKs on the open tree. Anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".padStart(" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1605"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+        bound = {cname, "RESULT", "String"}
+        sname, j = _js_f1206f1212_parse_h_mapjoin(text, j, cname,
+                                                 bound, state, what)
+        _, pname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, bound, {"String"}, what)
+        bound.add(pname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " pad base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "padStart")
+        if m is None:
+            raise _JSExprFail(what + " not padStart")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        # Target length: S.length [+/- INT] or bare INT (same narrow
+        # grammar as F1547).
+        if j < len(text) and text[j].isdigit():
+            _num, j = _js_parse_fcc_number(text, j)
+            j = _js_skip_ws(text, j)
+        else:
+            nm2, j = _js_parse_ident(text, j)
+            if nm2 != sname:
+                raise _JSExprFail(what + " bad length base")
+            j = _js_expect(text, j, ".")
+            m2 = _js_match_kw(text, j, "length")
+            if m2 is None:
+                raise _JSExprFail(what + " not length")
+            j = _js_skip_ws(text, m2)
+            if j < len(text) and text[j] in "+-":
+                j = _js_skip_ws(text, j + 1)
+                _num, j = _js_parse_fcc_number(text, j)
+                j = _js_skip_ws(text, j)
+        # F1605: no padString -- the next token must be `)`, never `,`
+        # (disjoint from F1547's explicit-padString form by grammar).
+        if j < len(text) and text[j] == ",":
+            raise _JSExprFail(what + " has padString")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " pad")
+        # RESULT = P.slice(-S.length)
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm3 != pname:
+            raise _JSExprFail(what + " slice base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "-":
+            raise _JSExprFail(what + " not neg slice")
+        j += 1
+        nm4, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm4 != sname:
+            raise _JSExprFail(what + " slice arg mismatch")
+        j = _js_expect(text, j, ".")
+        m2 = _js_match_kw(text, j, "length")
+        if m2 is None:
+            raise _JSExprFail(what + " not length2")
+        j = m2
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        if j != len(text):
+            raise _JSExprFail(what + " trailing")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1606_stmt_decode(text):
+    """Decode F1606 sort reversed-boolean comparator, no slice (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.sort(function(a,b){return b<a;});`
+    `var|let|const S=D.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the comparator `b<a` coerces to 1/0 -- it
+    never returns a negative value, and every "move element before"
+    decision in V8's sort requires a negative comparison result, so no
+    element ever moves: the sort is a universal no-op, in place.
+    Disjoint from F1548 (with `.slice()` copy), F1508 (comparator
+    `a>b`, no slice), F1520 (arrow `(a,b)=>a>b`) by grammar -- the
+    filed shape BREAKs on the open tree. Anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".sort(" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1606"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"}, what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " sort base mismatch")
+        j = _js_expect(text, j, ".")
+        # F1606: no .slice() -- .sort must follow the base directly
+        # (disjoint from F1548's .slice().sort form by grammar).
+        m = _js_match_kw(text, j, "sort")
+        if m is None:
+            raise _JSExprFail(what + " not sort")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        a, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(a, bound, {"String"}, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        b, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(b, bound, {"String"}, what)
+        if a == b:
+            raise _JSExprFail(what + " cmp param collision")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        b2, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if b2 != b:
+            raise _JSExprFail(what + " cmp lhs mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "<")
+        a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if a2 != a:
+            raise _JSExprFail(what + " cmp rhs mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " sort")
+        sname, j = _js_f1206f1212_parse_h_mapjoin(text, j, dname,
+                                                 bound, state, what)
+        return _js_f1397f1412_parse_result_tail(text, j, dstr,
+                                                sname, state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1607_stmt_decode(text):
+    """Decode F1607 non-swapped substring identity readout (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const RESULT=S.substring(0,S.length);`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `S.substring(0,S.length)` is S. Disjoint
+    from F1551 (`S.substring(S.length,0)` arg-swap identity) by grammar
+    -- the filed shape BREAKs on the open tree. Anything else fails
+    closed: a miss, never a mis-decode. Returns the decoded string, or
+    None. Never evals.
+    """
+    if ".substring(" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1607"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+        bound = {cname, "RESULT", "String"}
+        sname, j = _js_f1206f1212_parse_h_mapjoin(text, j, cname,
+                                                 bound, state, what)
+        _js_f96x_charge(state, what + " idread")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " id base mismatch")
+        j = _js_expect(text, j, ".")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "substring")
+        if m is None:
+            raise _JSExprFail(what + " not substring")
+        j = _js_expect(text, m, "(")
+        _z, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if _z != 0:
+            raise _JSExprFail(what + " substr not 0")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm2 != sname:
+            raise _JSExprFail(what + " substr base")
+        j = _js_expect(text, j, ".")
+        m2 = _js_match_kw(text, j, "length")
+        if m2 is None:
+            raise _JSExprFail(what + " not length")
+        j = _js_expect(text, _js_skip_ws(text, m2), ")")
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        if j != len(text):
+            raise _JSExprFail(what + " trailing")
+        return dstr
+    except _JSExprFail:
+        return None
+
 
 
 def _decode_layer(text):
@@ -181385,7 +181952,28 @@ def _decode_layer(text):
             _add(_sdec)
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
-
+    # F1600-F1607 (wave-420 lane 4): flat(false) shallow copy,
+    # spread-literal copy staging, concat-with-spread trailing-comma
+    # staging, one-statement EM-SPACE trim readout, flatMap 1-param
+    # null-thisArg staging, padStart default-padString staging,
+    # sort-without-slice staging, and non-swapped substring identity
+    # readout decoders. Each parses a strict whole-text grammar;
+    # every filed shape BREAKs on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint from F1562 (flat(0) literal),
+    # F1563 ([].concat(...C) no trailing comma), F1549 (two-statement
+    # trim), F1546 (1-param []/"x" thisArg), F1547 (explicit
+    # padString), F1548 (.slice().sort), F1551 (substring(S.length,0))
+    # by grammar (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1600_stmt_decode, _js_f1601_stmt_decode,
+                     _js_f1602_stmt_decode, _js_f1603_stmt_decode,
+                     _js_f1604_stmt_decode, _js_f1605_stmt_decode,
+                     _js_f1606_stmt_decode, _js_f1607_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
 
 
     # F953/F954/F955/F956: top-level statement-sequence decode --
