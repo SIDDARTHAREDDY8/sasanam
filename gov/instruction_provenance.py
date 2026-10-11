@@ -1164,6 +1164,74 @@ def _has_hidden_portal_src(text):
     return False
 
 
+def _has_hidden_button_value(text):
+    """True when prose hides in a `<button value>` attribute (F1255).
+
+    F1255: the value attribute is the form submission value -- it is
+    never rendered as page-body text, so prose there is hidden from
+    the human reader (the F1024 rationale). Honest machine values
+    (submit-form) stay quiet via the prose-shape gate. Disjoint
+    from F1047's `<input type=hidden>` value carrier (different
+    element entirely). Never evals.
+    """
+    for m in re.finditer(r"<button\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "value")
+        if has_val and _is_prose_shaped(val):
+            return True
+    return False
+
+
+def _has_hidden_form_name(text):
+    """True when prose hides in a `<form name>` attribute (F1256).
+
+    F1256: the name attribute identifies the form to scripts -- it
+    is never rendered as page-body text, so prose there is hidden
+    from the human reader (the F1024 rationale). Honest machine
+    names (login-form) stay quiet via the prose-shape gate. No
+    filed form-name class exists. Never evals.
+    """
+    for m in re.finditer(r"<form\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        name, has_name = _f1047_attr_value(tag, "name")
+        if has_name and _is_prose_shaped(name):
+            return True
+    return False
+
+
+def _has_hidden_math_alttext(text):
+    """True when prose hides in a `<math alttext>` attribute (F1257).
+
+    F1257: alttext is the accessible alternative text for the math
+    -- it is not visually rendered in the consuming view, so prose
+    there is hidden from the human reader (the F1024 rationale).
+    Honest machine tokens (equation) stay quiet via the prose-shape
+    gate. No filed math-alttext class exists. Never evals.
+    """
+    for m in re.finditer(r"<math\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        alt, has_alt = _f1047_attr_value(tag, "alttext")
+        if has_alt and _is_prose_shaped(alt):
+            return True
+    return False
+
+
+def _has_hidden_annotation_xml(text):
+    """True when prose hides inside `<annotation-xml>` (F1258).
+
+    F1258: annotation-xml carries semantic annotations (here with
+    encoding="text/html") -- it is never rendered in the consuming
+    view, so prose there is hidden from the human reader (the F1024
+    rationale). Machine tokens (x+y) and markup-only content stay
+    quiet via the prose-shape gate. Disjoint from F1073's
+    `<annotation>` (different element). Never evals.
+    """
+    for region in _scan_element_regions(text, "annotation-xml"):
+        if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
+            return True
+    return False
+
+
 def _has_hidden_hidden_option(text):
     """True when prose hides in `<option hidden>` (F1064).
 
@@ -1981,9 +2049,23 @@ def instruction_shaped(text):
     # (different elements) and from F1064's link title-attribute
     # twin (different attribute); documented per detector.
     # Honest machine tokens stay quiet via the prose-shape gate.
-    return (_has_hidden_base_href(norm)
+    if (_has_hidden_base_href(norm)
             or _has_hidden_link_href(norm)
-            or _has_hidden_portal_src(norm))
+            or _has_hidden_portal_src(norm)):
+        return True
+    # F1255/F1256/F1257/F1258: the same construction for four
+    # further hidden-from-human carriers -- `<button value>`,
+    # `<form name>`, `<math alttext>`, and `<annotation-xml>`
+    # content. None is rendered in the consuming view, so prose
+    # there is hidden from the human reader (the F1024 rationale).
+    # Disjoint from F1047's input-value/data-attr, F1064's
+    # title-attr, and F1073's annotation variants (different
+    # elements/attributes); documented per detector. Honest
+    # machine tokens stay quiet via the prose-shape gate.
+    return (_has_hidden_button_value(norm)
+            or _has_hidden_form_name(norm)
+            or _has_hidden_math_alttext(norm)
+            or _has_hidden_annotation_xml(norm))
 
 
 class ActionRequest(object):
