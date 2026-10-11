@@ -434,17 +434,17 @@ def _green_check():
             capture_output=True, text=True, timeout=600, env=env,
             cwd=os.path.join(REPO_ROOT, "evals"))
         out = (r.stdout or "") + (r.stderr or "")
-        flips = set()
+        held = set()
         for line in out.split("\n"):
-            if line.startswith("BREAK test_open_w406_f"):
-                m = re.search(r"test_open_w406_f(\d+)", line)
+            if line.startswith("HELD test_closed_w406_f"):
+                m = re.search(r"test_closed_w406_f(\d+)", line)
                 if m:
-                    flips.add(int(m.group(1)))
-        expected = {1193, 1194, 1195}
-        ok = flips == expected
+                    held.add(int(m.group(1)))
+        expected = set(range(1182, 1196))
+        ok = expected <= held
         tail = out.strip().split("\n")[-3:] if not ok else []
-        return (ok, "green(w406_attack): flips=%s expected=%s %s"
-                % (sorted(flips), sorted(expected),
+        return (ok, "green(w406_attack): held=%d/14 CLOSED %s"
+                % (len(expected & held),
                    " ".join(tail) if not ok else "exact"))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)

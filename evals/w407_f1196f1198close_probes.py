@@ -377,9 +377,9 @@ def test_perf_200_sites():
 
 @_t
 def test_green_w406():
-    """Depth-1 green check on w406's attack battery. On this lane tree,
-    F1196-F1198 are now CLOSED (test_open_prov_w406_f1196/1197/1198
-    must BREAK -- they now flag); all other pins must HELD.
+    """Depth-1 green check on w406's attack battery. On the merged tree,
+    F1196-F1198 are CLOSED (test_closed_prov_w406_f1196/1197/1198
+    must HELD -- they now flag); all other pins must HELD.
     Honor GOV_SKIP_GREEN."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         print("HELD  test_green_w406 (skipped: GOV_SKIP_GREEN=1)")
@@ -396,14 +396,14 @@ def test_green_w406():
         held, broke = set(), set()
         for line in (r.stdout or "").split("\n"):
             parts = line.split()
-            if len(parts) >= 2 and parts[1].startswith("test_open_prov_w406_f"):
+            if len(parts) >= 2 and parts[1].startswith("test_closed_prov_w406_f"):
                 (held if parts[0] == "HELD" else broke).add(parts[1])
-        expect_broke = {"test_open_prov_w406_f1196",
-                        "test_open_prov_w406_f1197",
-                        "test_open_prov_w406_f1198"}
-        ok = (broke == expect_broke)
+        expect_held = {"test_closed_prov_w406_f1196",
+                       "test_closed_prov_w406_f1197",
+                       "test_closed_prov_w406_f1198"}
+        ok = (expect_held <= held and not (expect_held & broke))
         print(("HELD " if ok else "BREAK") +
-              " test_green_w406 (broke=%s)" % sorted(broke))
+              " test_green_w406 (held=%s)" % sorted(held))
         return ok
     except Exception as e:
         print("BREAK test_green_w406 (exec failed: %s)" % e)

@@ -422,16 +422,14 @@ def _green_check():
         broke = set()
         for line in r.stdout.split("\n"):
             parts = line.split()
-            if len(parts) >= 2 and (parts[1].startswith("test_open_w406_f")
-                                    or parts[1].startswith("test_open_prov_w406_f")):
+            if len(parts) >= 2 and (parts[1].startswith("test_closed_w406_f")
+                                    or parts[1].startswith("test_closed_prov_w406_f")):
                 (held if parts[0] == "HELD" else broke).add(parts[1])
-        expect_break = {"test_open_w406_f%d" % n for n in range(1187, 1193)}
-        expect_held = ({"test_open_w406_f%d" % n for n in list(range(1182, 1187)) + list(range(1193, 1196))}
-                       | {"test_open_prov_w406_f%d" % n for n in range(1196, 1199)})
-        ok = (expect_break <= broke and expect_held <= held
-              and not (expect_break & held) and not (expect_held & broke))
-        return (ok, "green(w406_attack): flipped=%d/6 broke, held=%d/11"
-                % (len(expect_break & broke), len(expect_held & held)))
+        expect_held = ({"test_closed_w406_f%d" % n for n in range(1182, 1196)}
+                       | {"test_closed_prov_w406_f%d" % n for n in range(1196, 1199)})
+        ok = (expect_held <= held and not (expect_held & broke))
+        return (ok, "green(w406_attack): held=%d/17 CLOSED"
+                % (len(expect_held & held),))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
 
