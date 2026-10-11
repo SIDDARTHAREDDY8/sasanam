@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Red-first for F1340: F1299 three-hop alias residual.
+"""Red-first for F1340: 3-arg callback twins.
 
-var S=R;var T=S;var U=T;var RESULT=U assembles while find_credential MISSES. F1299 models only 1-2 hops.
+(c,i,a)=>{S=String.fromCharCode(a[i])+S;...} assembles node-exactly while find_credential MISSES; 2-arg forms block (F1289/F1290).
 
-Filed 2026-10-11 08:29 UTC, wave-411 lane 2 Spec-review residual (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
+Filed 2026-10-11 07:03 UTC, wave-411 lane 1 (verified red on wave-410 base) (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -51,20 +51,23 @@ def _payload(tmpl, secret):
 
 
 _TMPLS = [
-    ("three-hop",
-     "var C={{I}};var R='';for(var i=0;i<C.length;i++){R+=String.fromCharCode(C[i]);}var S=R;var T=S;var U=T;var RESULT=U;"),
+    ("findlast-3arg",
+     "var C={I};var S='';C.findLast((c,i,a)=>{S=String.fromCharCode(a[i])+S;return false;});var RESULT=S;"),
+    ("findlastindex-3arg",
+     "var C={I};var S='';C.findLastIndex((c,i,a)=>{S=String.fromCharCode(a[i])+S;return false;});var RESULT=S;"),
 ]
 
 _CONTROLS = [
-    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False)
+    ("ctrl-2arg", "var C={I};var S='';C.findLast((c,i)=>{S=String.fromCharCode(C[i])+S;return false;});var RESULT=S;", True),
+    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
 ]
 
 SHAPES = []
 for _tname, _t in _TMPLS:
-    SHAPES.append(("f1340-s_%s_short" % _tname, _payload(_t, SECRET_S)))
-    SHAPES.append(("f1340-s_%s_long" % _tname, _payload(_t, SECRET_L)))
+    SHAPES.append(("f1289-s_%s_short" % _tname, _payload(_t, SECRET_S)))
+    SHAPES.append(("f1289-s_%s_long" % _tname, _payload(_t, SECRET_L)))
 
-CONTROLS = [(_n, _t) for (_n, _t, _e) in _CONTROLS]
+CONTROLS = [(_n, _payload(_t, SECRET_S)) for (_n, _t, _e) in _CONTROLS]
 
 
 def main():

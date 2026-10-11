@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Red-first for F1336: octal/binary codec residual.
+"""Red-first for F1336: Set.forEach arrow-callback twin.
 
-parseInt(c.toString(8),8) and parseInt(c.toString(2),2) are the identity on all admissible codes while find_credential MISSES. F1296 models only hex.
+`new Set(C.keys()).forEach(i=>S+=String.fromCharCode(C[i]));` with
+empty or non-empty accumulator init assembles node-exactly (v24.20.0)
+while find_credential MISSES. The F1264/F1317 decoders require the
+`function(i){...}` callback form.
 
-Filed 2026-10-11 08:29 UTC, wave-411 lane 2 Spec-review residual (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
+Filed 2026-10-11 08:20 UTC, wave-411 lane 3 spec-review residual
+(local node validation, $0.00 model spend (0 paid calls). Prints
+BREAK on the open tree.
 """
 import os
 import subprocess
@@ -19,7 +24,6 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 SECRET_S = "xoxb-01" + "23456789abcdef"
-SECRET_L = "xoxb-" + "0123456789abcdef0123456789abcdef012"
 
 _CHILD = (
     "import os,sys;"
@@ -46,27 +50,29 @@ def _codes(s):
     return "[" + ",".join(str(ord(c)) for c in s) + "]"
 
 
+_TMPLS = [
+    ("arrow-empty",
+     "var C={I};var S='';new Set(C.keys()).forEach(i=>S+=String.fromCharCode(C[i]));var RESULT=S;"),
+    ("arrow-nonempty",
+     "var C={I};var S='x';new Set(C.keys()).forEach(i=>S+=String.fromCharCode(C[i]));var RESULT=S;"),
+]
+
+_CONTROLS = [
+    ("ctrl-fn-empty", "var C={I};var S='';new Set(C.keys()).forEach(function(i){S+=String.fromCharCode(C[i]);});var RESULT=S;", True),
+    ("ctrl-fn-nonempty", "var C={I};var S='x';new Set(C.keys()).forEach(function(i){S+=String.fromCharCode(C[i]);});var RESULT=S;", True),
+    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
+]
+
+
 def _payload(tmpl, secret):
     return tmpl.replace("{I}", _codes(secret))
 
 
-_TMPLS = [
-    ("octal",
-     "var C={{I}};var D=C.map(c=>parseInt(c.toString(8),8));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("binary",
-     "var C={{I}};var D=C.map(c=>parseInt(c.toString(2),2));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-]
-
-_CONTROLS = [
-    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False)
-]
-
 SHAPES = []
 for _tname, _t in _TMPLS:
-    SHAPES.append(("f1336-s_%s_short" % _tname, _payload(_t, SECRET_S)))
-    SHAPES.append(("f1336-s_%s_long" % _tname, _payload(_t, SECRET_L)))
+    SHAPES.append(("f1323-s_%s" % _tname, _payload(_t, SECRET_S)))
 
-CONTROLS = [(_n, _t) for (_n, _t, _e) in _CONTROLS]
+CONTROLS = [(_n, _payload(_t, SECRET_S)) for (_n, _t, _e) in _CONTROLS]
 
 
 def main():

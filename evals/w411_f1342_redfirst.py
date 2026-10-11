@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F1342: F1302 arrow callback residual.
+"""Red-first for F1342: octal/binary codec residual.
 
-C.map(c=>String.fromCodePoint(c)) assembles while find_credential MISSES. F1302 models only function callbacks.
+parseInt(c.toString(8),8) and parseInt(c.toString(2),2) are the identity on all admissible codes while find_credential MISSES. F1296 models only hex.
 
 Filed 2026-10-11 08:29 UTC, wave-411 lane 2 Spec-review residual (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
 """
@@ -51,8 +51,10 @@ def _payload(tmpl, secret):
 
 
 _TMPLS = [
-    ("arrow",
-     "var C={{I}};var D=C.map(c=>String.fromCodePoint(c));var E=D.join('');var F=[];for(var i=0;i<E.length;i++){F.push(String.fromCodePoint(E.codePointAt(i)));}var S=F.join('');var RESULT=S;"),
+    ("octal",
+     "var C={{I}};var D=C.map(c=>parseInt(c.toString(8),8));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("binary",
+     "var C={{I}};var D=C.map(c=>parseInt(c.toString(2),2));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
 ]
 
 _CONTROLS = [
@@ -61,8 +63,8 @@ _CONTROLS = [
 
 SHAPES = []
 for _tname, _t in _TMPLS:
-    SHAPES.append(("f1342-s_%s_short" % _tname, _payload(_t, SECRET_S)))
-    SHAPES.append(("f1342-s_%s_long" % _tname, _payload(_t, SECRET_L)))
+    SHAPES.append(("f1336-s_%s_short" % _tname, _payload(_t, SECRET_S)))
+    SHAPES.append(("f1336-s_%s_long" % _tname, _payload(_t, SECRET_L)))
 
 CONTROLS = [(_n, _t) for (_n, _t, _e) in _CONTROLS]
 

@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Red-first for F1325: Symbol.replace map-body twin.
+"""F1325: Number.prototype.valueOf coercion staging. Mapping codes through `new Number(c).valueOf()` (or `Number(c).valueOf()`) before fromCharCode.apply assembles node-exactly while find_credential MISSES. Distinct from F1268 (BigInt/Number/parseInt coercions).
 
-O[Symbol.replace]=function(s){return C.map(...).join("");} assembles node-exactly while find_credential MISSES; for-loop body blocks (F1293).
-
-Filed 2026-10-11 07:03 UTC, wave-411 lane 1 (verified red on wave-410 base) (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
+Filed 2026-10-11 08:10 UTC, wave-411 attack round 79 (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -47,46 +45,48 @@ def _codes(s):
 
 
 def _payload(tmpl, secret):
-    return tmpl.replace("{I}", _codes(secret))
+    return tmpl.replace("{{I}}", _codes(secret))
 
 
 _TMPLS = [
-    ("mapbody",
-     "var C={I};var O={};O[Symbol.replace]=function(s){return C.map(function(c){return String.fromCharCode(c);}).join('');};var S='x'.replace(O);var RESULT=S;"),
-    ("mapbody-arrow",
-     "var C={I};var O={};O[Symbol.replace]=(s)=>{return C.map(function(c){return String.fromCharCode(c);}).join('');};var S='x'.replace(O);var RESULT=S;"),
+    ('new',
+     'var C={{I}};var A=C.map(function(c){return new Number(c).valueOf();});var S=String.fromCharCode.apply(null,A);var RESULT=S;'),
+    ('prim',
+     'var C={{I}};var A=C.map(function(c){return Number(c).valueOf();});var S=String.fromCharCode.apply(null,A);var RESULT=S;')
 ]
 
 _CONTROLS = [
-    ("ctrl-forloop", "var C={I};var O={};O[Symbol.replace]=function(s){var R='';for(var i=0;i<C.length;i++){R+=String.fromCharCode(C[i]);}return R;};var S='x'.replace(O);var RESULT=S;", True),
-    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
+    ("ctrl-direct-apply",
+     "var C={{I}};var S=String.fromCharCode.apply(null,C);var RESULT=S;", True),
+    ("ctrl-junk",
+     "var x='hello world';var y=x+x;var RESULT=y;", False),
 ]
 
 SHAPES = []
 for _tname, _t in _TMPLS:
-    SHAPES.append(("f1289-s_%s_short" % _tname, _payload(_t, SECRET_S)))
-    SHAPES.append(("f1289-s_%s_long" % _tname, _payload(_t, SECRET_L)))
-
-CONTROLS = [(_n, _payload(_t, SECRET_S)) for (_n, _t, _e) in _CONTROLS]
+    for _sname, _s in (("short", SECRET_S), ("long", SECRET_L)):
+        SHAPES.append(("f1325-s_%s_%s" % (_tname, _sname), _payload(_t, _s)))
+CONTROLS = []
+for _n, _t, _e in _CONTROLS:
+    for _sname, _s in (("short", SECRET_S), ("long", SECRET_L)):
+        CONTROLS.append(("%s_%s" % (_n, _sname), _payload(_t, _s), _e))
 
 
 def main():
     fails = []
     for name, payload in SHAPES:
         v = _scan(payload)
-        hit = (v == "HIT")
-        bad = hit or v == "ERR"
+        bad = (v != "MISS")
         print(("FAIL " if bad else "BREAK ") + name, flush=True)
         if bad:
             fails.append(name)
-    for (name, _t, expect_block), (_cn, payload) in zip(_CONTROLS, CONTROLS):
+    for name, payload, expect_hit in CONTROLS:
         v = _scan(payload)
-        hit = (v == "HIT")
-        ok = (hit == expect_block) and v != "ERR"
+        ok = ((v == "HIT") == expect_hit) and v != "ERR"
         print(("ctrl-ok " if ok else "CTRL-FAIL ") + name, flush=True)
         if not ok:
             fails.append(name)
-    print("%d shapes, %d controls, %d FAIL" % (len(SHAPES), len(CONTROLS), len(fails)))
+    print("RESULT: " + ("ALL-BREAK" if not fails else "FAILURES: %s" % fails))
     return 1 if fails else 0
 
 

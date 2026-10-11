@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Red-first for F1341: F1300 slice(0) residual.
+"""Red-first for F1341: Math wrapper expression twins.
 
-Object.freeze(C.slice(0)) via named intermediate assembles while find_credential MISSES. F1300 models only bare slice().
+Math.trunc(0.1+c)/Math.trunc(c+0.10)/arrow map assemble node-exactly while find_credential MISSES; filed forms block (F1292).
 
-Filed 2026-10-11 08:29 UTC, wave-411 lane 2 Spec-review residual (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
+Filed 2026-10-11 07:03 UTC, wave-411 lane 1 (verified red on wave-410 base) (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -51,20 +51,25 @@ def _payload(tmpl, secret):
 
 
 _TMPLS = [
-    ("slice0",
-     "var C={{I}};var D=Object.freeze(C.slice(0));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("commuted",
+     "var C={I};var D=C.map(function(c){return Math.trunc(0.1+c);});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("literal-010",
+     "var C={I};var D=C.map(function(c){return Math.trunc(c+0.10);});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("arrow",
+     "var C={I};var D=C.map(c=>Math.trunc(c+0.1));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
 ]
 
 _CONTROLS = [
-    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False)
+    ("ctrl-filed", "var C={I};var D=C.map(function(c){return Math.trunc(c+0.1);});var S=String.fromCharCode.apply(null,D);var RESULT=S;", True),
+    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
 ]
 
 SHAPES = []
 for _tname, _t in _TMPLS:
-    SHAPES.append(("f1341-s_%s_short" % _tname, _payload(_t, SECRET_S)))
-    SHAPES.append(("f1341-s_%s_long" % _tname, _payload(_t, SECRET_L)))
+    SHAPES.append(("f1289-s_%s_short" % _tname, _payload(_t, SECRET_S)))
+    SHAPES.append(("f1289-s_%s_long" % _tname, _payload(_t, SECRET_L)))
 
-CONTROLS = [(_n, _t) for (_n, _t, _e) in _CONTROLS]
+CONTROLS = [(_n, _payload(_t, SECRET_S)) for (_n, _t, _e) in _CONTROLS]
 
 
 def main():

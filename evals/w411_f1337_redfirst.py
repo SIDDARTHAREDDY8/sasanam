@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Red-first for F1337: F1296 arrow block-body residual.
+"""Red-first for F1337: seal slice-arg twins.
 
-c=>{return parseInt(c.toString(16),16);} assembles while find_credential MISSES. F1296 models only expression-bodied arrows.
+Object.seal(C.slice(0))/slice(0,C.length)/[...C]/Array.from(C) bound to D assembles node-exactly while find_credential MISSES; seal(C.slice()) blocks (F1295).
 
-Filed 2026-10-11 08:29 UTC, wave-411 lane 2 Spec-review residual (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
+Filed 2026-10-11 07:03 UTC, wave-411 lane 1 (verified red on wave-410 base) (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -51,20 +51,27 @@ def _payload(tmpl, secret):
 
 
 _TMPLS = [
-    ("arrow-block",
-     "var C={{I}};var D=C.map(c=>{return parseInt(c.toString(16),16);});var S=String.fromCharCode(...D);var RESULT=S;"),
+    ("slice0",
+     "var C={I};var D=Object.seal(C.slice(0));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("slice0len",
+     "var C={I};var D=Object.seal(C.slice(0,C.length));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("spread",
+     "var C={I};var D=Object.seal([...C]);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("arrayfrom",
+     "var C={I};var D=Object.seal(Array.from(C));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
 ]
 
 _CONTROLS = [
-    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False)
+    ("ctrl-seal-slice", "var C={I};var D=Object.seal(C.slice());var S=String.fromCharCode.apply(null,D);var RESULT=S;", True),
+    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
 ]
 
 SHAPES = []
 for _tname, _t in _TMPLS:
-    SHAPES.append(("f1337-s_%s_short" % _tname, _payload(_t, SECRET_S)))
-    SHAPES.append(("f1337-s_%s_long" % _tname, _payload(_t, SECRET_L)))
+    SHAPES.append(("f1289-s_%s_short" % _tname, _payload(_t, SECRET_S)))
+    SHAPES.append(("f1289-s_%s_long" % _tname, _payload(_t, SECRET_L)))
 
-CONTROLS = [(_n, _t) for (_n, _t, _e) in _CONTROLS]
+CONTROLS = [(_n, _payload(_t, SECRET_S)) for (_n, _t, _e) in _CONTROLS]
 
 
 def main():

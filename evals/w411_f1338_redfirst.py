@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Red-first for F1338: F1297 RegExp indices variants.
+"""Red-first for F1338: charCodeAt twin.
 
-T.substring(...m.indices[1]), m.indices[0] group-0, and T.slice(m.indices[1][0],m.indices[1][1]) assemble while find_credential MISSES.
+E.push(D.charCodeAt(i)) assembles node-exactly while find_credential MISSES; codePointAt blocks (F1291).
 
-Filed 2026-10-11 08:29 UTC, wave-411 lane 2 Spec-review residual (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
+Filed 2026-10-11 07:03 UTC, wave-411 lane 1 (verified red on wave-410 base) (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -51,24 +51,23 @@ def _payload(tmpl, secret):
 
 
 _TMPLS = [
-    ("spread-idx",
-     "var C={{I}};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/d.exec(T);var S=T.substring(...m.indices[1]);var RESULT=S;"),
-    ("group0",
-     "var C={{I}};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/d.exec(T);var S=T.substring(m.indices[0][0],m.indices[0][1]);var RESULT=S;"),
-    ("slice",
-     "var C={{I}};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/d.exec(T);var S=T.slice(m.indices[1][0],m.indices[1][1]);var RESULT=S;"),
+    ("charcodeat",
+     "var C={I};var D=C.map(function(c){return String.fromCharCode(c);}).join('');var E=[];for(var i=0;i<D.length;i++){E.push(D.charCodeAt(i));}var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
+    ("charcodeat-arrow",
+     "var C={I};var D=C.map(c=>String.fromCharCode(c)).join('');var E=[];for(var i=0;i<D.length;i++){E.push(D.charCodeAt(i));}var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
 ]
 
 _CONTROLS = [
-    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False)
+    ("ctrl-codepointat", "var C={I};var D=C.map(function(c){return String.fromCharCode(c);}).join('');var E=[];for(var i=0;i<D.length;i++){E.push(D.codePointAt(i));}var S=String.fromCharCode.apply(null,E);var RESULT=S;", True),
+    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
 ]
 
 SHAPES = []
 for _tname, _t in _TMPLS:
-    SHAPES.append(("f1338-s_%s_short" % _tname, _payload(_t, SECRET_S)))
-    SHAPES.append(("f1338-s_%s_long" % _tname, _payload(_t, SECRET_L)))
+    SHAPES.append(("f1289-s_%s_short" % _tname, _payload(_t, SECRET_S)))
+    SHAPES.append(("f1289-s_%s_long" % _tname, _payload(_t, SECRET_L)))
 
-CONTROLS = [(_n, _t) for (_n, _t, _e) in _CONTROLS]
+CONTROLS = [(_n, _payload(_t, SECRET_S)) for (_n, _t, _e) in _CONTROLS]
 
 
 def main():

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Red-first for F1339: F1297 dotAll/no-d-flag residuals.
+"""Red-first for F1339: Symbol.replace map-body twin.
 
-/(.+)/ds with s-flag assembles with newlines; matchAll without d-flag assembles via x[0]; both MISSED.
+O[Symbol.replace]=function(s){return C.map(...).join("");} assembles node-exactly while find_credential MISSES; for-loop body blocks (F1293).
 
-Filed 2026-10-11 08:29 UTC, wave-411 lane 2 Spec-review residual (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
+Filed 2026-10-11 07:03 UTC, wave-411 lane 1 (verified red on wave-410 base) (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -51,22 +51,23 @@ def _payload(tmpl, secret):
 
 
 _TMPLS = [
-    ("dotall",
-     "var C=[120,10,121];var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/ds.exec(T);var S=T.substring(m.indices[1][0],m.indices[1][1]);var RESULT=S;"),
-    ("no-dflag",
-     "var C={{I}};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=[...T.matchAll(/(.)/g)];var S=m.map(function(x){return x[0];}).join('');var RESULT=S;"),
+    ("mapbody",
+     "var C={I};var O={};O[Symbol.replace]=function(s){return C.map(function(c){return String.fromCharCode(c);}).join('');};var S='x'.replace(O);var RESULT=S;"),
+    ("mapbody-arrow",
+     "var C={I};var O={};O[Symbol.replace]=(s)=>{return C.map(function(c){return String.fromCharCode(c);}).join('');};var S='x'.replace(O);var RESULT=S;"),
 ]
 
 _CONTROLS = [
-    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False)
+    ("ctrl-forloop", "var C={I};var O={};O[Symbol.replace]=function(s){var R='';for(var i=0;i<C.length;i++){R+=String.fromCharCode(C[i]);}return R;};var S='x'.replace(O);var RESULT=S;", True),
+    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
 ]
 
 SHAPES = []
 for _tname, _t in _TMPLS:
-    SHAPES.append(("f1339-s_%s_short" % _tname, _payload(_t, SECRET_S)))
-    SHAPES.append(("f1339-s_%s_long" % _tname, _payload(_t, SECRET_L)))
+    SHAPES.append(("f1289-s_%s_short" % _tname, _payload(_t, SECRET_S)))
+    SHAPES.append(("f1289-s_%s_long" % _tname, _payload(_t, SECRET_L)))
 
-CONTROLS = [(_n, _t) for (_n, _t, _e) in _CONTROLS]
+CONTROLS = [(_n, _payload(_t, SECRET_S)) for (_n, _t, _e) in _CONTROLS]
 
 
 def main():
