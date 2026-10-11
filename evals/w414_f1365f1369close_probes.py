@@ -98,7 +98,7 @@ def _quiet(html):
 
 @_t
 def test_p0_pins():
-    """Pin 2143 holds; N_STMTDEC_LOOPS=73."""
+    """Pin 2143 holds; N_STMTDEC_LOOPS=74 (merge: 72+2)."""
     ok = True
     notes = []
     with open(os.path.join(REPO_ROOT, "evals",
@@ -109,11 +109,11 @@ def test_p0_pins():
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         dsrc = f.read()
     actual = dsrc.count("for _stmtdec in (")
-    if pin != 73 or actual != 73:
+    if pin != 74 or actual != 74:
         ok = False
-        notes.append("N_STMTDEC_LOOPS pin=%d actual=%d (want 73)" % (pin, actual))
+        notes.append("N_STMTDEC_LOOPS pin=%d actual=%d (want 74)" % (pin, actual))
     else:
-        notes.append("N_STMTDEC_LOOPS=73")
+        notes.append("N_STMTDEC_LOOPS=74")
     rc = len(re.findall(r"re\.compile\(", dsrc))
     if rc != 29:
         ok = False
@@ -468,24 +468,24 @@ def _green_check():
 
 
 _P8_NEW = [
-    ("f1376",
+    ("f1426",
      "var C={I};var S=String.fromCharCode.apply(null,C.splice(0));var RESULT=S;"),
-    ("f1377",
+    ("f1427",
      "var C={I};var D=C.splice(0);var S=D.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;"),
-    ("f1378",
+    ("f1428",
      "var C={I};var D=C.map(function(c){return Number(String(c.toExponential(2)));});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("f1379",
+    ("f1429",
      "var C={I};var D=[];C.forEach(function(c){D.push(Math.abs(c));});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("f1380",
+    ("f1430",
      "var C={I};var D=C.map(function(c){return c.toExponential(2);});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("f1381",
+    ("f1431",
      "var C={I};var D=C.splice(0,999999);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
 ]
 
 
 @_t
 def test_p8_new_filed_open():
-    """F1376-F1381 (this lane's Spec-review residuals) still MISS (OPEN)."""
+    """F1426-F1431 (this lane's Spec-review residuals) still MISS (OPEN)."""
     bad = []
     for name, tmpl in _P8_NEW:
         if not _misses(tmpl.replace("{I}", _codes(SECRET_S))):

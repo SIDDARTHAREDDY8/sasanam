@@ -88,7 +88,7 @@ def _misses(payload):
 
 @_t
 def test_p0_pins():
-    """Pin 2143 holds; footer has wave-413 lineage; N_STMTDEC_LOOPS=73."""
+    """Pin 2143 holds; footer has wave-413 lineage; N_STMTDEC_LOOPS=74 (merge: 72+2)."""
     ok = True
     notes = []
     with open(os.path.join(REPO_ROOT, "evals",
@@ -101,7 +101,7 @@ def test_p0_pins():
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (pin == 73 and len(loops) == 73)
+    ok = (pin == 74 and len(loops) == 74)
     notes.append("loops=%d pin=%d" % (len(loops), pin))
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         ftxt = f.read()
@@ -301,9 +301,9 @@ def test_p6_perf():
 
 @_t
 def test_p7_other_opens_miss():
-    """F1365-F1384 (outside this lane's closures) still MISS.
+    """F1365-F1375 + F1417-F1425 (outside this lane's closures) still MISS.
 
-    Runs the w413/w414 red-first batteries for F1365-F1384 as
+    Runs the w413/w414 red-first batteries for F1365-F1375/F1417-F1425 as
     subprocesses; each must exit 0 (all shapes BREAK = still open).
     """
     bad = []
@@ -320,7 +320,7 @@ def test_p7_other_opens_miss():
                 bad.append("f%d(rc=%d)" % (n, r.returncode))
         except Exception as e:  # noqa: BLE001
             bad.append("f%d(exc)" % n)
-    for n in (1376, 1377, 1378, 1379):
+    for n in (1417, 1418, 1419, 1420):
         p = os.path.join(REPO_ROOT, "evals",
                          "w414_f%d_redfirst.py" % n)
         try:
@@ -332,7 +332,7 @@ def test_p7_other_opens_miss():
                 bad.append("f%d(rc=%d)" % (n, r.returncode))
         except Exception as e:  # noqa: BLE001
             bad.append("f%d(exc)" % n)
-    for n in (1380, 1381, 1382, 1383, 1384):
+    for n in (1421, 1422, 1423, 1424, 1425):
         p = os.path.join(REPO_ROOT, "evals",
                          "w414_f%d_redfirst.py" % n)
         try:
