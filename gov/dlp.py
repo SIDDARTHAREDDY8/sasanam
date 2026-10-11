@@ -178400,7 +178400,10 @@ def _js_f1560_stmt_decode(text):
     `var|let|const C=[INT,...];`
     `var|let|const D=Object.assign([],C);`
     (F1595: `Object.assign(new Array(),C)` twin;
-    F1641: `Object.assign(new Array(0),C)` twin)
+    F1641: `Object.assign(new Array(0),C)` twin;
+    F1664: `Object.assign(new Array(00),C)` twin;
+    F1665: `Object.assign(new Array(0.0),C)` twin;
+    F1666: `Object.assign(new Array(-0),C)` twin)
     `var|let|const RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');`
     (or the `c=>String.fromCharCode(c)` arrow twin)
     then end-of-text.
@@ -178441,17 +178444,32 @@ def _js_f1560_stmt_decode(text):
             # fresh empty array, so the copy is node-exact (v24.20.0).
             # F1641: Object.assign(new Array(0), C) -- new Array(0) is
             # also an empty array (length 0), node-exact (v24.20.0).
+            # F1664/F1665/F1666: new Array(00), new Array(0.0),
+            # new Array(-0) -- all zero-valued lengths, so the array
+            # is empty (node-exact v24.20.0: 00 === 0, 0.0 === 0,
+            # -0 === 0). Only the filed shapes are admitted; anything
+            # else fails closed (the ")" expectation rejects longer
+            # literals like "000" or "0.01").
             mm = _js_match_kw(text, jj, "new")
             nm, jj = _js_parse_ident(text, _js_skip_ws(text, mm))
             if nm != "Array":
                 raise _JSExprFail(what + " not new Array")
             jj = _js_expect(text, _js_skip_ws(text, jj), "(")
             jj = _js_skip_ws(text, jj)
-            if jj < len(text) and text[jj] == "0":
+            if text.startswith("00", jj):
+                # F1664: new Array(00) -- legacy octal zero.
+                jj += 2
+            elif text.startswith("0.0", jj):
+                # F1665: new Array(0.0).
+                jj += 3
+            elif text.startswith("-0", jj):
+                # F1666: new Array(-0).
+                jj += 2
+            elif jj < len(text) and text[jj] == "0":
                 # F1641: new Array(0) -- the single 0 length arg keeps
                 # the array empty; anything else fails closed.
                 jj += 1
-                jj = _js_skip_ws(text, jj)
+            jj = _js_skip_ws(text, jj)
             j = _js_expect(text, jj, ")")
         else:
             raise _JSExprFail(what + " bad assign target")
@@ -178610,20 +178628,22 @@ def _js_f1562_stmt_decode(text):
     `var|let|const C=[INT,...];`
     `var|let|const D=C.flat(0);`
     (F1598: `C.flat(0.0)`; F1599: `C.flat(-0)`; F1639: `C.flat(0.00)`;
-    F1640: `C.flat(-0.0)` -- zero-valued twins)
+    F1640: `C.flat(-0.0)`; F1660: `C.flat(0.000)`; F1661: `C.flat(000)`;
+    F1662: `C.flat(0e0)`; F1663: `C.flat(-0e0)` -- zero-valued twins)
     `var|let|const RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');`
     (or the `c=>String.fromCharCode(c)` arrow twin)
     then end-of-text.
 
     Node-exact (v24.20.0): `.flat(0)` flattens zero levels but still
     returns a fresh array -- a shallow copy of C -- so the readout is
-    dstr; `0.0` and `-0` are zero-valued depths with the same result.
+    dstr; `0.0`, `-0`, `0.00`, `-0.0`, `0.000`, `000` (legacy octal),
+    `0e0`, `-0e0` are zero-valued depths with the same result.
     Disjoint from F1432 (flat(depth>=2) double-nested) and F1349
     (flat()/flat(1) single-nested) by grammar: only the filed
-    zero-depth shapes (`0`, `0.0`, `-0`) are admitted; F1534
-    (flat(1+1) computed) is a different production. The filed shape
-    BREAKs on the open tree. Anything else fails closed: a miss, never
-    a mis-decode. Returns the decoded string, or None. Never evals.
+    zero-depth shapes are admitted; F1534 (flat(1+1) computed) is a
+    different production. The filed shape BREAKs on the open tree.
+    Anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
     """
     if ".flat(" not in text:
         return None
@@ -178648,16 +178668,28 @@ def _js_f1562_stmt_decode(text):
         # F1598/F1599: 0.0 and -0 are zero-valued depths -- flat() with
         # a zero depth returns a shallow copy, node-exact (v24.20.0).
         # F1639/F1640: 0.00 and -0.0 are further zero-valued twins
-        # (node-exact: 0.00 === 0, -0.0 === -0). Only the filed shapes
-        # (0, 0.0, -0, 0.00, -0.0) are admitted; anything else fails
-        # closed. Longer literals are checked before their prefixes.
-        if text.startswith("-0.0", j):
+        # (node-exact: 0.00 === 0, -0.0 === -0). F1660/F1661/F1662/
+        # F1663: 0.000, 000 (legacy octal), 0e0, -0e0 are further
+        # zero-valued twins (node-exact: 0.000 === 0, 000 === 0,
+        # 0e0 === 0, -0e0 === -0). Only the filed shapes are admitted;
+        # anything else fails closed (the ")" expectation rejects
+        # longer literals like "0.0001" or "0001"). Longer literals
+        # are checked before their prefixes.
+        if text.startswith("-0e0", j):
+            j += 4
+        elif text.startswith("-0.0", j):
             j += 4
         elif text.startswith("-0", j):
             j += 2
+        elif text.startswith("0.000", j):
+            j += 5
         elif text.startswith("0.00", j):
             j += 4
         elif text.startswith("0.0", j):
+            j += 3
+        elif text.startswith("0e0", j):
+            j += 3
+        elif text.startswith("000", j):
             j += 3
         elif j < len(text) and text[j] == "0":
             j += 1
@@ -180993,13 +181025,18 @@ def _js_f1634_stmt_decode(text):
     `var|let|const S=C.map(function(c){return String.fromCharCode(c);}).join('');`
       (or the arrow twin)
     `var|let|const D=Array.from(S);`  (or `var|let|const D=[...S];`)
+    (F1655: `Array.from(S,undefined)` explicit-undefined twin;
+    F1656: `[...S,]` trailing-comma twin)
     `var|let|const T=D.join('');`
     `var|let|const RESULT=T;`
     then end-of-text.
 
     Node-exact (v24.20.0): S is dstr; `Array.from(S)` and `[...S]`
     both produce a fresh array of S's characters; `.join('')`
-    reassembles S exactly, so RESULT is dstr. Disjoint from F1528
+    reassembles S exactly, so RESULT is dstr. F1655: an explicit
+    `undefined` mapfn is a no-op, so `Array.from(S,undefined)` is
+    still a fresh char array. F1656: a trailing comma is a no-op in
+    the array literal, so `[...S,]` is `[...S]`. Disjoint from F1528
     (Array.from map) and F1563 ([].concat(...C)) by grammar -- the
     filed shapes BREAK on the open tree. Anything else fails closed:
     a miss, never a mis-decode. Returns the decoded string, or None.
@@ -181034,6 +181071,15 @@ def _js_f1634_stmt_decode(text):
             nm, jj = _js_parse_ident(text, _js_skip_ws(text, jj))
             if nm != sname:
                 raise _JSExprFail(what + " from base mismatch")
+            jj = _js_skip_ws(text, jj)
+            # F1655: Array.from(S,undefined) -- an explicit undefined
+            # mapfn is a no-op, so D is still a fresh char array of S
+            # (node-exact v24.20.0). Only undefined is admitted.
+            if jj < len(text) and text[jj] == ",":
+                nm2, jj = _js_parse_ident(text, _js_skip_ws(text, jj + 1))
+                if nm2 != "undefined":
+                    raise _JSExprFail(what + " from mapfn not undefined")
+                jj = _js_skip_ws(text, jj)
             jj = _js_expect(text, jj, ")")
             j = jj
         elif jj < len(text) and text[jj] == "[":
@@ -181043,7 +181089,12 @@ def _js_f1634_stmt_decode(text):
             nm, jj = _js_parse_ident(text, _js_skip_ws(text, jj + 3))
             if nm != sname:
                 raise _JSExprFail(what + " spread base mismatch")
-            jj = _js_expect(text, _js_skip_ws(text, jj), "]")
+            jj = _js_skip_ws(text, jj)
+            # F1656: [...S,] -- a trailing comma is a no-op in the
+            # array literal (node-exact v24.20.0). Only one is admitted.
+            if jj < len(text) and text[jj] == ",":
+                jj = _js_skip_ws(text, jj + 1)
+            jj = _js_expect(text, jj, "]")
             j = jj
         else:
             raise _JSExprFail(what + " bad D staging")
@@ -181092,21 +181143,25 @@ def _js_f1635_stmt_decode(text):
       (or the arrow twin)
     `var|let|const T='';`
     `for(var i=0;i<S.length;i++){T+=String.fromCharCode(S.codePointAt(i));}`
-      (or `T+=S.at(i);`)
+      (or `T+=S.at(i);`; F1657: `T+=String.fromCharCode(S.charCodeAt(i));`;
+      F1658: `T+=S[i];`)
     `var|let|const RESULT=T;`
     then end-of-text.
 
     Node-exact (v24.20.0): S is dstr (ASCII credentials, so every
     char is BMP and codePointAt(i) === charCodeAt(i)); the loop
     rebuilds S character by character into T, so RESULT is dstr.
-    The loop header must be exactly `for(var i=0;i<S.length;i++)`
+    F1657: charCodeAt(i) === codePointAt(i) for BMP (dstr is BMP-only
+    via _safe_chr). F1658: S[i] is the character at index i. The loop
+    header must be exactly `for(var i=0;i<S.length;i++)`
     with a fresh loop variable; the body must be exactly the single
     `T+=...;` statement. Disjoint from F1182 (forEach) and F1567
     (dead-for) by grammar -- the filed shapes BREAK on the open
     tree. Anything else fails closed: a miss, never a mis-decode.
     Returns the decoded string, or None. Never evals.
     """
-    if "codePointAt" not in text and ".at(" not in text:
+    if "codePointAt" not in text and ".at(" not in text and \
+            "charCodeAt" not in text and "+=" not in text:
         return None
     if "fromCharCode" not in text:
         return None
@@ -181187,7 +181242,12 @@ def _js_f1635_stmt_decode(text):
             jj = _js_expect(text, jj, ".")
             m5 = _js_match_kw(text, jj, "codePointAt")
             if m5 is None:
-                raise _JSExprFail(what + " not codePointAt")
+                # F1657: charCodeAt -- dstr is BMP-only (surrogates
+                # rejected by _safe_chr), so for every credential char
+                # charCodeAt(i) === codePointAt(i) (node-exact v24.20.0).
+                m5 = _js_match_kw(text, jj, "charCodeAt")
+            if m5 is None:
+                raise _JSExprFail(what + " not codePointAt/charCodeAt")
             jj = _js_expect(text, m5, "(")
             nm, jj = _js_parse_ident(text, _js_skip_ws(text, jj))
             if nm != iname:
@@ -181199,16 +181259,26 @@ def _js_f1635_stmt_decode(text):
             nm, jj = _js_parse_ident(text, jj)
             if nm != sname:
                 raise _JSExprFail(what + " at base")
-            jj = _js_expect(text, jj, ".")
-            m4 = _js_match_kw(text, jj, "at")
-            if m4 is None:
-                raise _JSExprFail(what + " not at")
-            jj = _js_expect(text, m4, "(")
-            nm, jj = _js_parse_ident(text, _js_skip_ws(text, jj))
-            if nm != iname:
-                raise _JSExprFail(what + " at index")
-            jj = _js_expect(text, jj, ")")
-            j = jj
+            jj2 = _js_skip_ws(text, jj)
+            if jj2 < len(text) and text[jj2] == "[":
+                # F1658: S[i] bracket-index -- node-exact (v24.20.0):
+                # S[i] is the character at index i.
+                nm, jj = _js_parse_ident(text, _js_skip_ws(text, jj2 + 1))
+                if nm != iname:
+                    raise _JSExprFail(what + " idx index")
+                jj = _js_expect(text, _js_skip_ws(text, jj), "]")
+                j = jj
+            else:
+                jj = _js_expect(text, jj, ".")
+                m4 = _js_match_kw(text, jj, "at")
+                if m4 is None:
+                    raise _JSExprFail(what + " not at")
+                jj = _js_expect(text, m4, "(")
+                nm, jj = _js_parse_ident(text, _js_skip_ws(text, jj))
+                if nm != iname:
+                    raise _JSExprFail(what + " at index")
+                jj = _js_expect(text, jj, ")")
+                j = jj
         j = _js_expect(text, j, ";")
         j = _js_expect(text, _js_skip_ws(text, j), "}")
         _js_f96x_charge(state, what + " loopbody")
@@ -181235,14 +181305,16 @@ def _js_f1636_stmt_decode(text):
     `var|let|const S=C.map(function(c){return String.fromCharCode(c);}).join('');`
       (or the arrow twin)
     `var|let|const T=S.toWellFormed();`
+    (F1659: `var|let|const T=String(S).toWellFormed();` wrapper twin)
     `var|let|const RESULT=T;`
     then end-of-text.
 
     Node-exact (v24.20.0) on the filed shapes: S is built from BMP
     integer codes via fromCharCode semantics, so it is well-formed
-    and `S.toWellFormed()` is S. (Adversarial non-BMP codes that
-    ToUint16-truncate to lone surrogates are outside the filed
-    shapes; they cannot create or destroy a credential match.)
+    and `S.toWellFormed()` is S. F1659: `String(S)` is S for string S.
+    (Adversarial non-BMP codes that ToUint16-truncate to lone
+    surrogates are outside the filed shapes; they cannot create or
+    destroy a credential match.)
     Disjoint from F1607 (substring identity) by grammar -- the filed
     shape BREAKs on the open tree. Anything else fails closed: a
     miss, never a mis-decode. Returns the decoded string, or None.
@@ -181261,12 +181333,21 @@ def _js_f1636_stmt_decode(text):
         sname, j = _js_f1206f1212_parse_h_mapjoin(text, j, cname,
                                                  bound, state, what)
         _js_f96x_charge(state, what + " mapjoin")
-        # var T=S.toWellFormed();
+        # var T=S.toWellFormed();  (F1659: var T=String(S).toWellFormed();)
         _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
         _js_f1028f1029_check_fresh_name(tname, bound, {"String"}, what)
         bound.add(tname)
         nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
-        if nm != sname:
+        jj = _js_skip_ws(text, j)
+        if nm == "String" and jj < len(text) and text[jj] == "(":
+            # F1659: String(S).toWellFormed() -- String(S) is S for
+            # string S (node-exact v24.20.0). Only the sname arg is
+            # admitted.
+            nm, jj = _js_parse_ident(text, _js_skip_ws(text, jj + 1))
+            if nm != sname:
+                raise _JSExprFail(what + " twf String base mismatch")
+            j = _js_expect(text, _js_skip_ws(text, jj), ")")
+        elif nm != sname:
             raise _JSExprFail(what + " twf base mismatch")
         j = _js_expect(text, j, ".")
         m = _js_match_kw(text, j, "toWellFormed")
