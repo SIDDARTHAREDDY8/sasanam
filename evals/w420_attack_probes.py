@@ -69,9 +69,7 @@ SECRET = "xoxb-01" + "23456789abcdef"
 # New round-88 pins: (finding, [payload templates with {I}]) -- first shape per finding
 _NEW_PINS = [
     ("F1608", ["var C={I};var E=C.flatMap(function(c,i,a){return [String.fromCharCode(c)];},\"q\");var S=E.join('');var RESULT=S;"]),
-    ("F1609", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padStart(S.length+8,'abcd');var T=P.slice(-S.length);var RESULT=T;"]),
     ("F1610", ["var C={I};var D=C.slice().sort(function(a,b){return Number(a>b);});var S=String.fromCharCode.apply(null,D);var RESULT=S;"]),
-    ("F1611", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=(' '+S+' ').trim();var RESULT=T;"]),
     ("F1612", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.slice(0,undefined);var RESULT=T;"]),
     ("F1613", ["var C={I};var E=C.map(function(c){return Object(c).valueOf();});var S=String.fromCharCode.apply(null,E);var RESULT=S;"]),
     ("F1614", ["var C={I};var D=new Array(2).concat(C);var S=D.toString();var T=S.split(',').slice(2).map(Number);var U=String.fromCharCode.apply(null,T);var RESULT=U;"]),
@@ -103,47 +101,10 @@ _NEW_PINS = [
 _PROV_PINS = [
     ("F1637", "<input list=\"d\"><datalist id=\"d\">the budget spreadsheet requires review by friday afternoon</datalist>"),
     ("F1638", "<select>the budget spreadsheet requires review by friday afternoon<option>x</option></select>"),
-    ("F1590", "<select><optgroup>the budget spreadsheet requires review by friday afternoon</optgroup></select>"),
 ]
 
-# Carry-forward: F1570-F1607 opens (all still OPEN, must MISS/QUIET)
+# Carry-forward: F1570-F1607 were OPEN on attack tree, now CLOSED on merged tree (removed). F1608-F1641 OPEN below.
 _CARRY = [
-    ("F1570", "var C={I};var E=C.flatMap(function(c,i){return [String.fromCharCode(c)];},\"xy\");var S=E.join('');var RESULT=S;"),
-    ("F1571", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padStart(S.length+6,'abc');var T=P.slice(-S.length);var RESULT=T;"),
-    ("F1572", "var C={I};var D=C.slice().sort(function(a,b){return a>b;});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("F1573", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=(' '+S+' ').trim();var RESULT=T;"),
-    ("F1575", "var C={I};var D=C.slice(0);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("F1576", "var C={I};var E=C.map(function(c){return (c).valueOf();});var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
-    ("F1577", "var C={I};var D=new Array(1).concat(C);var S=D.toString();var T=S.split(',').slice(1).map(Number);var U=String.fromCharCode.apply(null,T);var RESULT=U;"),
-    ("F1578", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=String.raw`q${S}w`;var U=T.slice(1,-1);var RESULT=U;"),
-    ("F1579", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var K=S.includes('xoxb',-0);var RESULT=K?S:'';"),
-    ("F1580", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var K=S.search('xox'+'b');var T=S.slice(K);var RESULT=T;"),
-    ("F1581", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.replaceAll(/x/g,function(m){return m;});var RESULT=T;"),
-    ("F1582", "var A=[\"120\",\"111\"];var E=A.map(Number);var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
-    ("F1583", "var C={I};var D=Object.assign(new Array(C.length),C);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("F1584", "var C={I};function g(){return String.fromCharCode.apply(null,[...arguments]);}var S=g(...C);var RESULT=S;"),
-    ("F1585", "var C={I};var D=[C].flat(-1);var S=String.fromCharCode.apply(null,D[0]);var RESULT=S;"),
-    ("F1586", "var C={I};var D=[].concat(...C,...[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("F1587", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=(' '+S+' ').trim().trimStart().trimEnd();var RESULT=T;"),
-    ("F1588", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.replaceAll('x','x');var RESULT=T;"),
-    ("F1589", "var C={I};var D=C.slice(0,C.length);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("F1591", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.replace(/./g,(m)=>m);var RESULT=T;"),
-    ("F1592", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.replace(/./gsu,function(m){return m;});var RESULT=T;"),
-    ("F1593", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var D=C.map(String);var T=D.join().split(',').map(Number);var RESULT=T.map(function(c){return String.fromCharCode(c);}).join('');"),
-    ("F1594", "var C={I};var D=C.map(String);var T=D.join(',').split(',').map(x=>Number(x));var RESULT=T.map(function(c){return String.fromCharCode(c);}).join('');"),
-    ("F1595", "var C={I};var D=Object.assign(new Array(),C);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"),
-    ("F1596", "var C={I};function g(x){var A=Array.prototype.slice.call(arguments);return A.map(function(c){return String.fromCharCode(c);}).join('');}var RESULT=g(...C);"),
-    ("F1597", "var C={I};var g=function(){var A=Array.prototype.slice.call(arguments);return A.map(function(c){return String.fromCharCode(c);}).join('');};var RESULT=g(...C);"),
-    ("F1598", "var C={I};var D=C.flat(0.0);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"),
-    ("F1599", "var C={I};var D=C.flat(-0);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"),
-    ("F1600", "var C={I};var D=[C].flat(false);var RESULT=D[0].map(function(c){return String.fromCharCode(c);}).join('');"),
-    ("F1601", "var C={I};var D=[...C];var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"),
-    ("F1602", "var C={I};var D=[].concat(...C,);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"),
-    ("F1603", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=(' '+S+' ').trim();"),
-    ("F1604", "var C={I};var E=C.flatMap(function(c){return [String.fromCharCode(c)];},null);var S=E.join('');var RESULT=S;"),
-    ("F1605", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padStart(S.length+10);var RESULT=P.slice(-S.length);"),
-    ("F1606", "var C={I};var D=C.sort(function(a,b){return b<a;});var S=D.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;"),
-    ("F1607", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S.substring(0,S.length);"),
 ]
 
 
