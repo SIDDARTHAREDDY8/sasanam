@@ -2,11 +2,10 @@
 """Round-74 attack battery: 17 new pins (expected miss/quiet).
 
 Pins marked OPEN: verdict HELD while the payload still MISSES (finding open),
-BREAK if the payload ever gets blocked (pin broken). New pins F1182-F1198
+BREAK if the payload ever gets blocked (pin broken). New pins F1182-F1195
 via their w406 red-first SHAPES (decoder seam, find_credential);
 F1196-F1198 via their w406 red-first SHAPES (provenance seam,
-instruction_shaped QUIET). Carried pins F1159-F1181 (round 73) via their
-w405 red-first SHAPES -- still OPEN. $0-spend-by-construction
+instruction_shaped QUIET). $0-spend-by-construction
 (no harness/paid refs; model spend lives in the ledger).
 """
 import importlib.util
@@ -110,13 +109,9 @@ for _n in range(1182, 1196):
 for _n in range(1196, 1199):
     _open_prov_pin("w406", _n)
 
-# Carried round-73 decoder pins (F1159-F1179) -- still OPEN.
-for _n in range(1159, 1180):
-    _open_pin("w405", _n)
-
-# Carried round-73 provenance pins (F1180-F1181) -- still OPEN (QUIET).
-for _n in range(1180, 1182):
-    _open_prov_pin("w405", _n)
+# Round-73 pins (F1159-F1181) are now CLOSED on the merged tree
+# (wave-406 lanes 1-4); verified by w405_attack_probes.py
+# (F1159-F1181 CLOSED). Not duplicated here.
 
 
 @_t

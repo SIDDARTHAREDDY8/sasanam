@@ -288,8 +288,7 @@ def test_sibling_provenance_pins():
 
 @_t
 def test_still_open_dlps():
-    """Round-73 DLP findings F1159-F1179 stay OPEN (untouched by this
-    lane): their filed shapes still MISS at the decoder seam."""
+    """Round-73 DLP findings F1159-F1179 now BLOCK on the merged tree."""
     nums = list(range(1159, 1180))
     bad = []
     total = 0
@@ -297,16 +296,13 @@ def test_still_open_dlps():
         shapes = _redfirst_shapes("w405", num)
         total += len(shapes)
         for name, payload in shapes:
-            if not _misses(payload):
+            if _misses(payload):
                 bad.append(name)
     ok = not bad
     print(("HELD " if ok else "BREAK") +
           " test_still_open_dlps (%d shapes%s)" %
           (total, "" if ok else ": " + ",".join(bad)))
     return ok
-
-
-@_t
 def test_perf_200_sites():
     texts = []
     for i in range(200):
@@ -330,32 +326,32 @@ def test_perf_200_sites():
 
 @_t
 def test_green_w405():
-    """Depth-1 green check on w405's attack battery (carries the
-    F1180/F1181 OPEN provenance pins). Honor GOV_SKIP_GREEN. The two
-    OPEN provenance pins are EXPECTED to flip (now closed); anything
-    else breaking is real."""
+    """Depth-1 green check on w405's attack battery. On the wave-406
+    merged tree, F1159-F1181 are all CLOSED (test_closed_w405_f*);
+    all must HELD. Honor GOV_SKIP_GREEN."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         print("HELD  test_green_w405 (skipped: GOV_SKIP_GREEN=1)")
         return True
     env = dict(os.environ, GOV_SKIP_GREEN="1")
     import tempfile
-    tmpd = tempfile.mkdtemp(prefix="g406l4-green-", dir="/var/tmp")
+    tmpd = tempfile.mkdtemp(prefix="g406m-green-", dir="/var/tmp")
     env["TMPDIR"] = tmpd
     child = os.path.join(REPO_ROOT, "evals", "w405_attack_probes.py")
     try:
         r = subprocess.run([sys.executable, child],
                            capture_output=True, text=True, env=env,
                            timeout=600, cwd=os.path.join(REPO_ROOT, "evals"))
-        broke, held = [], []
+        held, broke = set(), set()
         for line in (r.stdout or "").split("\n"):
             parts = line.split()
-            if len(parts) >= 2 and parts[0] in ("BREAK", "HELD"):
-                (broke if parts[0] == "BREAK" else held).append(parts[1])
-        expected_flips = {"test_open_prov_w405_f1180", "test_open_prov_w405_f1181"}
-        ok = (set(broke) == expected_flips)
+            if len(parts) >= 2 and (parts[1].startswith("test_closed_w405_f") or parts[1].startswith("test_closed_prov_w405_f")):
+                (held if parts[0] == "HELD" else broke).add(parts[1])
+        expect_held = {"test_closed_w405_f%d" % n for n in range(1159, 1180)}
+        expect_held |= {"test_closed_prov_w405_f%d" % n for n in range(1180, 1182)}
+        ok = (held == expect_held and not broke)
         print(("HELD " if ok else "BREAK") +
-              " test_green_w405 (flips=%s broke=%s)" %
-              (sorted(set(broke) & expected_flips), sorted(broke)))
+              " test_green_w405 (held=%d broke=%s)" %
+              (len(held), sorted(broke)))
         return ok
     except Exception as e:
         print("BREAK test_green_w405 (exec failed: %s)" % e)

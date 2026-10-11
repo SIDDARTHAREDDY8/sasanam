@@ -52,7 +52,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143
 RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 44  # wave-406 lane 3: 43 + 1 loop (F1174-F1179)
+N_STMTDEC_LOOPS_PIN = 46  # wave-406 merge: 43 + 3 loops (lanes 1-3)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -413,28 +413,21 @@ def test_p5_sibling_hooks_hold():
 
 @_t
 def test_p5_still_open_miss():
-    """F1159-F1173, F1180-F1181 (other lanes' scope) still genuinely MISS."""
+    """F1159-F1181 now BLOCK/FLAG on the merged tree."""
     bad = []
-    for fn in (1159, 1160, 1161, 1162, 1163, 1164, 1165, 1166, 1167,
-               1168, 1169, 1170, 1171, 1172, 1173):
+    for fn in range(1159, 1180):
         shapes = _redfirst_shapes("w405", fn)
-        hit = [name for name, p in shapes if not _misses(p)]
-        if hit:
-            bad.append("f%d:%s" % (fn, ",".join(hit)))
-    # Provenance F1180/F1181: must stay QUIET (not routed)
+        miss = [name for name, p in shapes if _misses(p)]
+        if miss:
+            bad.append("f%d:%s" % (fn, ",".join(miss)))
     from gov.instruction_provenance import instruction_shaped
     for fn in (1180, 1181):
         shapes = _redfirst_shapes("w405", fn)
-        hit = [name for name, p in shapes
-               if instruction_shaped(p)]
-        if hit:
-            bad.append("f%d-quiet:%s" % (fn, ",".join(hit)))
-    return (not bad, "still-open miss%s"
+        quiet = [name for name, p in shapes if not instruction_shaped(p)]
+        if quiet:
+            bad.append("f%d:%s" % (fn, ",".join(quiet)))
+    return (not bad, "merged-tree block%s"
             % ((" BAD=" + ",".join(bad)) if bad else ""))
-
-
-# ---------------- p6: honest-text quiet ----------------
-
 @_t
 def test_p6_honest_quiet():
     honest = [
@@ -473,16 +466,16 @@ def test_p7_perf_200_sites():
 # ---------------- g0: green check ----------------
 
 def _green_check():
-    """Depth-1 green check on w405's round-73 attack battery.
+    """Depth-1 green check on w405's attack battery.
 
-    w405_attack_probes.py pins F1159-F1181 as OPEN on the base; on
-    this lane tree exactly the F1174-F1179 pins must BREAK (now
-    closed) and all other pins must HELD. Honor GOV_SKIP_GREEN.
+    On the wave-406 merged tree, w405_attack_probes.py pins F1159-F1181
+    as CLOSED (test_closed_w405_f*); all must HELD (blocked). Honor
+    GOV_SKIP_GREEN.
     """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w405_attack): skipped via GOV_SKIP_GREEN=1")
     import tempfile
-    tmpd = tempfile.mkdtemp(prefix="g406lane3-green-", dir="/var/tmp")
+    tmpd = tempfile.mkdtemp(prefix="g406m-green-", dir="/var/tmp")
     env = dict(os.environ)
     env["GOV_SKIP_GREEN"] = "1"
     env["TMPDIR"] = tmpd
@@ -491,18 +484,19 @@ def _green_check():
             [sys.executable, "evals/w405_attack_probes.py"],
             capture_output=True, text=True, env=env,
             timeout=600, cwd=REPO_ROOT)
+        held = set()
         broke = set()
         for line in r.stdout.split("\n"):
             parts = line.split()
-            if len(parts) >= 3 and parts[0] == "BREAK" and (
-                    parts[1].startswith("test_open_w405_f") or
-                    parts[1].startswith("test_open_prov_w405_f")):
-                broke.add(parts[1])
-        expect_broke = {"test_open_w405_f%d" % n
-                        for n in (1174, 1175, 1176, 1177, 1178, 1179)}
-        ok = (broke == expect_broke)
-        return (ok, "green(w405_attack): broke=%s (want exactly f1174-f1179)"
-                % sorted(broke))
+            if len(parts) >= 2 and (parts[1].startswith("test_closed_w405_f") or parts[1].startswith("test_closed_prov_w405_f")):
+                (held if parts[0] == "HELD" else broke).add(parts[1])
+        expect_held = {"test_closed_w405_f%d" % n
+                       for n in range(1159, 1180)}
+        expect_held |= {"test_closed_prov_w405_f%d" % n
+                        for n in range(1180, 1182)}
+        ok = (held == expect_held and not broke)
+        return (ok, "green(w405_attack): held=%d broke=%s (want 23 closed HELD)"
+                % (len(held), sorted(broke)))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
 
