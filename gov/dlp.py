@@ -143453,6 +143453,51 @@ def _js_f1187f1192_parse_c_arr(text, j, state, what):
     return cname, codes, j
 
 
+def _js_f1187_parse_depth(text, j, state, what):
+    """Parse a flat() depth argument (F1187/F1222/F1228).
+
+    Accepts integer literals (via _js_parse_fcc_number: decimal, hex,
+    octal, binary, separators), an optional leading `-`/`+` sign,
+    float literals (`1.5` -- ToIntegerOrInfinity truncates), the
+    `Infinity`/`NaN` keywords, `null`/`undefined` (both coerce to 0),
+    and string literals (`"2"`, `"x"` -- ToIntegerOrInfinity parses
+    or yields NaN->0) -- all node-verified (v24.20.0) to flatten the
+    doubly-nested `[[c]]` production to an assemblable form (any depth
+    yields the same decoded string: depth>=2 flattens fully, depth<2
+    is a no-op but the spread coerces each single-element array via
+    ToNumber). Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    for kw in ("Infinity", "NaN", "null", "undefined"):
+        m = _js_match_kw(text, j, kw)
+        if m is not None:
+            _js_f96x_charge(state, what + " depth")
+            return m
+    if j < n and text[j] in "'\"":
+        # string literal depth -- ToIntegerOrInfinity coerces.
+        _, j = _js_f99x_parse_str(text, j)
+        _js_f96x_charge(state, what + " depth")
+        return j
+    k = j
+    if k < n and text[k] in "+-":
+        k += 1
+    k = _js_skip_ws(text, k)
+    _, k = _js_parse_fcc_number(text, k)
+    # optional float fraction (ToInteger truncates; value irrelevant)
+    k2 = _js_skip_ws(text, k)
+    if k2 < n and text[k2] == ".":
+        k3 = k2 + 1
+        while k3 < n and text[k3].isdigit():
+            k3 += 1
+        if k3 > k2 + 1:
+            k = k3
+    _js_f96x_charge(state, what + " depth")
+    return k
+
+
+
+
 def _js_f1187f1192_parse_map_cb_int(text, j, cname, bound, what):
     """Parse a `.map(<cb>)` callback returning per-code values (F1187-F1192).
 
@@ -144604,6 +144649,78 @@ def _js_f1193_parse_for(text, j, aname, fname, counter, state, what,
     j = _js_expect(text, j, "}")
     _js_f96x_charge(state, what + " foridx")
     return j
+
+
+def _js_f1193_parse_while(text, j, aname, fname, iname, state, what,
+                        bound):
+    """Parse a `while` staging loop at text[j] (F1224, j at `while`).
+
+    `while(<i> < <A>.length){<stage>;<incr>;}` with a pre-declared
+    `[var|let|const] <i>=0;` counter (parsed by the caller).
+    Node-verified (v24.20.0) to stage chars in insertion order.
+    Returns next_index. Never evals.
+    """
+    m = _js_match_kw(text, j, "while")
+    j = _js_expect(text, m, "(")
+    i2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if i2 != iname:
+        raise _JSExprFail(what + " while cond idx mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "<")
+    a2, k2 = _js_parse_ident(text, _js_skip_ws(text, j))
+    if a2 != aname:
+        raise _JSExprFail(what + " while cond arr mismatch")
+    j = _js_expect(text, k2, ".")
+    m2 = _js_match_kw(text, _js_skip_ws(text, j), "length")
+    if m2 is None:
+        raise _JSExprFail(what + " while cond not length")
+    j = _js_expect(text, m2, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    j = _js_f1193_parse_stage_call(text, j, fname, aname, None,
+                                   iname, state, what)
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_f1193_parse_incr(text, j, iname, what)
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    _js_f96x_charge(state, what + " while")
+    return j
+
+
+
+
+def _js_f1193_parse_forin(text, j, aname, fname, bound, state, what):
+    """Parse a `for-in` staging loop at text[j] (F1225, j at `for`).
+
+    `for([var|let|const] <i> in <A>){<stage>;}` -- the loop variable
+    binds string keys, but `A[i]` still reads each element
+    (node-verified v24.20.0), staging chars in insertion order.
+    Returns next_index. Never evals.
+    """
+    m = _js_match_kw(text, j, "for")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    kw, k = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail(what + " forin head not decl")
+    iname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if iname in bound:
+        raise _JSExprFail(what + " forin name clash")
+    m2 = _js_match_kw(text, _js_skip_ws(text, k), "in")
+    if m2 is None:
+        raise _JSExprFail(what + " forin not in")
+    a2, k = _js_parse_ident(text, _js_skip_ws(text, m2))
+    if a2 != aname:
+        raise _JSExprFail(what + " forin arr mismatch")
+    k = _js_expect(text, k, ")")
+    k = _js_expect(text, _js_skip_ws(text, k), "{")
+    bound.add(iname)
+    k = _js_f1193_parse_stage_call(text, k, fname, aname, None,
+                                   iname, state, what)
+    k = _js_expect(text, _js_skip_ws(text, k), ";")
+    k = _js_expect(text, _js_skip_ws(text, k), "}")
+    _js_f96x_charge(state, what + " forin")
+    return k
+
+
 
 
 def _js_f1193_parse_staging(text, j, aname, fname, bound, state, what):
