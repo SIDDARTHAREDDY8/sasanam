@@ -1348,6 +1348,112 @@ def _has_hidden_aria_placeholder(text):
     return False
 
 
+def _has_hidden_button_name(text):
+    """True when prose hides in a `<button name>` attribute (F1309).
+
+    F1309: the name attribute identifies the button to scripts -- it
+    is never rendered as page-body text, so prose there is hidden
+    from the human reader (the F1024 rationale). Honest machine
+    names (submit-btn) stay quiet via the prose-shape gate.
+    Disjoint from F1255's `<button value>` (different attribute).
+    Never evals.
+    """
+    for m in re.finditer(r"<button\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "name")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_input_name(text):
+    """True when prose hides in an `<input name>` attribute (F1310).
+
+    F1310: the name attribute is the form control name -- it is
+    never rendered as page-body text, so prose there is hidden
+    from the human reader (the F1024 rationale). Honest machine
+    names (username) stay quiet via the prose-shape gate.
+    Disjoint from F1047's `<input type=hidden>` value carrier
+    (different attribute). Never evals.
+    """
+    for m in re.finditer(r"<input\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "name")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_textarea_name(text):
+    """True when prose hides in a `<textarea name>` attribute (F1311).
+
+    F1311: the name attribute is the form control name -- it is
+    never rendered as page-body text, so prose there is hidden
+    from the human reader (the F1024 rationale). Honest machine
+    names (comment) stay quiet via the prose-shape gate. Disjoint
+    from F1284's `<textarea placeholder>` (different attribute).
+    Never evals.
+    """
+    for m in re.finditer(r"<textarea\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "name")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_a_download(text):
+    """True when prose hides in an `<a download>` attribute (F1312).
+
+    F1312: the download attribute is the suggested filename -- it
+    is never rendered as page-body text, so prose there is hidden
+    from the human reader (the F1024 rationale). Honest filenames
+    (file.pdf) stay quiet via the prose-shape gate. No filed
+    a-download class exists. Never evals.
+    """
+    for m in re.finditer(r"<a\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "download")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_iframe_name(text):
+    """True when prose hides in an `<iframe name>` attribute (F1313).
+
+    F1313: the name attribute is the window name -- it is never
+    rendered as page-body text, so prose there is hidden from the
+    human reader (the F1024 rationale). Honest machine names
+    (main) stay quiet via the prose-shape gate. No filed
+    iframe-name class exists. Never evals.
+    """
+    for m in re.finditer(r"<iframe\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "name")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_object_name(text):
+    """True when prose hides in an `<object name>` attribute (F1314).
+
+    F1314: the name attribute identifies the object to scripts --
+    it is never rendered as page-body text, so prose there is
+    hidden from the human reader (the F1024 rationale). Honest
+    machine names (plugin) stay quiet via the prose-shape gate.
+    Disjoint from the modeled object param (different attribute).
+    Never evals.
+    """
+    for m in re.finditer(r"<object\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "name")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
 def _has_hidden_hidden_option(text):
     """True when prose hides in `<option hidden>` (F1064).
 
@@ -2193,12 +2299,30 @@ def instruction_shaped(text):
     # F1284 vs F1286 by element, and F1098's aria-* variants
     # (different attribute names); documented per detector.
     # Honest machine tokens stay quiet via the prose-shape gate.
-    return (_has_hidden_select_name(norm)
+    if (_has_hidden_select_name(norm)
             or _has_hidden_textarea_placeholder(norm)
             or _has_hidden_th_abbr(norm)
             or _has_hidden_input_placeholder(norm)
             or _has_hidden_aria_valuetext(norm)
-            or _has_hidden_aria_placeholder(norm))
+            or _has_hidden_aria_placeholder(norm)):
+        return True
+    # F1309/F1310/F1311/F1312/F1313/F1314: the same construction
+    # for six further hidden-from-human carriers -- `<button
+    # name>`, `<input name>`, `<textarea name>`, `<a download>`,
+    # `<iframe name>`, and `<object name>`. None is rendered as
+    # page-body text, so prose there is hidden from the human
+    # reader (the F1024 rationale). Disjoint from F1255's
+    # `<button value>`, F1047's input-value, F1283's `<select
+    # name>`, F1284's `<textarea placeholder>`, and the modeled
+    # object param (different elements/attributes); documented per
+    # detector. Honest machine tokens stay quiet via the
+    # prose-shape gate.
+    return (_has_hidden_button_name(norm)
+            or _has_hidden_input_name(norm)
+            or _has_hidden_textarea_name(norm)
+            or _has_hidden_a_download(norm)
+            or _has_hidden_iframe_name(norm)
+            or _has_hidden_object_name(norm))
 
 
 class ActionRequest(object):
