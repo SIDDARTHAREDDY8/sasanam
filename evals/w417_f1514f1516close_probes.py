@@ -68,7 +68,7 @@ def _misses(payload):
 
 @_t
 def test_p0_pins():
-    """Pin 2143 holds; N_STMTDEC_LOOPS=82; re.compile=29."""
+    """Pin 2143 holds; N_STMTDEC_LOOPS=84; re.compile=29."""
     ok = True
     notes = []
     with open(os.path.join(REPO_ROOT, "evals",
@@ -79,11 +79,11 @@ def test_p0_pins():
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         dsrc = f.read()
     actual = dsrc.count("for _stmtdec in (")
-    if pin != 82 or actual != 82:
+    if pin != 84 or actual != 84:
         ok = False
-        notes.append("N_STMTDEC_LOOPS pin=%d actual=%d (want 82)" % (pin, actual))
+        notes.append("N_STMTDEC_LOOPS pin=%d actual=%d (want 84)" % (pin, actual))
     else:
-        notes.append("N_STMTDEC_LOOPS=82")
+        notes.append("N_STMTDEC_LOOPS=84")
     rc = len(re.findall(r"re\.compile\(", dsrc))
     if rc != 29:
         ok = False
@@ -269,8 +269,8 @@ def test_p6_perf():
 # ---------------- p7: other opens miss ----------------
 
 _OTHER_OPENS = [
-    # F1504: flatMap 4-param (lane 1 scope) still MISS
-    "var C={I};var D=C.flatMap(function(c,i,a,t){return [String.fromCharCode(c)];});var S=D.join('');var RESULT=S;",
+    # F1504: flatMap 4-param (lane 1 scope, now CLOSED -> HIT)
+    "var C={I};var E=C.flatMap(function(c,i,a,t){return [c];},{});var S=String.fromCharCode.apply(null,E);var RESULT=S;",
     # F1509: trim staging (lane 2 scope) still MISS
     "var C={I};var D=C.map(function(c){return String.fromCharCode(c).trim();});var S=D.join('');var RESULT=S;",
 ]
@@ -278,15 +278,15 @@ _OTHER_OPENS = [
 
 @_t
 def test_p7_other_opens_miss():
-    """Other wave-417 opens still MISS."""
+    """Other wave-417 lanes' findings now CLOSED (merged) -> HIT."""
     bad = []
     for tmpl in _OTHER_OPENS:
         payload = tmpl.replace("{I}", _codes(SECRET_S))
-        if _hits(payload):
+        if not _hits(payload):
             bad.append(tmpl[:40])
-    return (not bad), "other-opens=%d/%d MISS%s" % (
+    return (not bad), "other-lanes-closed=%d/%d HIT%s" % (
         len(_OTHER_OPENS) - len(bad), len(_OTHER_OPENS),
-        "" if not bad else " HIT:" + ",".join(bad))
+        "" if not bad else " MISS:" + ",".join(bad))
 
 
 # ---------------- g0: green check (depth-1) ----------------

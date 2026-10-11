@@ -77,7 +77,7 @@ def _misses(payload):
 
 @_t
 def test_p0_pins():
-    """Pin 2143 holds; N_STMTDEC_LOOPS=82; re.compile=29."""
+    """Pin 2143 holds; N_STMTDEC_LOOPS=84; re.compile=29."""
     ok = True
     notes = []
     with open(os.path.join(REPO_ROOT, "evals",
@@ -88,11 +88,11 @@ def test_p0_pins():
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         dsrc = f.read()
     actual = dsrc.count("for _stmtdec in (")
-    if pin != 82 or actual != 82:
+    if pin != 84 or actual != 84:
         ok = False
-        notes.append("N_STMTDEC_LOOPS pin=%d actual=%d (want 82)" % (pin, actual))
+        notes.append("N_STMTDEC_LOOPS pin=%d actual=%d (want 84)" % (pin, actual))
     else:
-        notes.append("N_STMTDEC_LOOPS=82")
+        notes.append("N_STMTDEC_LOOPS=84")
     rc = len(re.findall(r"re\.compile\(", dsrc))
     if rc != 29:
         ok = False
@@ -334,32 +334,36 @@ def test_p6_perf():
 
 # F1509-F1516: other lanes' scope -- must stay MISS
 _P7 = [
-    # F1509: trim map staging
-    "var C={I};var D=C.map(function(c){return String(c).trim();});var S=String.fromCharCode.apply(null,D.map(Number));var RESULT=S;",
-    # F1512: map-then-join comma readout
-    "var C={I};var J=C.map(function(c){return String(c);}).join(',');var S=String.fromCharCode.apply(null,J.split(',').map(Number));var RESULT=S;",
-    # F1513: splice(-1,1)
-    "var C={I};var D=C.splice(-1,1);var S=String.fromCharCode.apply(null,C);var RESULT=S;",
-    # F1514: String valueOf wrapper
-    "var C={I};var D=C.map(function(c){return String(c).valueOf();});var S=String.fromCharCode.apply(null,D.map(Number));var RESULT=S;",
-    # F1515: Array toString readout
-    "var C={I};var T=C.toString();var S=String.fromCharCode.apply(null,T.split(',').map(Number));var RESULT=S;",
-    # F1516: tagged template literal
+    # F1509: filed shape (now CLOSED -> HIT)
+    "var C={I};var D=C.map(function(c){return String.fromCharCode(c).trim();});var S=D.join('');var RESULT=S;",
+    # F1510: filed shape (now CLOSED -> HIT)
+    "var C={I};var D=C.map(function(c){return String.fromCharCode(c).trimStart();});var S=D.join('');var RESULT=S;",
+    # F1511: filed shape (now CLOSED -> HIT)
+    "var C={I};var D=C.map(function(c){return String.fromCharCode(c).trimEnd();});var S=D.join('');var RESULT=S;",
+    # F1512: filed shape (now CLOSED -> HIT)
+    "var C={I};var J=C.map(function(c){return String.fromCharCode(c);}).join(',');var S=J.split(',').join('');var RESULT=S;",
+    # F1513: filed shape (now CLOSED -> HIT)
+    "var C={I};var D=C.splice(-1,1);var E=C.concat(D);var S=String.fromCharCode.apply(null,E);var RESULT=S;",
+    # F1514: filed shape (now CLOSED -> HIT)
+    "var C={I};var D=C.map(function(c){return String.fromCharCode(c).valueOf();});var S=D.join('');var RESULT=S;",
+    # F1515: filed shape (now CLOSED -> HIT)
+    "var C={I};var S=C.toString();var RESULT=S.split(',').map(Number).map(function(n){return String.fromCharCode(n);}).join('');",
+    # F1516: filed shape (now CLOSED -> HIT)
     "var C={I};var T=String.raw`x`;var S=String.fromCharCode.apply(null,C);var RESULT=S;",
 ]
 
 
 @_t
 def test_p7_other_opens_miss():
-    """F1509-F1516 (other lanes) still MISS."""
+    """F1509-F1516 (other lanes) now CLOSED (merged) -> HIT."""
     bad = []
     for tmpl in _P7:
         payload = tmpl.replace("{I}", _codes(SECRET_S))
-        if not _misses(payload):
+        if _misses(payload):
             bad.append(tmpl[:40])
-    return (not bad), "other-opens=%d/%d MISS%s" % (
+    return (not bad), "other-lanes-closed=%d/%d HIT%s" % (
         len(_P7) - len(bad), len(_P7),
-        "" if not bad else " HIT:" + ",".join(bad))
+        "" if not bad else " MISS:" + ",".join(bad))
 
 
 # ---------------- g0: green check ----------------

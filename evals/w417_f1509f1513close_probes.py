@@ -112,7 +112,7 @@ def test_p0_pins():
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (pin == 82 and len(loops) == 82)
+    ok = (pin == 84 and len(loops) == 84)
     notes.append("loops=%d pin=%d" % (len(loops), pin))
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         ftxt = f.read()
@@ -308,10 +308,10 @@ def test_p6_perf():
 
 @_t
 def test_p7_other_opens_miss():
-    """F1504-F1508 + F1514-F1516 (outside this lane's closures) still MISS.
+    """F1504-F1508 + F1514-F1516 (other lanes) now CLOSED (merged) -> HIT.
 
     Runs the w416 red-first batteries as subprocesses; each must exit
-    0 (all shapes BREAK = still open). F1509-F1513 are excluded --
+    non-zero (shapes HIT = closed). F1509-F1513 are excluded --
     they are CLOSED by this lane. F1517 is excluded: incidentally
     CLOSED at the wave-416 merge (verified HIT); the merge footer
     documents it.
@@ -331,11 +331,11 @@ def test_p7_other_opens_miss():
                 [sys.executable, p],
                 capture_output=True, text=True, timeout=300,
                 cwd=os.path.join(REPO_ROOT, "evals"))
-            if r.returncode != 0:
-                bad.append("f%d(rc=%d)" % (n, r.returncode))
+            if r.returncode == 0:
+                bad.append("f%d(still-open)" % n)
         except Exception:  # noqa: BLE001
             bad.append("f%d(exc)" % n)
-    return (not bad, "other opens miss%s"
+    return (not bad, "other lanes closed%s"
             % ("" if not bad else ": " + ",".join(bad[:8])))
 
 
