@@ -170914,8 +170914,10 @@ def _decode_layer(text):
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
 
-
-
+    # F1385-F1396 (wave-415 lane 2): filter twins, reduce push-accumulator,
+    # concat staging, every/some accumulation, toPrecision codec, copyWithin
+    # no-op, at() staging, JSON roundtrip, Array.from, find accumulation,
+    # double-reverse, keys-iterator. Additive, in F-number order.
     for _stmtdec in (_js_f1385_stmt_decode, _js_f1386_stmt_decode,
                      _js_f1387_stmt_decode, _js_f1388_stmt_decode,
                      _js_f1389_stmt_decode, _js_f1390_stmt_decode,
