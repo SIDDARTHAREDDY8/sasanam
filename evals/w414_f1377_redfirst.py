@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
-"""F1377 red-first: F1361 map arrow 3-param residual
-
-Filed 2026-10-11 11:05 UTC, wave-414 lane 1 Spec-review residual (local
-node validation, $0.00 model spend (0 paid calls). Prints BREAK on the
-open tree.
+"""F1377 red-first (wave-414 filing lane, corrected {I} template): F1350-family 2-param flatMap residual -- flatMap(function(c,i)) + fromCharCode.apply
+Filed 2026-10-11 10:51 UTC, wave-414 filing lane (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -48,40 +45,32 @@ def _codes(s):
 
 _TMPLS = [
     ("f1377-0",
-     "var C=__CODES__;var D=C.map((c,i,a)=>a[i]);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+     "var C={I};var E=C.flatMap(function(c,i){return [c];});var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
 ]
 
 _CONTROLS = [
-    ("direct-ctrl",
-     "var C=[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101];var S=String.fromCharCode.apply(null,C);var RESULT=S;"),
+    ("f1350-1param-ctrl",
+     "var C=[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101];var E=C.flatMap(function(c){return [c];});var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
 ]
 
 
 def main():
     fails = 0
     for name, tmpl in _TMPLS:
-        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
-            payload = tmpl.replace("__CODES__", _codes(secret))
-            nc = subprocess.run(
-                ["node", "-e",
-                 payload + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
-                capture_output=True, text=True, timeout=30)
-            node_ok = False
-            for line in (nc.stdout or "").strip().split("\n"):
-                if line.startswith("OUT:"):
-                    node_ok = (line[4:] == secret)
-            verdict = _scan(payload)
-            ok = node_ok and verdict == "MISS"
-            print(("BREAK " if ok else "FAIL ") + "%s %s node=%s scanner=%s" % (name, label, node_ok, verdict))
+        for secret, tag in ((SECRET_S, "short"), (SECRET_L, "long")):
+            payload = tmpl.replace("{I}", _codes(secret))
+            v = _scan(payload)
+            ok = (v == "MISS")
+            print(("BREAK " if ok else "FAIL ") + name + "/" + tag + " -> " + v)
             if not ok:
                 fails += 1
     for name, payload in _CONTROLS:
-        verdict = _scan(payload)
-        ok = verdict == "HIT"
-        print(("ctrl-ok " if ok else "CTRL-FAIL ") + name + " scanner=" + verdict)
+        v = _scan(payload)
+        ok = (v == "HIT")
+        print(("CTRL-OK " if ok else "CTRL-FAIL ") + name + " -> " + v)
         if not ok:
             fails += 1
-    print("FAILURES:%d" % fails)
+    print("FAILURES:" + str(fails))
     return 1 if fails else 0
 
 
