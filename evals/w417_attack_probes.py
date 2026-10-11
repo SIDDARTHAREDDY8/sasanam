@@ -2,7 +2,7 @@
 """Wave-417 attack round 85 coverage battery.
 
 Pins for each new finding F1518-F1543 (must MISS on the open tree), plus
-carry-forward for F1504-F1516 (must still MISS). Taxonomy + footer pins.
+carry-forward for F1504-F1516 (now CLOSED in wave-417 merge, must HIT). Taxonomy + footer pins.
 $0-spend-by-construction: local node validation only, no paid machinery.
 """
 import os
@@ -47,7 +47,7 @@ SECRET = "xoxb-01" + "23456789abcdef"
 
 # New round-85 pins: (finding, [payload templates with {I}]) -- first shape per finding
 _NEW_PINS = [
-    ("F1518", ["var C={I};var E=C.flatMap((c,i,a,t,u)=>[c]);var S=String.fromCharCode.apply(null,E);var RESULT=S;"]),
+    ("F1518", ["var C={I};var E=C.flatMap(function(c,i,a,t){return [c];},null);var S=String.fromCharCode.apply(null,E);var RESULT=S;"]),
     ("F1519", ["var C={I};var E=C.map(function(c){return String.fromCharCode(c).padStart(10,'0').slice(-1);});var RESULT=E.join('');"]),
     ("F1520", ["var C={I};var D=C.slice().sort((a,b)=>a>b);var S=String.fromCharCode.apply(null,D);var RESULT=S;"]),
     ("F1521", ["var C={I};var J=C.map(function(c){return String.fromCharCode(c);}).join('|');var E=J.split('|');var RESULT=E.join('');"]),
@@ -75,7 +75,7 @@ _NEW_PINS = [
     ("F1543", ["var C={I};var E=C.map(function(c){return String.fromCharCode(c).repeat(1);});var RESULT=E.join('');"]),
 ]
 
-# Carry-forward: round-84 opens F1504-F1516 (must still MISS). F1517 CLOSED in merge.
+# Carry-forward: round-84 opens F1504-F1516 (now CLOSED in wave-417 merge, must HIT). F1517 CLOSED in merge.
 _CARRY = [
     ("F1504", "var C={I};var E=C.flatMap(function(c,i,a,t){return [c];},{});var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
     ("F1505", "var C={I};var D=C.map(function(c){return String(c).padStart(String(c).length,'0');});var S=String.fromCharCode.apply(null,D.map(Number));var RESULT=S;"),
@@ -113,7 +113,7 @@ def main():
     for gname, t in _CARRY:
         total += 1
         v = _scan(t.replace("{I}", _codes(SECRET)))
-        ok = (v == "MISS")
+        ok = (v == "HIT")
         print(("carry-ok " if ok else "CARRY-FAIL ") + gname + " " + v)
         if not ok:
             fails += 1
