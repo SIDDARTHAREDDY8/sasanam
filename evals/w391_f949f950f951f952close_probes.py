@@ -51,7 +51,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143  # wave-390 merge (no code-count change)
 VERIFIER_PIN = 33  # VERIFIER_TAXONOMY_PIN, untouched
-RE_DOTALL_COUNT = 28  # zero new re.compile( -- audited count
+RE_DOTALL_COUNT = 29  # wave-407 lane 3 added _JS_WS_COMPACT_RE
 
 from gov import dlp
 from gov.decision_codes import TAXONOMY
@@ -109,7 +109,7 @@ def test_p0_pin_verifier():
 
 @_t
 def test_p0_pin_recompile():
-    """Zero new re.compile( -- audited count stays 28."""
+    """re.compile( count is 29 (wave-407 lane 3 added _JS_WS_COMPACT_RE)."""
     text = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     n = text.count("re.compile(")
     ok = n == RE_DOTALL_COUNT

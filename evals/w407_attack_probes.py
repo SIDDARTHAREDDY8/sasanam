@@ -48,12 +48,13 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-407 round-75 footer (F1199-F1221 filed OPEN (23);
-    next free F1222)."""
+    """Control: wave-407 merged footer (F1182-F1198 CLOSED (17);
+    F1199-F1227 OPEN (29); next free F1228)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1199-F1221 filed OPEN (23" in text
-          and "next free F1222" in text)
+    ok = ("F1182-F1198 CLOSED (17)" in text
+          and "F1199-F1227 OPEN (29)" in text
+          and "next free F1228" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -82,6 +83,10 @@ def _open_pin(prefix, num):
 
 # New round-75 decoder pins (F1199-F1221) -- still OPEN.
 for _n in range(1199, 1222):
+    _open_pin("w407", _n)
+
+# Lane 2 residuals renumbered (F1222-F1223) + lane 3 filings (F1224-F1227) -- still OPEN.
+for _n in range(1222, 1228):
     _open_pin("w407", _n)
 
 # Round-74 pins (F1182-F1198) are carried by w406_attack_probes.py;
