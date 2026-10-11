@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Red-first for F1175: DataView staged reads.
+
+Staging the int array through a DataView over an ArrayBuffer (u8 and u16): writing codes with setUint8/setUint16 and reading them back with getUint8/getUint16 accumulates the credential node-exactly (v24.20.0) while find_credential MISSES. F1112 models TypedArray (Uint8Array/Uint16Array) staged reads; DataView is a different API.
+Filed 2026-10-10 21:30 UTC wave-405 (attack round 73, local validation,
+$0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
+"""
+import os
+import subprocess
+import sys
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
+
+SECRET_S = "xoxb-01" + "23456789abcdef"
+SECRET_L = "xoxb-" + "0123456789abcdef0123456789abcdef012"
+
+_CHILD = (
+    "import os,sys;"
+    "os.environ.setdefault('GOV_DEPLOYMENT_MODE','staging');"
+    "os.environ.setdefault('GOV_LOG_KEY','00'*32);"
+    "sys.path.insert(0,%r);sys.path.insert(0,%r);"
+    "from gov.dlp import find_credential;"
+    "r=find_credential(%r);"
+    "print('VERDICT:'+('HIT' if r else 'MISS'))"
+)
+
+
+def _scan(payload):
+    code = _CHILD % (REPO_ROOT, os.path.join(REPO_ROOT, "tests"), payload)
+    r = subprocess.run([sys.executable, "-c", code],
+                       capture_output=True, text=True, timeout=180)
+    for line in (r.stdout or "").strip().split("\n"):
+        if line.startswith("VERDICT:"):
+            return line[len("VERDICT:"):]
+    return "ERR"
+
+
+def _codes(s):
+    return "[" + ",".join(str(ord(c)) for c in s) + "]"
+
+
+def _payload(tmpl, secret):
+    return tmpl.replace("{I}", _codes(secret)).replace("{N}", str(len(secret)))
+
+
+_TMPLS = [
+    ("dataview-u8",
+     "var C={I};var B=new ArrayBuffer(C.length);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setUint8(i,C[i]);}var S='';for(var j=0;j<C.length;j++){S+=String.fromCharCode(V.getUint8(j));}var RESULT=S;"),
+    ("dataview-u16",
+     "var C={I};var B=new ArrayBuffer(C.length*2);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setUint16(i*2,C[i]);}var S='';for(var j=0;j<C.length;j++){S+=String.fromCharCode(V.getUint16(j*2));}var RESULT=S;"),
+]
+
+_CONTROLS = [
+    ("ctrl-u8-blocks", "var C={I};var T=Uint16Array.from(C);var S=String.fromCharCode(...T);var RESULT=S;", True),
+    ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
+]
+
+SHAPES = []
+for _tname, _t in _TMPLS:
+    SHAPES.append(("f1175-s_%s_short" % _tname, _payload(_t, SECRET_S)))
+    SHAPES.append(("f1175-l_%s_long" % _tname, _payload(_t, SECRET_L)))
+
+CONTROLS = [(_n, _payload(_t, SECRET_S)) for (_n, _t, _e) in _CONTROLS]
+
+
+def main():
+    fails = []
+    for name, payload in SHAPES:
+        v = _scan(payload)
+        hit = (v == "HIT")
+        bad = hit or v == "ERR"
+        print(("FAIL " if bad else "BREAK ") + name, flush=True)
+        if bad:
+            fails.append(name)
+    for (name, _t, expect_block), (_cn, payload) in zip(_CONTROLS, CONTROLS):
+        v = _scan(payload)
+        hit = (v == "HIT")
+        ok = (hit == expect_block) and v != "ERR"
+        print(("ctrl-ok " if ok else "CTRL-FAIL ") + name, flush=True)
+        if not ok:
+            fails.append(name)
+    print("%d shapes, %d controls, %d FAIL" % (len(SHAPES), len(CONTROLS), len(fails)))
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
