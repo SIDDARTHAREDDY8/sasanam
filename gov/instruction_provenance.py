@@ -1101,6 +1101,69 @@ def _has_hidden_meta_author_and_article_tags(text):
     return False
 
 
+def _has_hidden_base_href(text):
+    """True when prose hides in a `<base href>` attribute (F1196).
+
+    F1196: no filed base class exists; F1151's
+    `_has_hidden_meta_plain_description` covers only `<meta
+    name="description">`. The `<base>` element is page chrome --
+    its href sets the document base URL and is never rendered in
+    the page body, so prose in the href attribute is hidden from
+    the human reader (the F1024 rationale). Honest machine hrefs
+    (bare URLs) stay quiet via the prose-shape gate. Disjoint
+    from F1064's/F1151's/F1180's/F1181's meta variants (different
+    element entirely). Never evals.
+    """
+    for m in re.finditer(r"<base\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        href, has_href = _f1047_attr_value(tag, "href")
+        if has_href and _is_prose_shaped(href):
+            return True
+    return False
+
+
+def _has_hidden_link_href(text):
+    """True when prose hides in a `<link href>` attribute (F1197).
+
+    F1197: the `<link>` title-attribute twin flags via F1064's
+    `_has_hidden_title_attr`; the href-prose form (canonical /
+    stylesheet) is not modeled. The `<link>` element is page
+    chrome -- its href points at the linked resource and is never
+    rendered in the page body, so prose in the href attribute is
+    hidden from the human reader (the F1024 rationale). Honest
+    machine hrefs (bare URLs) stay quiet via the prose-shape
+    gate. Disjoint from F1064's link title-attribute twin
+    (different attribute) and from F1064's/F1151's/F1180's/
+    F1181's meta variants (different element). Never evals.
+    """
+    for m in re.finditer(r"<link\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        href, has_href = _f1047_attr_value(tag, "href")
+        if has_href and _is_prose_shaped(href):
+            return True
+    return False
+
+
+def _has_hidden_portal_src(text):
+    """True when prose hides in a `<portal src>` attribute (F1198).
+
+    F1198: no filed portal class exists. The `<portal>` element
+    embeds a preview of another page -- its src points at the
+    embedded document and is never rendered as page-body text, so
+    prose in the src attribute is hidden from the human reader
+    (the F1024 rationale). Honest machine srcs (bare URLs) stay
+    quiet via the prose-shape gate. Disjoint from F1064's/
+    F1151's/F1180's/F1181's meta variants (different element
+    entirely). Never evals.
+    """
+    for m in re.finditer(r"<portal\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        src, has_src = _f1047_attr_value(tag, "src")
+        if has_src and _is_prose_shaped(src):
+            return True
+    return False
+
+
 def _has_hidden_hidden_option(text):
     """True when prose hides in `<option hidden>` (F1064).
 
@@ -1906,8 +1969,21 @@ def instruction_shaped(text):
     # from F1064's og:/twitter: variants, F1151's plain
     # name="description", and F1180's plain name="keywords"
     # (documented per detector).
-    return (_has_hidden_meta_keywords(norm)
-            or _has_hidden_meta_author_and_article_tags(norm))
+    if (_has_hidden_meta_keywords(norm)
+            or _has_hidden_meta_author_and_article_tags(norm)):
+        return True
+    # F1196/F1197/F1198: the same construction for three further
+    # hidden-from-human carriers -- `<base href>`, `<link href>`
+    # (canonical/stylesheet), and `<portal src>`. All are page
+    # chrome never rendered inline in the consuming view, so prose
+    # there is hidden from the human reader (the F1024 rationale).
+    # Disjoint from F1064's/F1151's/F1180's/F1181's meta variants
+    # (different elements) and from F1064's link title-attribute
+    # twin (different attribute); documented per detector.
+    # Honest machine tokens stay quiet via the prose-shape gate.
+    return (_has_hidden_base_href(norm)
+            or _has_hidden_link_href(norm)
+            or _has_hidden_portal_src(norm))
 
 
 class ActionRequest(object):
