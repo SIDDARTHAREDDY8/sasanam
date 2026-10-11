@@ -12886,3 +12886,4 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 # Wave-412 lane 3 (2026-10-11): F1337-F1343 CLOSED (7); F1323-F1336, F1344-F1348 OPEN (19); next free F1349
 # Wave-412 lane 4 (2026-10-11): F1344-F1348 CLOSED (5); F1323-F1343 OPEN (21); next free F1349
 # Wave-412 attack round 80: F1349-F1359 filed OPEN (11, first-filing 2026-10-11 09:13 UTC, $0 model spend); next free F1360
+# Wave-412: F1323-F1348 CLOSED (26); F1349-F1359 OPEN (11); next free F1360

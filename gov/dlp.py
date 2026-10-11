@@ -165191,6 +165191,41 @@ def _decode_layer(text):
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
 
+    # F1323-F1329 (wave-412 lane 1): normalize per-char staging,
+    # Object.assign code staging, Number valueOf coercion, BigInt
+    # radix codec, Map.set accumulation, concat.apply residual,
+    # includes/indexOf boolean-oracle. Each parses a strict
+    # whole-text grammar; every filed shape BREAKs on the open tree,
+    # so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Disjoint from siblings by
+    # grammar (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1323_stmt_decode, _js_f1324_stmt_decode,
+                     _js_f1325_stmt_decode, _js_f1326_stmt_decode,
+                     _js_f1327_stmt_decode, _js_f1328_stmt_decode,
+                     _js_f1329_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1330/F1331/F1336 (wave-412 lane 2): structuredClone
+    # nested-object and double-laundering residuals, and the
+    # Set.forEach arrow-callback twin. Each parses a strict
+    # whole-text grammar; every filed shape BREAKs on the open
+    # tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint
+    # from F1262 (single clone), F1264/F1317 (function callback)
+    # by grammar (documented per hook). Additive, in F-number
+    # order.
+    for _stmtdec in (_js_f1330_stmt_decode, _js_f1331_stmt_decode,
+                     _js_f1336_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
     # F1337-F1343 (wave-412 lane 3): seal slice-arg twins, charCodeAt
     # staging twin, Symbol.replace map-body twin, findLast 3-arg
     # callbacks, Math wrapper expression twins, octal/binary codec,
