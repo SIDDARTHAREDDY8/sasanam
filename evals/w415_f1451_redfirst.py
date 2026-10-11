@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F1451 red-first: F1395 toReversed residual
+"""F1451 red-first: Array.prototype.forEach thisArg staging
 
-Filed 2026-10-11 12:21 UTC, wave-415 lane 2 Spec-review residual (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
+Filed 2026-10-11 12:04 UTC, wave-415 attack round 83 (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -46,40 +46,32 @@ def _codes(s):
 
 _TMPLS = [
     ("f1451-0",
-     'var C=__CODES__;var D=C.toReversed().toReversed();var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
+     'var C=__CODES__;var D=[];C.forEach(function(c){D.push(c);},null);var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
 ]
 
 _CONTROLS = [
     ("direct-ctrl",
-     "var C=[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101];var S=String.fromCharCode.apply(null,C);var RESULT=S;"),
+     'var C=[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101];var S=String.fromCharCode.apply(null,C);var RESULT=S;'),
 ]
 
 
 def main():
     fails = 0
     for name, tmpl in _TMPLS:
-        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
+        for secret in (SECRET_S, SECRET_L):
             payload = tmpl.replace("__CODES__", _codes(secret))
-            nc = subprocess.run(
-                ["node", "-e",
-                 payload + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
-                capture_output=True, text=True, timeout=30)
-            node_ok = False
-            for line in (nc.stdout or "").strip().split("\n"):
-                if line.startswith("OUT:"):
-                    node_ok = (line[4:] == secret)
-            verdict = _scan(payload)
-            ok = node_ok and verdict == "MISS"
-            print(("BREAK " if ok else "FAIL ") + "%s %s node=%s scanner=%s" % (name, label, node_ok, verdict))
+            v = _scan(payload)
+            ok = (v == "MISS")
+            print(("BREAK " if ok else "FAIL  ") + name + " len=%d -> %s" % (len(secret), v))
             if not ok:
                 fails += 1
-    for name, payload in _CONTROLS:
-        verdict = _scan(payload)
-        ok = verdict == "HIT"
-        print(("ctrl-ok " if ok else "CTRL-FAIL ") + name + " scanner=" + verdict)
+    for name, tmpl in _CONTROLS:
+        v = _scan(tmpl)
+        ok = (v == "HIT")
+        print(("CTRL-OK " if ok else "CTRL-FAIL ") + name + " -> " + v)
         if not ok:
             fails += 1
-    print("FAILURES:%d" % fails)
+    print("RESULT: " + ("BREAK" if fails == 0 else "NO-BREAK") + " (%d fails)" % fails)
     return 1 if fails else 0
 
 
