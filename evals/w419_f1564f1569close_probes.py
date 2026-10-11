@@ -120,7 +120,7 @@ _FILED68 = [
 
 @_t
 def test_p0_pins():
-    """Pin 2143 holds; footer has wave-418 lineage; N_STMTDEC_LOOPS=89; re.compile=29."""
+    """Pin 2143 holds; footer has wave-418 lineage; N_STMTDEC_LOOPS=92; re.compile=29."""
     notes = []
     with open(os.path.join(REPO_ROOT, "evals",
                            "w395_perfharden_probes.py")) as f:
@@ -132,7 +132,7 @@ def test_p0_pins():
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (pin == 89 and len(loops) == 89)
+    ok = (pin == 92 and len(loops) == 92)
     notes.append("loops=%d pin=%d" % (len(loops), pin))
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         ftxt = f.read()

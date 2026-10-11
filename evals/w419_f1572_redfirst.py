@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F1572 red-first: map(String) roundtrip with default join separator
+"""F1572 red-first: sort reversed comparator
 
-Filed 2026-10-11 18:37 UTC, wave-419 lane 3 Spec-review residual (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
+Filed 2026-10-11 18:25 UTC, wave-419 attack round 87 (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -44,22 +44,25 @@ def _codes(s):
     return "[" + ",".join(str(ord(c)) for c in s) + "]"
 
 
+def _strcodes(s):
+    return "[" + ",".join('"%d"' % ord(c) for c in s) + "]"
+
+
 _TMPLS = [
     ('f1572-0',
-     "var C={I};var D=C.map(String);var T=D.join().split(',').map(Number);var RESULT=T.map(function(c){return String.fromCharCode(c);}).join('');")
+     'var C={I};var D=C.slice().sort(function(a,b){return a>b;});var S=String.fromCharCode.apply(null,D);var RESULT=S;')
 ]
 
 _CONTROLS = [
-    ("direct-ctrl",
-     "var C={I};var D=C.map(function(c){return String.fromCharCode(c);});var S=D.join('');var U=S.replace('x','x');var RESULT=U;"),
+    ("direct-ctrl", 'var C={I};var S=String.fromCharCode.apply(null,C);var RESULT=S;'),
 ]
 
 
 def main():
     fails = 0
     for name, tmpl in _TMPLS:
-        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
-            payload = tmpl.replace("{I}", _codes(secret))
+        for secret, label, coder in ((SECRET_S, "short", _codes), (SECRET_L, "long", _codes)):
+            payload = tmpl.replace("{I}", coder(secret)).replace("{J}", _strcodes(secret))
             nc = subprocess.run(
                 ["node", "-e",
                  payload + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
@@ -89,8 +92,7 @@ def main():
             print(("CTRL-OK " if ok else "CTRL-FAIL ") + "%s %s node=%s scanner=%s" % (name, label, node_ok, verdict))
             if not ok:
                 fails += 1
-    # machine-token control: junk stays quiet
-    junk = _TMPLS[0][1].replace("{I}", "[55,57,113,50]")
+    junk = _TMPLS[0][1].replace("{I}", "[55,57,113,50]").replace("{J}", '["55","57"]')
     v = _scan(junk)
     ok = (v == "MISS")
     print(("CTRL-OK " if ok else "CTRL-FAIL ") + "machine-token -> " + v)

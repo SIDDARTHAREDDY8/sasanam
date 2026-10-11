@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Wave-418 attack round 86 coverage battery.
+"""Wave-418 attack round 86 coverage battery (merge-tree pins, wave-419).
 
-Pins for each new finding F1546-F1566 (must MISS on the open tree), plus
-carry-forward for F1518-F1545 (all still OPEN, must MISS). Taxonomy + footer pins.
-$0-spend-by-construction: local node validation only, no paid machinery.
+F1546-F1569 now CLOSED by wave-419 lanes 1-4: carry-forward, must HIT.
+Taxonomy + footer pins. $0-spend-by-construction: local node validation only.
 """
 import os
 import subprocess
@@ -46,41 +45,42 @@ def _codes(s):
 SECRET = "xoxb-01" + "23456789abcdef"
 
 # New round-86 pins: (finding, [payload templates with {I}]) -- first shape per finding
-_NEW_PINS = [
-    ("F1546", ["var C={I};var E=C.flatMap(function(c){return [String.fromCharCode(c)];},[]);var S=E.join('');var RESULT=S;"]),
-    ("F1547", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padStart(S.length+10,'ab');var RESULT=P.slice(-S.length);"]),
-    ("F1548", ["var C={I};var D=C.slice().sort(function(a,b){return b<a;});var S=D.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;"]),
-    ("F1549", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T='\u2003'+S+'\u2003';var RESULT=T.trim();"]),
-    ("F1550", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('<>');var T=S.split('<>').join('');var RESULT=T;"]),
-    ("F1551", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S.slice(0);"]),
-    ("F1552", ["var C={I};var D=C.slice();D.splice(0,0);var S=D.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;"]),
-    ("F1553", ["var C={I};var D=C.map(function(c){return new Number(c).valueOf();});var S=D.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;"]),
-    ("F1554", ["var C={I};var A=new Array(C.length*2);for(var i=0;i<C.length;i++){A[i*2]=String.fromCharCode(C[i]);}var RESULT=A.toString().split(',').join('');"]),
-    ("F1555", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=String.raw`a${S}b`;var RESULT=T.slice(1,-1);"]),
-    ("F1556", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var OK=S.includes('xoxb',NaN);var RESULT=OK?S:'';"]),
-    ("F1557", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var K=S.search('xoxb');var RESULT=S.slice(K);"]),
-    ("F1558", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.replace(/./g,function(m){return m;});var RESULT=T;"]),
-    ("F1559", ["var C={I};var D=C.map(String);var T=D.join(',').split(',').map(Number);var RESULT=T.map(function(c){return String.fromCharCode(c);}).join('');"]),
-    ("F1560", ["var C={I};var D=Object.assign([],C);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"]),
-    ("F1561", ["var C={I};function g(){var A=Array.prototype.slice.call(arguments);return A.map(function(c){return String.fromCharCode(c);}).join('');}var RESULT=g(...C);"]),
-    ("F1562", ["var C={I};var D=C.flat(0);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"]),
-    ("F1563", ["var C={I};var D=[].concat(...C);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"]),
-    ("F1564", ["var C={I};var M=new Map();for(var i=0;i<C.length;i++){M.set(i,C[i]);}var V=[...M.values()];var RESULT=V.map(function(c){return String.fromCharCode(c);}).join('');"]),
-    ("F1565", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=(' '+S+' ').trimStart().trimEnd();"]),
-    ("F1566", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var U=S.replace('x','x');var RESULT=U;"]),
-    ("F1567", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');for(var k=0;k<1;k++){var Z=k;}var RESULT=S;"]),
-    ("F1568", ["var C={I};var E=C.filter(function(c,i){return C.includes(c,1);});var S=String.fromCharCode.apply(null,E);var RESULT=S;"]),
-    ("F1569", ["var C={I};var E=C.flatMap((c,i,a,t)=>[c],null);var S=String.fromCharCode.apply(null,E);var RESULT=S;"]),
+_NEW_PINS = []
+
+_CARRY = [
+    ("F1546", "var C={I};var E=C.flatMap(function(c){return [String.fromCharCode(c)];},[]);var S=E.join('');var RESULT=S;"),
+    ("F1547", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padStart(S.length+10,'ab');var RESULT=P.slice(-S.length);"),
+    ("F1548", "var C={I};var D=C.slice().sort(function(a,b){return b<a;});var S=D.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;"),
+    ("F1549", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T='\u2003'+S+'\u2003';var RESULT=T.trim();"),
+    ("F1550", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('<>');var T=S.split('<>').join('');var RESULT=T;"),
+    ("F1551", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S.slice(0);"),
+    ("F1552", "var C={I};var D=C.slice();D.splice(0,0);var S=D.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;"),
+    ("F1553", "var C={I};var D=C.map(function(c){return new Number(c).valueOf();});var S=D.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;"),
+    ("F1554", "var C={I};var A=new Array(C.length*2);for(var i=0;i<C.length;i++){A[i*2]=String.fromCharCode(C[i]);}var RESULT=A.toString().split(',').join('');"),
+    ("F1555", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=String.raw`a${S}b`;var RESULT=T.slice(1,-1);"),
+    ("F1556", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var OK=S.includes('xoxb',NaN);var RESULT=OK?S:'';"),
+    ("F1557", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var K=S.search('xoxb');var RESULT=S.slice(K);"),
+    ("F1558", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.replace(/./g,function(m){return m;});var RESULT=T;"),
+    ("F1559", "var C={I};var D=C.map(String);var T=D.join(',').split(',').map(Number);var RESULT=T.map(function(c){return String.fromCharCode(c);}).join('');"),
+    ("F1560", "var C={I};var D=Object.assign([],C);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"),
+    ("F1561", "var C={I};function g(){var A=Array.prototype.slice.call(arguments);return A.map(function(c){return String.fromCharCode(c);}).join('');}var RESULT=g(...C);"),
+    ("F1562", "var C={I};var D=C.flat(0);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"),
+    ("F1563", "var C={I};var D=[].concat(...C);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');"),
+    ("F1564", "var C={I};var M=new Map();for(var i=0;i<C.length;i++){M.set(i,C[i]);}var V=[...M.values()];var RESULT=V.map(function(c){return String.fromCharCode(c);}).join('');"),
+    ("F1565", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=(' '+S+' ').trimStart().trimEnd();"),
+    ("F1566", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var U=S.replace('x','x');var RESULT=U;"),
+    ("F1567", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');for(var k=0;k<1;k++){var Z=k;}var RESULT=S;"),
+    ("F1568", "var C={I};var E=C.filter(function(c,i){return C.includes(c,1);});var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
+    ("F1569", "var C={I};var E=C.flatMap((c,i,a,t)=>[c],null);var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
 ]
 
 # Carry-forward: round-85 opens F1518-F1543 + F1544 + F1545 (all still OPEN, must MISS)
-_CARRY = []
 
 
 
 def _check_footer():
     txt = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("F1546-F1566 OPEN (21)" in txt) and ("F1567 OPEN (1" in txt) and ("F1568-F1569 OPEN (2" in txt) and ("next free F1570" in txt)
+    ok = ("F1376-F1569 CLOSED (194" in txt) and ("F1570-F1573, F1575-F1590 OPEN (20" in txt) and ("F1591-F1602 OPEN (12" in txt) and ("F1603-F1607 OPEN (5" in txt) and ("next free F1608" in txt)
     return ok
 
 
@@ -112,7 +112,7 @@ def main():
     # footer pin
     total += 1
     ok = _check_footer()
-    print(("footer-ok " if ok else "FOOTER-FAIL ") + "F1546-F1566 footer")
+    print(("footer-ok " if ok else "FOOTER-FAIL ") + "F1376-F1608 wave-419 footer")
     if not ok:
         fails += 1
     # no paid machinery: scan non-check code for paid imports/usages
