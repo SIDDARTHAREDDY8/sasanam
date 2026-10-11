@@ -162288,6 +162288,2724 @@ def _js_f1336_stmt_decode(text):
         return None
 
 
+
+
+def _js_f1337_parse_seal_arg(text, j, cname, what):
+    """Parse the F1337 seal argument at text[j] (after `Object.seal(`).
+
+    Productions (all node-exact copies of the C array, v24.20.0):
+      `C.slice(0)` / `C.slice(0,C.length)` / `[...C]` / `Array.from(C)`.
+    Disjoint from F1295 (bare `C.slice()`) by grammar. Returns
+    next_index (after the seal-arg, before `)`). Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    # `[...C]` spread form.
+    if j < n and text[j] == "[":
+        j = _js_skip_ws(text, j + 1)
+        if j + 2 >= n or not text.startswith("...", j):
+            raise _JSExprFail(what + " bad spread")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        if nm != cname:
+            raise _JSExprFail(what + " spread base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        return j
+    nm, j = _js_parse_ident(text, j)
+    if nm == cname:
+        # `C.slice(0)` or `C.slice(0,C.length)`.
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        z, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if z != 0:
+            raise _JSExprFail(what + " slice start not 0")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == ",":
+            ln, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+            if ln != cname:
+                raise _JSExprFail(what + " slice len base mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "length")
+            if m is None:
+                raise _JSExprFail(what + " not length")
+            j = m
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        return j
+    if nm == "Array":
+        # `Array.from(C)`.
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "from")
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = _js_expect(text, m, "(")
+        nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm2 != cname:
+            raise _JSExprFail(what + " from base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        return j
+    raise _JSExprFail(what + " bad seal arg")
+
+
+def _js_f1337_stmt_decode(text):
+    """Decode F1337 seal slice-arg twins (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=Object.seal(<copy>);` where <copy> is
+    `C.slice(0)`, `C.slice(0,C.length)`, `[...C]`, or `Array.from(C)`.
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    or `var|let|const S=String.fromCharCode(...D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): Object.seal returns its argument
+    unchanged; all four copy forms produce a fresh array equal to
+    C, so D is the codes array and both fromCharCode forms decode
+    to the fcc of C (ToUint16 discipline). Disjoint from F1295
+    (bare `C.slice()`) by grammar -- the filed shapes BREAK on the
+    open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "Object.seal(" not in _compact:
+        return None
+    if "fromCharCode" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail("F1337 bad arr name")
+        codes, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                             state)
+        if not codes:
+            raise _JSExprFail("F1337 empty arr")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr(codes, "F1337")
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if dname in ("RESULT", cname):
+            raise _JSExprFail("F1337 bad stage name")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Object")
+        if m is None:
+            raise _JSExprFail("F1337 not Object")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "seal")
+        if m is None:
+            raise _JSExprFail("F1337 bad method")
+        j = _js_expect(text, m, "(")
+        j = _js_f1337_parse_seal_arg(text, j, cname, "F1337")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname, dname):
+            raise _JSExprFail("F1337 bad acc name")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1337 not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1337 not fromCharCode")
+        j = m
+        jj = _js_skip_ws(text, j)
+        n = len(text)
+        if jj < n and text[jj] == ".":
+            j = _js_expect(text, jj, ".")
+            m = _js_match_kw(text, j, "apply")
+            if m is None:
+                raise _JSExprFail("F1337 not apply")
+            j = _js_expect(text, m, "(")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "null")
+            if m is None:
+                raise _JSExprFail("F1337 not null thisArg")
+            j = _js_expect(text, _js_skip_ws(text, m), ",")
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if nm != dname:
+                raise _JSExprFail("F1337 apply arg mismatch")
+            j = _js_expect(text, j, ")")
+        else:
+            j = _js_expect(text, j, "(")
+            jj = _js_skip_ws(text, j)
+            if jj >= n or not text.startswith("...", jj):
+                raise _JSExprFail("F1337 not spread")
+            j = _js_skip_ws(text, jj + 3)
+            nm, j = _js_parse_ident(text, j)
+            if nm != dname:
+                raise _JSExprFail("F1337 spread arg mismatch")
+            j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1337 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, "F1337")
+        _js_f96x_expect_semi_end(text, j)
+        _js_f96x_charge(state, "F1337")
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1338_parse_cc_loop(text, j, dname, ename, state, what):
+    """Parse the F1338 charCodeAt staging loop at text[j].
+
+    `for(var|let|const i=0;i<D.length;i++){E.push(D.charCodeAt(i));}`.
+    Mirrors _js_f1291_parse_cp_loop but matches `charCodeAt`.
+    Returns next_index. Never evals.
+    """
+    n = len(text)
+    m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+    if m is None:
+        raise _JSExprFail(what + " no for")
+    j = _js_expect(text, m, "(")
+    jj = _js_skip_ws(text, j)
+    mm = _js_match_decl_kw(text, jj)
+    if mm is not None:
+        _, ivar, j = _js_f96x_decl(text, jj)
+    else:
+        ivar, j = _js_parse_ident(text, jj)
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=" or text.startswith(("==", "=>"), j):
+            raise _JSExprFail(what + " bad init")
+        j += 1
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "0" or (
+            j + 1 < n and text[j + 1] in _JS_IDENT_CONT):
+        raise _JSExprFail(what + " bad init num")
+    j = _js_expect(text, j + 1, ";")
+    iv2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iv2 != ivar:
+        raise _JSExprFail(what + " bad cond var")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "<":
+        raise _JSExprFail(what + " bad cond op")
+    j += 1
+    dn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if dn != dname:
+        raise _JSExprFail(what + " bad cond arr")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "length")
+    if m is None:
+        raise _JSExprFail(what + " not length")
+    j = _js_expect(text, m, ";")
+    iv3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iv3 != ivar:
+        raise _JSExprFail(what + " bad incr var")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("++", j):
+        raise _JSExprFail(what + " bad incr")
+    j = _js_expect(text, j + 2, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    en2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if en2 != ename:
+        raise _JSExprFail(what + " bad push arr")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "push")
+    if m is None:
+        raise _JSExprFail(what + " not push")
+    j = _js_expect(text, m, "(")
+    dn2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if dn2 != dname:
+        raise _JSExprFail(what + " bad cc base")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "charCodeAt")
+    if m is None:
+        raise _JSExprFail(what + " not charCodeAt")
+    j = _js_expect(text, m, "(")
+    iv4, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if iv4 != ivar:
+        raise _JSExprFail(what + " bad cc idx")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    _js_f96x_charge(state, what + " ccloop")
+    return j
+
+
+def _js_f1338_stmt_decode(text):
+    """Decode F1338 charCodeAt staging twin (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(<fcc-cb>).join('');`
+    `var|let|const E=[];`
+    `for(var|let|const i=0;i<D.length;i++){E.push(D.charCodeAt(i));}`
+    `var|let|const S=String.fromCharCode.apply(null,E);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the map+join provably equals the fcc of
+    the C array, and the charCodeAt push loop followed by
+    fromCharCode.apply is the identity on the decoder's
+    surrogate-free accepted class (charCodeAt(i) reads each UTF-16
+    code unit; fromCharCode re-emits them). The decoded value is
+    therefore the fcc of C. Disjoint from F1291 (codePointAt) by
+    the method name -- the filed shapes BREAK on the open tree.
+    Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "charCodeAt(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     "F1338")
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if dname in ("RESULT", cname):
+            raise _JSExprFail("F1338 bad stage name")
+        j = _js_f1291_parse_mapjoin(text, _js_skip_ws(text, j), cname,
+                                    state, "F1338")
+        j = _js_expect(text, j, ";")
+        _, ename, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if ename in ("RESULT", cname, dname):
+            raise _JSExprFail("F1338 bad codes name")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ";")
+        j = _js_f1338_parse_cc_loop(text, _js_skip_ws(text, j), dname,
+                                    ename, state, "F1338")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname, dname, ename):
+            raise _JSExprFail("F1338 bad acc name")
+        j = _js_f1291f1292_parse_apply_null(text, j, ename, "F1338")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1338 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, "F1338")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1339_parse_map_body(text, j, cname, state, what):
+    """Parse the F1339 Symbol.replace map-body at text[j] (after `{`).
+
+    `return C.map(function(c){return String.fromCharCode(c);}).join('');}`.
+    The map+join provably equals the fcc of C, so the caller reuses
+    its decoded dstr. Returns next_index (after `}`). Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail(what + " no return")
+    j = _js_skip_ws(text, m)
+    nm, j = _js_parse_ident(text, j)
+    if nm != cname:
+        raise _JSExprFail(what + " map base mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "map")
+    if m is None:
+        raise _JSExprFail(what + " not map")
+    j = _js_f1090_parse_map_cb(text, _js_expect(text, m, "("), what,
+                               False)
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "join")
+    if m is None:
+        raise _JSExprFail(what + " not join")
+    j = _js_expect(text, m, "(")
+    sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    if sep != "":
+        raise _JSExprFail(what + " join sep not empty")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    _js_f96x_charge(state, what + " mapbody")
+    return j
+
+
+def _js_f1339_stmt_decode(text):
+    """Decode F1339 Symbol.replace map-body twin (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const O={};`
+    `O[Symbol.replace]=<fn>;` where <fn> is
+    `function(s){return C.map(function(c){return String.fromCharCode(c);}).join('');}`
+    or the `(s)=>{...}` arrow twin.
+    `var|let|const S='lit'.replace(O);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): String.prototype.replace with a
+    non-callable replacer object calls GetMethod(O, @@replace);
+    the filed callback ignores its arguments and returns the
+    map+join, which provably equals the fcc of C. Disjoint from
+    F1293 (for-loop accumulation body) by grammar -- the filed
+    shapes BREAK on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or
+    None. Never evals.
+    """
+    if "Symbol.replace" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     "F1339")
+        _, oname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if oname in ("RESULT", cname):
+            raise _JSExprFail("F1339 bad obj name")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ";")
+        p1, j = _js_f1293f1294_parse_sym_assign(text, j, oname,
+                                                "replace", "F1339")
+        if p1 in (oname, cname, "RESULT"):
+            raise _JSExprFail("F1339 param clash")
+        j = _js_f1339_parse_map_body(text, j, cname, state, "F1339")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname, oname):
+            raise _JSExprFail("F1339 bad acc name")
+        j = _js_f1293_parse_replace_call(text, j, oname, "F1339")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1339 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, "F1339")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1340_parse_find_cb(text, j, sname, cname, state, what):
+    """Parse the F1340 3-arg findLast/findLastIndex callback at text[j].
+
+    `(p1,p2,p3)=>{S=String.fromCharCode(p3[p2])+S;return false;}`.
+    The third param is the visited array; `p3[p2]` is the current
+    element. findLast/findLastIndex with an always-false predicate
+    visit every element back-to-front; the prepend `S=fcc+S`
+    restores forward order (node-exact, v24.20.0). Disjoint from
+    F1289/F1290 (at most 2 callback params) by the 3-param
+    grammar. Returns next_index. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "(":
+        raise _JSExprFail(what + " not paren-arrow")
+    j = _js_expect(text, j, "(")
+    p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, _js_skip_ws(text, j), ",")
+    p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, _js_skip_ws(text, j), ",")
+    p3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("=>", j):
+        raise _JSExprFail(what + " no arrow")
+    j += 2
+    for _p in (p1, p2, p3):
+        if _p in (sname, cname, "RESULT"):
+            raise _JSExprFail(what + " param clash")
+    if len({p1, p2, p3}) != 3:
+        raise _JSExprFail(what + " dup params")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if a2 != sname:
+        raise _JSExprFail(what + " accum target mismatch")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "=" or text.startswith(("==", "=>"), j):
+        raise _JSExprFail(what + " not assign")
+    j = _js_skip_ws(text, j + 1)
+    m = _js_match_kw(text, j, "String")
+    if m is None:
+        raise _JSExprFail(what + " not String")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, j, "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    ab, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if ab != p3:
+        raise _JSExprFail(what + " fcc base not 3rd param")
+    j = _js_expect(text, j, "[")
+    ix, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if ix != p2:
+        raise _JSExprFail(what + " fcc idx not 2nd param")
+    j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, ")")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "+":
+        raise _JSExprFail(what + " not prepend")
+    j += 1
+    a3, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if a3 != sname:
+        raise _JSExprFail(what + " prepend target mismatch")
+    j = _js_expect(text, j, ";")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail(what + " no return")
+    m2 = _js_match_kw(text, _js_skip_ws(text, m), "false")
+    if m2 is None:
+        raise _JSExprFail(what + " not return false")
+    j = _js_expect(text, m2, ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    _js_f96x_charge(state, what + " cb")
+    return j
+
+
+def _js_f1340_try_method(text, state, what, method):
+    """Try one F1340 method (findLast/findLastIndex)."""
+    j = _js_skip_ws(text, 0)
+    cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+    sname, j = _js_f1124f1130_parse_s_init(text, j, what)
+    if sname == cname:
+        raise _JSExprFail(what + " acc/arr clash")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " arr mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, method)
+    if m is None:
+        raise _JSExprFail(what + " bad method")
+    j = _js_expect(text, m, "(")
+    j = _js_f1340_parse_find_cb(text, j, sname, cname, state, what)
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if rname != "RESULT":
+        raise _JSExprFail(what + " not RESULT")
+    val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                       state, what)
+    _js_f96x_expect_semi_end(text, j)
+    return val
+
+
+def _js_f1340_stmt_decode(text):
+    """Decode F1340 findLast/findLastIndex 3-arg callback twins.
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S='';`
+    `C.findLast((c,i,a)=>{S=String.fromCharCode(a[i])+S;return false;});`
+    or `C.findLastIndex((c,i,a)=>{S=String.fromCharCode(a[i])+S;return false;});`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): findLast/findLastIndex with an
+    always-false predicate visit every element back-to-front; the
+    third callback param is the visited array, so `a[i]` is the
+    current element and the prepend `S=fcc+S` restores forward
+    order, assembling fromCharCode(c0)+fromCharCode(c1)+... .
+    Disjoint from F1289/F1290 (at most 2 callback params) by
+    grammar -- the filed shapes BREAK on the open tree. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "findLast(" not in text and "findLastIndex(" not in text:
+        return None
+    for _meth in ("findLast", "findLastIndex"):
+        # Order is irrelevant: _js_match_kw matches the full keyword.
+        state = {"ops": 0, "parts": 0}
+        try:
+            return _js_f1340_try_method(text, state, "F1340", _meth)
+        except _JSExprFail:
+            continue
+    return None
+
+
+def _js_f1341_parse_math_method(text, j, what):
+    """Parse `Math.<m>` at text[j] (F1341). Methods: trunc/floor/ceil/round.
+
+    Returns (method, next_index). Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "Math")
+    if m is None:
+        raise _JSExprFail(what + " not Math")
+    j = _js_expect(text, m, ".")
+    for _cand in ("trunc", "floor", "ceil", "round"):
+        _mm = _js_match_kw(text, j, _cand)
+        if _mm is not None:
+            return _cand, _mm
+    raise _JSExprFail(what + " bad method")
+
+
+def _js_f1341_parse_twin_expr(text, j, pname, what):
+    """Parse the F1341 wrapper expression at text[j] (after `Math.<m>(`).
+
+    Twins: `0.1+P` (commuted) or `P+0.10` (literal). Both are the
+    double `pname + 0.1` (FP addition commutes; `0.10` is the same
+    double as `0.1`). The exact `P+0.1` form is F1292's grammar
+    (disjoint by the literal). Returns next_index (after `)`).
+    Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    commuted = False
+    if text.startswith("0.1", j):
+        # `0.1+P` commuted form. Note this also matches the `0.1`
+        # prefix of `0.10`, but `0.10+P` is not a filed shape: after
+        # consuming `0.1` the `+` expect fails on the `0`, so it
+        # fails closed.
+        j += 3
+        commuted = True
+    else:
+        nm, j = _js_parse_ident(text, j)
+        if nm != pname:
+            raise _JSExprFail(what + " param mismatch")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "+":
+        raise _JSExprFail(what + " not plus")
+    j = _js_skip_ws(text, j + 1)
+    if commuted:
+        nm, j = _js_parse_ident(text, j)
+        if nm != pname:
+            raise _JSExprFail(what + " param mismatch")
+    else:
+        # Literal twin: require the 4-char `0.10` form. The exact
+        # `0.1` form is F1292's grammar (disjoint by the literal).
+        if not text.startswith("0.10", j):
+            raise _JSExprFail(what + " not 0.10 literal")
+        j += 4
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    return j
+
+
+def _js_f1341_try_fn(text, state, what):
+    """Try F1341 function-callback productions.
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(p){return Math.<m>(<twin>);});`
+    where <twin> is `0.1+p` or `p+0.10`.
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    then RESULT. Returns the decoded string. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, 0)
+    _, cname, j = _js_f96x_decl(text, j)
+    if cname == "RESULT":
+        raise _JSExprFail(what + " bad arr name")
+    codes, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                         state)
+    if not codes:
+        raise _JSExprFail(what + " empty arr")
+    j = _js_expect(text, j, ";")
+    bound = {cname, "RESULT", "String"}
+    _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if dname in bound:
+        raise _JSExprFail(what + " bad d name")
+    bound.add(dname)
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " map base mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "map")
+    if m is None:
+        raise _JSExprFail(what + " not map")
+    j = _js_expect(text, m, "(")
+    mm = _js_match_kw(text, _js_skip_ws(text, j), "function")
+    if mm is None:
+        raise _JSExprFail(what + " not function")
+    j = _js_expect(text, mm, "(")
+    pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if pname in bound:
+        raise _JSExprFail(what + " bad param name")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail(what + " no return")
+    j = _js_skip_ws(text, m)
+    meth, j = _js_f1341_parse_math_method(text, j, what)
+    j = _js_expect(text, j, "(")
+    j = _js_f1341_parse_twin_expr(text, j, pname, what)
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    dstr = _js_f1292_wrap_codes(codes, meth, "+", 0.1, what)
+    _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if sname in bound:
+        raise _JSExprFail(what + " bad s name")
+    bound.add(sname)
+    j = _js_f1291f1292_parse_apply_null(text, _js_skip_ws(text, j),
+                                        dname, what)
+    return _js_f1296f1302_parse_result(text, j, dstr, sname, state,
+                                      what)
+
+
+def _js_f1341_try_arrow(text, state, what):
+    """Try F1341 arrow production.
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(p=>Math.<m>(p+0.1));`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    then RESULT. Returns the decoded string. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, 0)
+    _, cname, j = _js_f96x_decl(text, j)
+    if cname == "RESULT":
+        raise _JSExprFail(what + " bad arr name")
+    codes, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                         state)
+    if not codes:
+        raise _JSExprFail(what + " empty arr")
+    j = _js_expect(text, j, ";")
+    bound = {cname, "RESULT", "String"}
+    _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if dname in bound:
+        raise _JSExprFail(what + " bad d name")
+    bound.add(dname)
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " map base mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "map")
+    if m is None:
+        raise _JSExprFail(what + " not map")
+    j = _js_expect(text, m, "(")
+    pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if pname in bound:
+        raise _JSExprFail(what + " bad param name")
+    j = _js_skip_ws(text, j)
+    if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+        raise _JSExprFail(what + " not arrow")
+    j += 2
+    meth, j = _js_f1341_parse_math_method(text, j, what)
+    j = _js_expect(text, j, "(")
+    # Arrow filed shape uses the plain `p+0.1` form.
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != pname:
+        raise _JSExprFail(what + " param mismatch")
+    j = _js_skip_ws(text, j)
+    if j >= n or text[j] != "+":
+        raise _JSExprFail(what + " not plus")
+    j = _js_skip_ws(text, j + 1)
+    if not text.startswith("0.1", j):
+        raise _JSExprFail(what + " bad const")
+    j += 3
+    # Reject `0.10` here (the literal twin is a function-callback
+    # production); `0.1` followed by `0` would mis-parse.
+    if j < n and text[j] in _JS_IDENT_CONT:
+        raise _JSExprFail(what + " const overrun")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    dstr = _js_f1292_wrap_codes(codes, meth, "+", 0.1, what)
+    _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if sname in bound:
+        raise _JSExprFail(what + " bad s name")
+    bound.add(sname)
+    j = _js_f1291f1292_parse_apply_null(text, _js_skip_ws(text, j),
+                                        dname, what)
+    return _js_f1296f1302_parse_result(text, j, dstr, sname, state,
+                                      what)
+
+
+def _js_f1341_stmt_decode(text):
+    """Decode F1341 Math wrapper expression twins (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(p){return Math.<m>(<twin>);});`
+    where <m> is trunc/floor/ceil/round and <twin> is `0.1+p`
+    (commuted) or `p+0.10` (literal), or the arrow twin
+    `var|let|const D=C.map(p=>Math.<m>(p+0.1));`.
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): IEEE754 binary64 addition commutes, so
+    `0.1+p` is `p+0.1`; `0.10` is the same double as `0.1`. The
+    Math wrapper is emulated with exact IEEE754 semantics (same
+    helper as F1292), then fromCharCode's ToUint16 masking. For
+    integer codes the wrappers are the identity. Disjoint from
+    F1292 (exact `p+0.1`/`p-0.1`/`p` with `function` callbacks) by
+    grammar -- the filed shapes BREAK on the open tree. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "Math." not in _compact:
+        return None
+    if "fromCharCode" not in _compact:
+        return None
+    for _try in (_js_f1341_try_fn, _js_f1341_try_arrow):
+        state = {"ops": 0, "parts": 0}
+        try:
+            return _try(text, state, "F1341")
+        except _JSExprFail:
+            continue
+    return None
+
+
+def _js_f1342_parse_codec_cb(text, j, pname, what):
+    """Parse `parseInt(PNAME.toString(R),R)` at text[j] (F1342).
+
+    R is 8 (octal) or 2 (binary); both radixes must match.
+    Returns (radix, next_index). Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "parseInt")
+    if m is None:
+        raise _JSExprFail(what + " not parseInt")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != pname:
+        raise _JSExprFail(what + " param mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "toString")
+    if m is None:
+        raise _JSExprFail(what + " not toString")
+    j = _js_expect(text, m, "(")
+    radix, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+    if radix not in (8, 2):
+        raise _JSExprFail(what + " radix not 8/2")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ",")
+    radix2, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+    if radix2 != radix:
+        raise _JSExprFail(what + " radix mismatch")
+    j = _js_expect(text, j, ")")
+    return radix, j
+
+
+def _js_f1342_stmt_decode(text):
+    """Decode F1342 octal/binary codec roundtrips (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(c=>parseInt(c.toString(8),8));`
+    or `var|let|const D=C.map(c=>parseInt(c.toString(2),2));`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    then RESULT. The octal/binary codec is the identity on all
+    non-negative int codes (node-exact v24.20.0), so the decoded
+    value is the fcc of C. Disjoint from F1296 (hex `toString(16)`)
+    by the radix -- the filed shapes BREAK on the open tree.
+    Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "fromCharCode" not in _compact:
+        return None
+    if "parseInt(" not in _compact:
+        return None
+    if "toString(8)" not in _compact and "toString(2)" not in _compact:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     "F1342")
+        bound = {cname, "RESULT", "String"}
+        dname, j = _js_f1296_parse_d_decl(text, j, cname, bound,
+                                         "F1342")
+        bound.add(dname)
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if pname in bound:
+            raise _JSExprFail("F1342 bad param name")
+        j = _js_skip_ws(text, j)
+        if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+            raise _JSExprFail("F1342 not arrow")
+        _radix, j = _js_f1342_parse_codec_cb(text, j + 2, pname,
+                                             "F1342")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1342 bad s name")
+        bound.add(sname)
+        j = _js_f1291f1292_parse_apply_null(text, _js_skip_ws(text, j),
+                                            dname, "F1342")
+        return _js_f1296f1302_parse_result(text, j, dstr, sname,
+                                          state, "F1342")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1343_stmt_decode(text):
+    """Decode F1343 F1296 arrow block-body residual (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(c=>{return parseInt(c.toString(16),16);});`
+    `var|let|const S=String.fromCharCode(...D);`
+    then RESULT. The block-bodied arrow is the same hex codec as
+    F1296 (identity on the int codes, node-exact v24.20.0), so the
+    decoded value is the fcc of C. Disjoint from F1296
+    (expression-bodied arrow) by the block-body grammar -- the
+    filed shape BREAKs on the open tree. Anything else fails
+    closed: a miss, never a mis-decode. Returns the decoded
+    string, or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "fromCharCode" not in _compact:
+        return None
+    if "parseInt(" not in _compact or "toString(16)" not in _compact:
+        return None
+    n = len(text)
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     "F1343")
+        bound = {cname, "RESULT", "String"}
+        dname, j = _js_f1296_parse_d_decl(text, j, cname, bound,
+                                         "F1343")
+        bound.add(dname)
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if pname in bound:
+            raise _JSExprFail("F1343 bad param name")
+        j = _js_skip_ws(text, j)
+        if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
+            raise _JSExprFail("F1343 not arrow")
+        j = _js_expect(text, _js_skip_ws(text, j + 2), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail("F1343 no return")
+        j = _js_f1296_parse_hex_cb_expr(text, _js_skip_ws(text, m),
+                                        pname, "F1343")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1343 bad s name")
+        bound.add(sname)
+        j = _js_f1296f1302_parse_spread_fcc(text, _js_skip_ws(text, j),
+                                           dname, "F1343")
+        j = _js_expect(text, j, ";")
+        return _js_f1296f1302_parse_result(text, j, dstr, sname,
+                                          state, "F1343")
+    except _JSExprFail:
+        return None
+
+
+def _decode_layer(text):
+    """One decode layer: return decoded variants of *text* (deduped)."""
+    variants = []
+    def _add(variant):
+        if variant != text and variant not in variants:
+            variants.append(variant)
+
+    # URL-encoding layer (whole-string: %XX sequences / '+' separators).
+    for dec in (unquote(text), unquote_plus(text)):
+        _add(dec)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Confusable-normalization layer (whole-string, F429): NFKC folds
+    # fullwidth/compatibility confusables; zero-width joiners stripped.
+    norm = _normalize_confusables(text)
+    if norm is not None:
+        _add(norm)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Bidi-override normalization (whole-string, F431): strip bidi
+    # controls, reverse RTL-governed runs to visual order.
+    bidi = _normalize_bidi(text)
+    if bidi is not None:
+        _add(bidi)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Hex runs embedded anywhere in the text.
+    for m in list(_HEX_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_hex_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # Short hex runs (F450): strict decode with the credential-shape
+    # gate -- undecodable or innocent runs are ignored, so this cannot
+    # starve the candidate budget.
+    for variant in _hex_short_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Hex runs with embedded whitespace (F451): whitespace-tolerant
+    # scan; only credential-shaped strict decodes become variants.
+    for variant in _hex_ws_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Base64 / base64url runs embedded anywhere in the text.
+    for m in list(_B64_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_b64_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # Short base64/base64url runs (F445): strict-decode with the
+    # credential-shape gate -- undecodable or innocent runs are
+    # ignored, so this cannot starve the candidate budget.
+    for variant in _b64_short_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Base64/base64url runs with embedded whitespace (F449):
+    # whitespace-tolerant scan; only credential-shaped strict decodes
+    # become variants.
+    for variant in _b64_ws_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Base64/base64url runs with embedded non-whitespace junk (F456):
+    # junk-tolerant scan; only credential-shaped strict decodes
+    # become variants. Additive: the F449 path above is unchanged.
+    for variant in _b64_junk_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Base32 runs embedded anywhere in the text (F8).
+    for m in list(_B32_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_b32_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # Short base32 runs (F445): same credential-shape-gated contract.
+    for variant in _b32_short_variants(text):
+        _add(variant)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # JSFuck runs embedded anywhere in the text (F428): strict static
+    # decode, never executed; undecodable runs are ignored.
+    for m in list(_JSFUCK_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_jsfuck_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # F495: resolve the single leading local-binding statement (if any)
+    # now; its rewritten-text variant is decoded after the whole-text
+    # scan below so the pre-existing variant order is preserved
+    # exactly (F441). The rewrite turns identifier callees into their
+    # bound member text so `concat.call(...)` decodes exactly like
+    # `Array.prototype.concat.call(...)`.
+    _bound_text = _js_resolve_local_bindings(text)
+    # Whole-text JS-expression scan (F444): one variant decoding every
+    # strictly-decodable JS expression left-to-right, so junk
+    # quoted-concat prefixes cannot starve the real expression out of
+    # the positional per-match enumeration window (8) x 2-layer
+    # budget. Additive: the per-match loop below is unchanged. The
+    # variant composes with the other layers inside the 2-layer
+    # budget exactly like the whole-text entity/escape productions.
+    decoded = _try_js_expr_decode_all(text)
+    if decoded is not None:
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # F495 bound-text variant: runs after the whole-text scan so the
+    # pre-existing variant order is preserved exactly (F441).
+    if _bound_text is not None:
+        decoded = _try_js_expr_decode_all(_bound_text)
+        if decoded is not None:
+            _add(decoded)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F501: resolve leading string-value bindings (if any) the same
+    # way -- the rewritten text turns `a+b` into `'f1'+'f2'` so the
+    # whole-text scan decodes it. Ordered after the F495 variant to
+    # preserve the pre-existing variant order exactly (F441).
+    _value_text = _js_resolve_value_bindings(text)
+    if _value_text is not None:
+        decoded = _try_js_expr_decode_all(_value_text)
+        if decoded is not None:
+            _add(decoded)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F949: top-level statement sequences whose IIFE twins decode
+    # (node-exact whole-text rewrite -- see _js_f949_rewrite_topstmt).
+    # Models the 11 builtin classes the IIFE statement sims handle
+    # but that miss as top-level statement sequences
+    # (structuredClone, generator yield/.next(), class static
+    # blocks/fields, Proxy.revocable, WeakRef, destructuring,
+    # Object.values, Map spread, labeled blocks). Ordered after F501
+    # to preserve the pre-existing variant order exactly (F441).
+    _topstmt_text = _js_f949_rewrite_topstmt(text)
+    if _topstmt_text is not None:
+        decoded = _try_js_expr_decode_all(_topstmt_text)
+        if decoded is not None:
+            _add(decoded)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F957 / F958 / F959 / F960 (wave-391 lane 3): narrow
+    # leading-statement rewrites. Each matches one leading statement
+    # shape (URLSearchParams.get on a var-bound URL, RegExp
+    # match-group reads, awaited async-assembly, WeakMap sets) and
+    # substitutes the bound name's modeled member reads in the
+    # remainder, so the whole-text scan decodes the reassembled
+    # credential. The four shapes are disjoint; order among them is
+    # irrelevant. Never evals.
+    for _rw in (_js_f957_rewrite, _js_f958_rewrite, _js_f959_rewrite,
+                _js_f960_rewrite, _js_f987_rewrite):
+        _rw_text = _rw(text)
+        if _rw_text is not None:
+            decoded = _try_js_expr_decode_all(_rw_text)
+            if decoded is not None:
+                _add(decoded)
+                if len(variants) >= _MAX_CANDIDATES:
+                    return variants
+    # F961/F962/F964/F967/F968/F969/F970/F971/F972/F973/F974/F986/
+    # F988/F989/F990/F991/F992/F993/F994/F995/F999/F1000/F1001/F1002/
+    # F1013/F1014/F1015/F1016: narrow whole-text
+    # statement-sequence decoders. Each returns the decoded string
+    # or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Ordered after the F501 rewrite for
+    # the same reason.
+    for _stmtdec in (_js_f961_stmt_decode, _js_f962_stmt_decode,
+                     _js_f964_stmt_decode, _js_f967_stmt_decode,
+                     _js_f968_stmt_decode, _js_f969_stmt_decode,
+                     _js_f970_stmt_decode, _js_f971_stmt_decode,
+                     _js_f972_stmt_decode, _js_f973_stmt_decode,
+                     _js_f974_stmt_decode, _js_f986_stmt_decode,
+                     _js_f988_stmt_decode, _js_f989_stmt_decode,
+                     _js_f990_stmt_decode, _js_f991_stmt_decode,
+                     _js_f992_stmt_decode, _js_f993_stmt_decode,
+                     _js_f994_stmt_decode, _js_f995_stmt_decode,
+                     _js_f999_stmt_decode, _js_f1000_stmt_decode,
+                     _js_f1001_stmt_decode, _js_f1002_stmt_decode,
+                     _js_f1013_stmt_decode, _js_f1014_stmt_decode,
+                     _js_f1015_stmt_decode, _js_f1016_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # JS string-expression runs (F430/F434/F437/F457): strict static decode of
+    # quoted '+' concatenation, template literals (literal-only ${...}),
+    # String.fromCharCode,
+    # .concat/.repeat postfix calls, array-literal .join(sep) (F434),
+    # and .reduce/.reduceRight assembly + identity .map / constant-true
+    # .filter passthroughs (F437); undecodable runs are ignored.
+    for m in list(_JS_EXPR_START.finditer(text))[:_MAX_CANDIDATES]:
+        if text[m.start()] in _JS_IDENT_START and \
+                not _js_left_boundary_ok(text, m.start()):
+            continue  # F567: identifier-suffixed anchor -- node throws
+                      # ReferenceError; the decoder stays quiet.
+        r = _try_js_expr_decode_f586(text, m.start())
+        if r is not None:
+            decoded, end, _eff = r
+            _add(text[:_eff] + decoded + text[end:])
+    # Escaped-backslash productions (F441): collapse doubled
+    # backslashes and decode the exposed escapes -- models the first
+    # pass of a real double-unicode_escape parser stack. This whole-
+    # text production MUST precede the per-run escape layers below:
+    # on double-backslash text the per-run layers decode inside-out
+    # (matching the inner escape from the second backslash), leaving
+    # stray backslashes -- the F441 miss mechanism -- and their junk
+    # variants would otherwise starve the _MAX_CANDIDATES budget.
+    # The pure collapse composes with the escape-run layer in 2
+    # layers; the collapse+decode variants keep URL-stacked
+    # double-backslash shapes inside the budget. Strictly reduces
+    # backslashes -- fixpoint, no loop.
+    for decoded in _try_bslash_unescape_all(text):
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Backslash-escape runs (F429): strict static \uXXXX / \xXX /
+    # octal / CSS-escape decode; undecodable runs are ignored.
+    for m in list(_ESC_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_escape_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # Backslash-escape runs, space-free CSS interpretation (F433): the
+    # same runs decoded per CSS Syntax L3 4.3.7 (a non-hex code point
+    # terminates the escape without being consumed; no octal fallback).
+    # A run decodes under whichever genuine encoding the attacker used;
+    # undecodable runs are ignored.
+    for m in list(_ESC_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_escape_decode_css_free(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # Numeric HTML-entity runs (F429): strict &#x..; / &#..; decode.
+    for m in list(_ENTITY_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_entity_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # Whole-text numeric-entity decode (F436): one variant decoding
+    # every entity (strict and legacy no-semicolon forms) at once, so
+    # entity+base64 stacks -- a no-semicolon entity or two spaced
+    # single entities poisoning a base64 run -- compose with the
+    # base64 layer inside the 2-layer budget.
+    decoded = _try_entity_decode_all(text)
+    if decoded is not None:
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Whole-text entity+NUL composition (F438): strip NUL bytes, then
+    # decode every entity at once, so entity+NUL-interleave stacks
+    # compose inside the 2-layer budget.
+    decoded = _try_entity_nul_decode_all(text)
+    if decoded is not None:
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Whole-text bounded named+numeric double entity decode (F440): one
+    # variant mirroring html.unescape x2 over the bounded named table
+    # (amp/lt/gt/quot/apos) plus numeric entities, so double-encoded
+    # entities (named-wrapped, no-semicolon named-wrapped) and their
+    # base64 stacks close inside the 2-layer budget.
+    decoded = _try_double_entity_decode(text)
+    if decoded is not None:
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # Whole-text backslash-escape decode (F436): one variant per
+    # escape-run interpretation, so spaced single escape fragments
+    # poisoning a base64 run compose with the base64 layer inside the
+    # 2-layer budget.
+    for decoded in _try_escape_decode_all(text):
+        _add(decoded)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    # UTF-16 null-interleaved runs (F429): strip the NUL bytes.
+    for m in list(_UTF16N_RUN.finditer(text))[:_MAX_CANDIDATES]:
+        decoded = _try_utf16_null_decode(m.group(0))
+        if decoded is not None:
+            _add(text[:m.start()] + decoded + text[m.end():])
+    # F977/F978/F980/F981: narrow whole-text statement-sequence decoders
+    # (wave-392 lane 3). Each returns the decoded string or None; all
+    # filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint by leading keyword: F977 requires a `delete`
+    # statement on the leading object, F978 requires `.splice(` on the
+    # leading array, F980 requires the fromCharCode-spread IIFE, F981
+    # requires a pop-accumulation loop. Additive, in F-number order.
+    for _stmtdec in (_js_f977_stmt_decode, _js_f978_stmt_decode,
+                     _js_f980_stmt_decode, _js_f981_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F996/F997/F998: narrow whole-text statement-sequence decoders
+    # (wave-393 lane 3). Each returns the decoded string or None; all
+    # filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint by leading form: F996 requires a
+    # string-code array literal + .map(Number), F997 an int array
+    # literal + .slice(1,-1), F998 a leading globalThis assignment
+    # statement. Additive, in F-number order.
+    for _stmtdec in (_js_f996_stmt_decode, _js_f997_stmt_decode,
+                     _js_f998_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1003/F1004: narrow whole-text statement-sequence decoders
+    # (wave-393 lane 5). F1003: statement-position comma-sequence of
+    # assignment operands -- disjoint from F982 (accumulation/`++`/`--`
+    # operands on initialized declarators) by requiring >= 2
+    # comma-separated assignment operands, and from F1000 (assignment
+    # operators) by the comma-sequence requirement. F1004:
+    # property-copy re-add lifecycle -- disjoint from F977 by
+    # requiring at least one `o.p=o.q` copy statement. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1003_stmt_decode, _js_f1004_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1005/F1006/F1007/F1008: narrow whole-text statement-sequence
+    # decoders (wave-394 lane 1). Each returns the decoded string or
+    # None; all filed shapes BREAK on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint by leading form: F1005 requires
+    # an Object.create proto chain with no getOwnPropertyDescriptor
+    # line (F1002's domain), F1006 a Proxy apply-trap on
+    # String.fromCharCode (F542's Reflect.apply bodies and F990's
+    # get-trap are disjoint), F1007 parseInt-radix fromCharCode args,
+    # F1008 a class declaration with instance fields (static is
+    # F1009's lane). Additive, in F-number order.
+    for _stmtdec in (_js_f1005_stmt_decode, _js_f1006_stmt_decode,
+                     _js_f1007_stmt_decode, _js_f1008_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1009/F1010/F1011/F1012: narrow whole-text statement-sequence decoders
+    # (wave-394 lane 2). F1009: class static-field reads -- disjoint from
+    # F949/F662 (static *blocks*) by requiring `static NAME=` field
+    # declarations, and from wave-394 lane 1's F1008 (instance fields) by
+    # modeling only static reads. F1010: top-level __defineGetter__
+    # installs -- disjoint from F703/F725 (IIFE-only) by the top-level
+    # statement grammar. F1011: array-literal .forEach accumulation --
+    # disjoint from F939 (IIFE-only). F1012: for-of over array-pair
+    # literals -- disjoint from F989 (which requires `new Map(`) by the
+    # `of [` array-literal form. Additive, in F-number order.
+    for _stmtdec in (_js_f1009_stmt_decode, _js_f1010_stmt_decode,
+                     _js_f1011_stmt_decode, _js_f1012_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1017/F1018/F1019/F1020: narrow whole-text statement-sequence
+    # decoders (wave-394 lane 4). Each returns the decoded string or
+    # None; all filed shapes BREAK on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint by leading form: F1017 requires
+    # a Reflect.construct(String,...) declaration, F1018 an
+    # Object.setPrototypeOf statement, F1019 an array literal with
+    # .shift() statements, F1020 a leading function declaration
+    # (the fast-path gate only checks for "function"/"${" substrings;
+    # the decoder itself enforces the leading form and returns None
+    # otherwise). Additive, in F-number order.
+    for _stmtdec in (_js_f1017_stmt_decode, _js_f1018_stmt_decode,
+                     _js_f1019_stmt_decode, _js_f1020_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1021/F1022/F1023: narrow whole-text statement-sequence decoders
+    # (wave-394 lane 5). F1021: with-statement reads -- disjoint by
+    # the leading `with(` keyword (no other hook models `with`).
+    # F1022: inline fromEntries member-read assembly -- disjoint from
+    # F968 by grammar (no E/O binding statements; the single
+    # statement heads on the RESULT declarator with an inline
+    # Object.fromEntries call). F1023: statement-position
+    # generalization of the F974-class decoders -- strictly additive
+    # (returns None when no comment was skipped and no statement was
+    # dropped, so clean shapes stay owned by the earlier routes).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1021_stmt_decode, _js_f1022_stmt_decode,
+                     _js_f1023_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1025/F1026/F1027: narrow whole-text statement-sequence decoders
+    # (wave-395 lane 1). F1025: generator-spread into fromCharCode
+    # (disjoint from F942's IIFE expression route, the F987 array-spread
+    # rewrite, and F1006's Proxy head by the top-level `var|let` decl +
+    # spread-CALL form). F1026: for-of over a generator call (disjoint
+    # from F989/F1012/F1013 by the `of NAME()` generator-call form).
+    # F1027: for-of over BigInt-literal arrays with Number() coercion
+    # (disjoint from F996/F1007 by the `n`-suffixed literal form).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1025_stmt_decode, _js_f1026_stmt_decode,
+                     _js_f1027_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1028/F1029/F1030: narrow whole-text
+    # statement-sequence decoders. Each returns the decoded string
+    # or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Ordered after the F1021-F1023 loop
+    # for the same reason. Additive, in F-number order.
+    for _stmtdec in (_js_f1028_stmt_decode, _js_f1029_stmt_decode,
+                     _js_f1030_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1031/F1032/F1033/F1035/F1036/F1037: narrow whole-text
+    # statement-sequence decoders -- async-iterator accumulation,
+    # Intl-intrinsic code re-derivation, RegExp replace-callback code
+    # mapping, Object.assign-staged reads, structuredClone-staged
+    # reads, groupBy-keyed reassembly. Each returns the decoded string
+    # or None; all filed shapes BREAK on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1031_stmt_decode, _js_f1032_stmt_decode,
+                     _js_f1033_stmt_decode, _js_f1035_stmt_decode,
+                     _js_f1036_stmt_decode, _js_f1037_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1038/F1039/F1040: narrow whole-text statement-sequence decoders
+    # (wave-396 lane 2). F1038: Set-union-staged index-pair reads
+    # (disjoint from F494's Set production, which fails closed on
+    # nested-array elements, and from F1028's `new WeakMap` anchor).
+    # F1039: Atomics/SharedArrayBuffer code accumulation (disjoint by
+    # the `new Int32Array(new SharedArrayBuffer(` anchor). F1040:
+    # built-in-iterator spread into fromCharCode (disjoint from
+    # F1025's generator-call/custom-iterable spread -- re-audited
+    # still MISS on the merged tree -- and from F1013's for-of/
+    # while-next head and F989's `for(` head). Each returns the
+    # decoded string or None; all filed shapes BREAK on the open
+    # tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1038_stmt_decode, _js_f1039_stmt_decode,
+                     _js_f1040_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1041/F1042/F1043: narrow whole-text statement-sequence decoders --
+    # Reflect.get-staged reads, fromEntries index-pair reassembly via
+    # Object.values spread, Array .keys() index-iterator reads. Each
+    # returns the decoded string or None; all filed shapes BREAK on the
+    # open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1041_stmt_decode, _js_f1042_stmt_decode,
+                     _js_f1043_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1044/F1045/F1046: narrow whole-text statement-sequence decoders
+    # (wave-396 lane 4) -- for-in enumeration reads, setPrototypeOf
+    # proto-chain reads, .at() indexed reads. Each returns the decoded
+    # string or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1044_stmt_decode, _js_f1045_stmt_decode,
+                     _js_f1046_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1048/F1049/F1050/F1051: narrow whole-text statement-sequence
+    # decoders (wave-397 lane 1) -- nested Error cause-chain reads,
+    # Promise resolution-staged fragment assembly, URLSearchParams
+    # fragment reads, FormData staged fragment reads. Each returns the
+    # decoded string or None; all filed shapes BREAK on the open tree,
+    # so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1048_stmt_decode, _js_f1049_stmt_decode,
+                     _js_f1050_stmt_decode, _js_f1051_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1052/F1053/F1054/F1055: narrow whole-text statement-sequence decoders
+    # (wave-397 lane 2) -- Headers value reads, memory-view staged code
+    # reads, RegExp match-group assembly, JSON.parse reviver-staged reads.
+    # Each returns the decoded string or None; all filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1052_stmt_decode, _js_f1053_stmt_decode,
+                     _js_f1054_stmt_decode, _js_f1055_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1056/F1057/F1058/F1059/F1060: narrow whole-text
+    # statement-sequence decoders (wave-397 lane 3). F1056:
+    # String.replace capture-group assembly (disjoint from F1054's
+    # match-group reads -- string replacement, not group reads --
+    # and from F1033's replace-callback, whose second argument is a
+    # function). F1057: Array.from mapFn fragment reads (disjoint
+    # from F1011/F1016 by the `Array.from(` anchor). F1058:
+    # TextEncoder/TextDecoder fragment staging (the `new
+    # TextEncoder(` anchor is unique). F1059: Proxy named-target
+    # get-trap reads (disjoint from F990 -- F990 requires an inline
+    # literal target and fails closed on a named target). F1060:
+    # defineProperty getter-descriptor reads (disjoint from F970 --
+    # F970 models value-descriptors and fails closed on accessors).
+    # Each returns the decoded string or None; all filed shapes BREAK
+    # on the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1056_stmt_decode, _js_f1057_stmt_decode,
+                     _js_f1058_stmt_decode, _js_f1059_stmt_decode,
+                     _js_f1060_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1061/F1062/F1063: narrow whole-text statement-sequence decoders
+    # (wave-397 lane 4) -- Map.get dual-staged reads (F971 residual),
+    # Set.forEach fragment accumulation, WeakMap staged-array indexed
+    # reads (F1028 residual). Each returns the decoded string or None;
+    # all filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint from the F971/F1028/F1038 hooks by anchor
+    # and grammar (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1061_stmt_decode, _js_f1062_stmt_decode,
+                     _js_f1063_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1065/F1066/F1067: narrow whole-text statement-sequence decoders
+    # (wave-398 lane 1) -- generator-declaration accumulation (F1026/
+    # F1031 residual), String.fromCharCode.bind invocation, structuredClone
+    # non-flat argument forms (F1036 residual). Each returns the decoded
+    # string or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint from the F1026/F1031/F1036 hooks by
+    # anchor and grammar (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1065_stmt_decode, _js_f1066_stmt_decode,
+                     _js_f1067_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1068/F1069/F1070/F1071: narrow whole-text statement-sequence
+    # decoders (wave-398 lane 2) -- Proxy set-trap accumulation reads,
+    # non-identifier fromCharCode spread receivers (WeakRef deref
+    # member, globalThis member, rest-param), Intl.Segmenter
+    # ZWSP-filter reassembly, Object.getOwnPropertyNames loop
+    # accumulation. Each returns the decoded string or None; all
+    # filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint from F1059 (get-trap), F991 (WeakRef
+    # quoted-literal reads), F1044 (for-in), F525 (expression-level
+    # key enumeration), and F857/F910 (ASCII-only Segmenter) by
+    # anchor and grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1068_stmt_decode, _js_f1069_stmt_decode,
+                     _js_f1070_stmt_decode, _js_f1071_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1072: JSON.parse reviver-less plain property reads (wave-398
+    # lane 3) -- `var O=JSON.parse('{"a":"f1"}');var RESULT=O.a+O.b;`.
+    # Distinct production from F1055 (no reviver argument at all --
+    # the hook fails closed on a comma after the literal, routing
+    # that shape to F1055's production). The filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1072_stmt_decode,):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1074/F1075 (wave-399 lane 1): labeled-statement accumulation
+    # reads and member-expression / with-scope int-array accumulation
+    # reads. Each filed shape BREAKs on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order (F441)
+    # is preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1074_stmt_decode, _js_f1075_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1076/F1077: narrow whole-text statement-sequence decoders
+    # (wave-399 lane 2) -- Function-constructor body staging (F964
+    # residual), import()-staged int-array reads (F959d residual).
+    # Each returns the decoded string or None; all filed shapes BREAK
+    # on the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F964 (return-body) and F959d (string-literal defaults) by
+    # grammar (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1076_stmt_decode, _js_f1077_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1078/F1080/F1081/F1082: top-level scheduling-primitive
+    # accumulation (wave-399 lane 3) -- `var ARR=[INT,...];` then a
+    # top-level `queueMicrotask(CB)` / `setTimeout(CB[,DELAY])` /
+    # `setImmediate(CB)` / `process.nextTick(CB)` whose zero-arg
+    # `()=>{}` / `function(){}` callback accumulates
+    # `String.fromCharCode(ARR[I])` into `var RESULT`. Distinct
+    # production from F641 (which requires the async-arrow-IIFE
+    # wrapper -- the filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved). Additive, in F-number order.
+    for _stmtdec in (_js_f1078_stmt_decode,):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1083/F1084 (wave-400 lane 1): Object.create prototype-staged
+    # accumulation reads and comma-operator chain staging reads. Each
+    # filed shape BREAKs on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1083_stmt_decode, _js_f1084_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1086/F1087/F1088 (wave-400 lane 2): narrow whole-text
+    # statement-sequence decoders -- while-loop accumulation reads
+    # (do...while braced/braceless + braceless pre-test while; the
+    # braced pre-test while is F1074's -- disjoint by construction),
+    # switch-case staged accumulation reads, and object-spread rest
+    # staging reads. Each returns the decoded string or None; all
+    # filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1086_stmt_decode, _js_f1087_stmt_decode,
+                     _js_f1088_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1100/F1101/F1102 (wave-401 lane 5): labeled while-loop
+    # accumulation reads, numeric-bound while conditions, and
+    # array-spread object rest sources. Each filed shape BREAKs on the
+    # open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1100_stmt_decode, _js_f1101_stmt_decode,
+                     _js_f1102_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1103/F1104/F1108 (wave-402 lane 1): String.raw staged reads,
+    # Symbol-keyed staged accumulation reads, and slice-apply staged
+    # reads. Each returns the decoded string or None; all filed shapes
+    # BREAK on the open tree, so no earlier production decoded them and
+    # the pre-existing variant order (F441) is preserved. Disjoint from
+    # F493/F575 (literal raw segments), F1075/F1099 (literal/identifier
+    # property keys), and F1066 (bind-anchored) by grammar (documented
+    # per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1103_stmt_decode, _js_f1104_stmt_decode,
+                     _js_f1108_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1089 (wave-400 lane 3): member-expression spread receivers --
+    # `var O={v:[INT,...]};` then
+    # `var RESULT=String.fromCharCode(...X);` with X a member
+    # expression, alias, or with-scope IIFE. Distinct from F1069
+    # (WeakRef/globalThis/rest-param receivers) and F1075
+    # (loop/indexed reads) by grammar (documented in the hook). The
+    # filed shapes BREAK on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1089_stmt_decode,):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1090/F1091/F1097 (wave-401 lane 1): higher-order-method staged
+    # assembly reads (`C.reduce/flatMap/map/reduceRight/forEach/every`
+    # over the int array), iteration-protocol staged assembly reads
+    # (`for[-await]...of` over C / C.values() / C.entries(), plus the
+    # `String.fromCharCode(...C.values())` spread), and promise-staged
+    # assembly reads (`Promise.all(C.map(async ...)).then(...)`).
+    # Each filed shape BREAKs on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Additive, in F-number order.
+    for _stmtdec in (_js_f1090_stmt_decode, _js_f1091_stmt_decode,
+                     _js_f1097_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1092/F1093/F1094/F1099 (wave-401 lane 2): narrow whole-text
+    # statement-sequence decoders -- tagged-template invocation
+    # staging reads (F1069 residual), getter-chained accumulation
+    # reads (F1075 residual), Reflect.get staged reads (F1083
+    # residual), and arbitrary property-name member reads (F1075
+    # residual). Each returns the decoded string or None; all filed
+    # shapes BREAK on the open tree, so no earlier production decoded
+    # them and the pre-existing variant order (F441) is preserved.
+    # Disjoint from F1069 (WeakRef/globalThis/rest-param receivers),
+    # F1075 (v-anchored data-property reads), and F1083
+    # (member-syntax prototype reads) by grammar (documented per
+    # hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1092_stmt_decode, _js_f1093_stmt_decode,
+                     _js_f1094_stmt_decode, _js_f1099_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1095/F1096 (wave-401 lane 3): destructuring-rest accumulation
+    # reads and shift-staged accumulation reads. Each returns the
+    # decoded string or None; all filed shapes BREAK on the open tree,
+    # so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Disjoint from F1075 (object
+    # declarator) and the index-anchored hooks by grammar (documented
+    # per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1095_stmt_decode, _js_f1096_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1105/F1106/F1107 (wave-402 lane 2): narrow whole-text
+    # statement-sequence decoders -- Proxy get-trap indexed
+    # accumulation reads (F1059 residual), Object.assign staged reads
+    # (F1075/F1088 residual), and spread-into-object for-in
+    # accumulation reads (F1044 residual). Each returns the decoded
+    # string or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Disjoint from F1059 (string-valued
+    # target, no loop), F1075 (`{v:[...]}` declarator), F1088 (`{...`
+    # spread source), and F1044 (int-valued object literal) by grammar
+    # (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1105_stmt_decode, _js_f1106_stmt_decode,
+                     _js_f1107_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1110 (wave-402 lane 3): inline C.values() of-source
+    # iteration-protocol staged assembly reads --
+    # `for[-await](var X of C.values()){S+=String.fromCharCode(X);}`
+    # with no `var IT=C.values();` binding. The F1091 hook requires
+    # the binding and fails closed on the inline source; F1110 is its
+    # Spec-review residual, filed as its own finding (F1091 stays
+    # CLOSED). Disjoint from F1091 by grammar (documented in the
+    # hook). The filed shapes BREAK on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Additive.
+    for _stmtdec in (_js_f1110_stmt_decode,):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1111/F1112/F1114/F1120 (wave-403 lane 1): narrow whole-text
+    # statement-sequence decoders -- Array.prototype.flat staged reads,
+    # TypedArray staged reads (Uint16Array.from/Uint8Array.from),
+    # Object.freeze-wrapped staged reads, and array-copy staged spread
+    # reads (C.slice / [].concat(C) / Array.of(...C)). Each returns the
+    # decoded string or None; all filed shapes BREAK on the open tree,
+    # so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Disjoint from F1030
+    # (inline-literal .flat), F1090 (.flatMap anchor), and the
+    # `...[...C]` / `...new Uint16Array(C)` / unfrozen twins by grammar
+    # (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1111_stmt_decode, _js_f1112_stmt_decode,
+                     _js_f1114_stmt_decode, _js_f1120_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1113/F1115/F1116 (wave-403 lane 2): String.prototype.concat
+    # loop accumulation reads, String.fromCodePoint loop accumulation
+    # reads (BMP-only, node-exact), and reorder-staged accumulation
+    # reads (slice().reverse() + spread-of-reverse / backwards loop).
+    # Each returns the decoded string or None; all filed shapes BREAK
+    # on the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1074 (the += / S=S+ accumulation forms) and the ...[...C]
+    # copy-spread hook by grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1113_stmt_decode, _js_f1115_stmt_decode,
+                     _js_f1116_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1117/F1118/F1119 (wave-403 lane 3): with-scope staged spread
+    # reads (`with({})` / `with({C:C})` around the spread call),
+    # arguments-object staged spread reads (`...arguments` inside a
+    # plain function), and Symbol.iterator explicit-iteration staged
+    # reads (`C[Symbol.iterator]()` of-source). Each returns the
+    # decoded string or None; all filed shapes BREAK on the open
+    # tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1089 (member-expression spread receivers), F1091 (bare C /
+    # .entries() / bound-iterator of-sources), and F1110 (inline
+    # .values()) by grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1117_stmt_decode, _js_f1118_stmt_decode,
+                     _js_f1119_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1121/F1122 (wave-403 lane 4): top-level for-await
+    # iteration-protocol staged assembly reads (F1091 residual: F1091
+    # admits await only inside the async-IIFE wrapper, but node
+    # accepts top-level await in scripts) and undeclared
+    # loop-variable iteration-protocol staged assembly reads (F1091
+    # residual: F1091 requires a declaration keyword, but sloppy
+    # mode binds a bare identifier as a global). Disjoint from F1091
+    # (wrapper/await/declaration) and F1110 (inline C.values()
+    # of-source) by grammar (documented per hook). F1091 stays
+    # CLOSED -- these hooks close only the F1121/F1122 residuals,
+    # filed as their own findings. The filed shapes BREAK on the open
+    # tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1121_stmt_decode, _js_f1122_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1124/F1125/F1126/F1127/F1128/F1129/F1130 (wave-404 lane 2):
+    # staged-assembly variant decoders -- side-effect higher-order
+    # callbacks (F1090 residual), arrow-function callback twins
+    # (F1090 residual), Object.entries staged assembly (F1091
+    # residual), push-then-join accumulation, reverse-iteration
+    # prepend accumulation, template-literal accumulation, and
+    # manual .next() iterator loops (F1119 residual). Each returns
+    # the decoded string or None; all filed shapes BREAK on the
+    # open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint
+    # from F1090 (function callbacks / .join forms), F1091
+    # (C.entries() method), F1074/F1075 (forward +=), and F1119
+    # (for-of) by grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1124_stmt_decode, _js_f1125_stmt_decode,
+                     _js_f1126_stmt_decode, _js_f1127_stmt_decode,
+                     _js_f1128_stmt_decode, _js_f1129_stmt_decode,
+                     _js_f1130_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1131/F1132/F1133/F1134/F1135/F1136/F1137 (wave-404 lane 3):
+    # narrow whole-text statement-sequence decoders -- array-copy
+    # staged spread residuals (splice/concat/new-Array/map/fill-map),
+    # clone-roundtrip staged spread (structuredClone/JSON),
+    # Object.* array forms (assign([],C)/values(C)), string-split
+    # roundtrip staged reads, reduce-form residuals, key-iteration
+    # staged accumulation, and filter-then-apply staged reads. Each
+    # returns the decoded string or None; all filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1120 (slice/[].concat/Array.of), F1106 (assign({},C)), F1090
+    # (init+2-param reduce), F1066 (whole-array apply), and the
+    # indexed-`for` twin by grammar (documented per hook). Additive,
+    # in F-number order.
+    for _stmtdec in (_js_f1131_stmt_decode, _js_f1132_stmt_decode,
+                     _js_f1133_stmt_decode, _js_f1134_stmt_decode,
+                     _js_f1135_stmt_decode, _js_f1136_stmt_decode,
+                     _js_f1137_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+# F1138/F1139/F1140/F1141 (wave-404 lane 4): percent-encoding
+    # staged assembly reads (`unescape` over a `%`-hex mapped join),
+    # mutate-then-restore staged assembly reads (`C.reverse()` +
+    # string-level restore), for-loop header variants (cached
+    # length, empty init/update, post-increment index), and the
+    # F1119 residual (trailing statements after the async IIFE).
+    # Each returns the decoded string or None; all filed shapes
+    # BREAK on the open tree, so no earlier production decoded them
+    # and the pre-existing variant order (F441) is preserved.
+    # Disjoint from F1090 (map+join), F1074 (plain loop), and F1119
+    # (end-of-text after the IIFE) by grammar (documented per
+    # hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1138_stmt_decode, _js_f1139_stmt_decode,
+                     _js_f1140_stmt_decode, _js_f1141_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1142/F1143/F1144/F1145/F1146 (wave-405 lane 1): narrow
+    # whole-text statement-sequence decoders -- flatMap nested-array
+    # staged reads, padStart/padEnd staged assembly, toString(radix)
+    # round-trip staged reads, BigInt-wrapped staged reads, and
+    # filter-then-spread staged reads. Each returns the decoded
+    # string or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Disjoint from F1090 (flat flatMap
+    # returns), F1111 (`...C.flat()`), F465 (literal whole-string
+    # padding), F633 (BigInt literal interpolation), F1137
+    # (filter-then-apply), F1124 (filter as side-effect), and F1074
+    # (plain `+=` accumulation) by grammar (documented per hook).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1142_stmt_decode, _js_f1143_stmt_decode,
+                     _js_f1144_stmt_decode, _js_f1145_stmt_decode,
+                     _js_f1146_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1147/F1148/F1149/F1150/F1153/F1154/F1155 (wave-405 lane 2):
+    # spread/iteration residual decoders -- concat() no-arg copy
+    # spread, indexed-param callback twins, generator staged reads,
+    # entries() non-destructured reads, sort-comparator staged
+    # accumulation, groupBy staged reads, and toReversed
+    # double-reversal staged spread. Each returns the decoded string
+    # or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Disjoint from F1131 (concat([])),
+    # F1090 (value-param callbacks), F1091 (for-of / destructured
+    # entries), F1124 (side-effect callbacks), F1125 (arrow
+    # value-param), F1126 (Object.entries), F461 (.reverse()), and
+    # F1133 (Object.values(C)) by grammar (documented per hook).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1147_stmt_decode, _js_f1148_stmt_decode,
+                     _js_f1149_stmt_decode, _js_f1150_stmt_decode,
+                     _js_f1153_stmt_decode, _js_f1154_stmt_decode,
+                     _js_f1155_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1159/F1160/F1161/F1162/F1163/F1164/F1165 (wave-406 lane 1):
+    # Object.fromEntries staged assembly, Map staged reads, Set
+    # staged reads, Array.from(C.entries()) materialization,
+    # sort-family no-op wrappers, reduceRight arrow twins, and
+    # pad-then-splice staged reads. Each returns the decoded string
+    # or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Disjoint from F1126, F1091, F1150,
+    # F940, F1153, F1131, F1090, and F1120 by grammar (documented
+    # per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1159_stmt_decode, _js_f1160_stmt_decode,
+                     _js_f1161_stmt_decode, _js_f1162_stmt_decode,
+                     _js_f1163_stmt_decode, _js_f1164_stmt_decode,
+                     _js_f1165_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1166/F1167/F1168/F1169/F1170/F1171/F1172/F1173 (wave-406 lane 2):
+    # accumulation-residual decoders -- double-reverse() staged
+    # reads, decodeURI percent-decoding assembly, rest-destructuring
+    # staged copies, copyWithin staged reads, replace/replaceAll
+    # function-replacer accumulation, with()/toSpliced() no-op
+    # copies, Array.from staged copies, and entries()/values()
+    # decoupled-index reads. Each returns the decoded string or
+    # None; all filed shapes BREAK on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint from F1139 (single C.reverse),
+    # F1155 (toReversed x2), F1138 (unescape), F1120 (slice/concat/
+    # Array.of copies), F1124 (array-method side-effect callbacks),
+    # F1091 (value-carrying loop var), F1150 (pair access), and
+    # F1136 (for-in key iteration) by grammar (documented per
+    # hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1166_stmt_decode, _js_f1167_stmt_decode,
+                     _js_f1168_stmt_decode, _js_f1169_stmt_decode,
+                     _js_f1170_stmt_decode, _js_f1171_stmt_decode,
+                     _js_f1172_stmt_decode, _js_f1173_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1174/F1175/F1176/F1177/F1178/F1179 (wave-406 lane 3):
+    # copy/iteration residual decoders -- findLast side-effect
+    # callbacks, JSON reviver/replacer side-effect accumulation,
+    # DataView staged reads, URLSearchParams staged reads,
+    # Proxy-wrapped staged reads, and Headers staged reads. Each
+    # returns the decoded string or None; all filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1124 (find/some side-effect callbacks), F1132 (JSON clone
+    # roundtrip), F1112 (TypedArray staged reads), and every spread
+    # hook (bare `...C`) by grammar (documented per hook).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1174_stmt_decode, _js_f1175_stmt_decode,
+                     _js_f1176_stmt_decode, _js_f1177_stmt_decode,
+                     _js_f1178_stmt_decode, _js_f1179_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1182/F1183/F1184/F1185/F1186 (wave-407 lane 1):
+    # staged-assembly decoders -- Object.create staged assembly,
+    # WeakMap staged reads, String.match/matchAll staged assembly,
+    # RegExp exec staged reads, and String.raw staged reads. Each
+    # returns the decoded string or None; all filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1133 (Object.values over the array), F1160 (Map), F1134
+    # (delimiter split), and F1090 (map+join) by grammar (documented
+    # per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1182_stmt_decode, _js_f1183_stmt_decode,
+                     _js_f1184_stmt_decode, _js_f1185_stmt_decode,
+                     _js_f1186_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+
+    # F1193/F1194/F1195 (wave-407 lane 3): wrapper-residual
+    # decoders -- FormData staged reads (append/set + values, forEach /
+    # for-of / indexed-for staging, flexible keys), integrity-method
+    # wrapper staged reads (freeze/seal/preventExtensions of the bound
+    # array or a copy: slice/Array.from/spread), and
+    # expression-wrapper laundering (template/String()/string-concat
+    # wrapper chains around a blocked map+join). Whitespace-tolerant
+    # fast-path gates (spec-review fix): the grammars accept
+    # `new FormData ()`-style spellings, so the gates compact
+    # whitespace before matching.
+    # Each returns the decoded string or None; all filed shapes BREAK
+    # on the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1090 (map+join, no FormData, no wrapper), F1114 (freeze of the
+    # int-array literal, freeze only), and the F1123 statement-level
+    # unwrap by grammar (documented per hook). Additive, in F-number
+    # order.
+    for _stmtdec in (_js_f1193_stmt_decode, _js_f1194_stmt_decode,
+                     _js_f1195_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1187/F1188/F1189/F1190/F1191/F1192 (wave-407 lane 2):
+    # copy/encoding residual decoders -- flat(2) staged reads (F1142
+    # residual), base64 roundtrip laundering, async generator staged
+    # reads, Intl.Segmenter grapheme reads, TypedArray.set staged
+    # reads (F1112 residual), and Buffer.from staged reads. Each
+    # returns the decoded string or None; all filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1142 (flatMap), F1090 (bare map+join), F1091 (sync for-await),
+    # F1112 (.from) by grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1187_stmt_decode, _js_f1188_stmt_decode,
+                     _js_f1189_stmt_decode, _js_f1190_stmt_decode,
+                     _js_f1191_stmt_decode, _js_f1192_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1199/F1200/F1201/F1202/F1203/F1204/F1205 (wave-408 lane 1):
+    # staging-residual decoders -- join/split char-array roundtrip,
+    # globalThis member-expression staging, with-scope fromCharCode
+    # accumulation, switch-statement accumulation, Number.toFixed(0)
+    # roundtrip, Date setMilliseconds staging, and new-Function staged
+    # calls. Each returns the decoded string or None; all filed shapes
+    # BREAK on the open tree, so no earlier production decoded them and
+    # the pre-existing variant order (F441) is preserved. Disjoint from
+    # F1090 (bare map+join), F1134 (int-array roundtrip), F1117
+    # (with-scope staged spread), and F893 (literal Function bodies) by
+    # grammar (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1199_stmt_decode, _js_f1200_stmt_decode,
+                     _js_f1201_stmt_decode, _js_f1202_stmt_decode,
+                     _js_f1203_stmt_decode, _js_f1204_stmt_decode,
+                     _js_f1205_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1206/F1207/F1208/F1209/F1210/F1211/F1212 (wave-408 lane 2):
+    # function-staging and no-op-wrapper residual decoders --
+    # Reflect.get staging, no-op method wrappers (encodeURI/
+    # toLowerCase/normalize/slice(0)), rest-destructuring copy
+    # spread, while-shift accumulation, Function.call.bind staging,
+    # escape/unescape roundtrip, and URI-component roundtrip. Each
+    # returns the decoded string or None; all filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1090 (bare map+join), F1131 (other copy forms), F1066
+    # (.bind), F491 (expression-level Reflect.get), and F1195
+    # (other wrappers) by grammar (documented per hook). Additive,
+    # in F-number order.
+    for _stmtdec in (_js_f1206_stmt_decode, _js_f1207_stmt_decode,
+                     _js_f1208_stmt_decode, _js_f1209_stmt_decode,
+                     _js_f1210_stmt_decode, _js_f1211_stmt_decode,
+                     _js_f1212_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1213/F1214/F1215/F1216/F1217/F1218/F1219 (wave-408 lane 3):
+    # roundtrip/staging decoders -- JSON char-array roundtrip,
+    # defineProperty staged reads, String.concat spread, URLSearchParams
+    # Array.from(values) staged reads, Reflect.apply member-expression
+    # targets, charAt rebuild loops, and charCodeAt roundtrips. Each
+    # returns the decoded string or None; all filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1132 (int-array JSON roundtrip), F1182 (Object.create indexed
+    # assignment), F1090 (bare map+join), F1193 (FormData),
+    # F519 (Reflect.apply function-expression targets), F1177 (for-of
+    # values()/indexed get), and F1226 (defineProperty wrappers on the
+    # int array) by grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1213_stmt_decode, _js_f1214_stmt_decode,
+                     _js_f1215_stmt_decode, _js_f1216_stmt_decode,
+                     _js_f1217_stmt_decode, _js_f1218_stmt_decode,
+                     _js_f1219_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1220/F1221/F1226/F1227 (wave-408 lane 4): residual/new-family
+    # decoders -- Object.keys index staging, Array.from inline mapFn
+    # (F1172 residual), defineProperty/defineProperties wrappers, and
+    # Object.assign self-assign wrappers. Each returns the decoded
+    # string or None; all filed shapes BREAK on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Disjoint from F1172 (intermediate
+    # D binding), F1194 (freeze/seal/preventExtensions only), and the
+    # assign-to-fresh-target twin (pre-existing hook) by grammar
+    # (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1220_stmt_decode, _js_f1221_stmt_decode,
+                     _js_f1226_stmt_decode, _js_f1227_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1229/F1230/F1231/F1232/F1233/F1234/F1235 (wave-409 lane 1):
+    # staging-residual decoders -- Object.fromEntries staged reads,
+    # Map staged reads, Symbol-keyed accumulation, Proxy set/get trap
+    # staging, DataView setUint8 staging, Object.groupBy staging, and
+    # Array.splice accumulation. Each returns the decoded string or
+    # None; all filed shapes BREAK on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint from F1182 (Object.create),
+    # F1183 (WeakMap), F1191 (TypedArray.set), F1112 (TypedArray.from),
+    # and F1090 (bare map+join) by grammar (documented per hook).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1229_stmt_decode, _js_f1230_stmt_decode,
+                     _js_f1231_stmt_decode, _js_f1232_stmt_decode,
+                     _js_f1233_stmt_decode, _js_f1234_stmt_decode,
+                     _js_f1235_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1236-F1242 (wave-409 lane 2): tagged-template staging,
+    # double-reversal laundering, Array.prototype.with staging,
+    # Iterator.prototype.forEach staging, do...while accumulation,
+    # sync generator staged reads, and Object.entries staged reads.
+    # Each returns the decoded string or None; all filed shapes
+    # BREAK on the open tree, so no earlier production decoded them
+    # and the pre-existing variant order (F441) is preserved.
+    # Disjoint from siblings by grammar (documented per hook).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1236_stmt_decode, _js_f1237_stmt_decode,
+                     _js_f1238_stmt_decode, _js_f1239_stmt_decode,
+                     _js_f1240_stmt_decode, _js_f1241_stmt_decode,
+                     _js_f1242_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1243-F1249: statement-sequence decoders (wave-409 lane 3).
+    # Each hook is a narrow whole-text grammar for one filed
+    # laundering shape, disjoint from its siblings by construction
+    # (F1243 vs F1215 by the `[].concat(` array receiver; F1244 vs
+    # F1220 by the Reflect.ownKeys/getOwnPropertyNames call; F1246
+    # vs F1074 by the `i++` post-increment inside the index; F1247
+    # vs F1175 by the `typeof v==='number'` guard; F1248 vs F1124
+    # by the `return false` form). Additive: all 7 shapes BREAK on
+    # the open tree, so no previously-decoded input changes
+    # (F441 variant-order preservation holds).
+    for _stmtdec in (_js_f1243_stmt_decode, _js_f1244_stmt_decode,
+                     _js_f1245_stmt_decode, _js_f1246_stmt_decode,
+                     _js_f1247_stmt_decode, _js_f1248_stmt_decode,
+                     _js_f1249_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1250/F1251/F1252/F1253/F1254/F1259: loop-accretion and
+    # derived-array-argument decoders. Each parses a strict
+    # whole-text grammar; every filed shape BREAKs on the open tree,
+    # so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Disjoint from siblings by
+    # grammar (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1250_stmt_decode, _js_f1251_stmt_decode,
+                     _js_f1252_stmt_decode, _js_f1253_stmt_decode,
+                     _js_f1254_stmt_decode, _js_f1259_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1260/F1261/F1262/F1263/F1264/F1265/F1266: apply-form,
+    # laundering-method, clone, groupBy, Set/iterator-protocol, and
+    # eval-staged decoders. Each parses a strict whole-text
+    # grammar; every filed shape BREAKs on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Disjoint from siblings by grammar
+    # (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1260_stmt_decode, _js_f1261_stmt_decode,
+                     _js_f1262_stmt_decode, _js_f1263_stmt_decode,
+                     _js_f1264_stmt_decode, _js_f1265_stmt_decode,
+                     _js_f1266_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1267-F1273: numeric codec, coercion, WeakRef, findIndex,
+    # pop, string-wrapper, and object-staging decoders (wave-410
+    # lane 2). Each parses a strict whole-text grammar; every
+    # filed shape BREAKs on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint from siblings by grammar
+    # (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1267_stmt_decode, _js_f1268_stmt_decode,
+                     _js_f1269_stmt_decode, _js_f1270_stmt_decode,
+                     _js_f1271_stmt_decode, _js_f1272_stmt_decode,
+                     _js_f1273_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1274-F1280 (wave-410 lane 3): TypedArray/codec/wrapper/in-operator
+    # staging decoders. Each parses a strict whole-text grammar; every
+    # filed shape BREAKs on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint from siblings by grammar (documented per
+    # hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1274_stmt_decode, _js_f1275_stmt_decode,
+                     _js_f1276_stmt_decode, _js_f1277_stmt_decode,
+                     _js_f1278_stmt_decode, _js_f1279_stmt_decode,
+                     _js_f1280_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1289-F1295 (wave-411 lane 1): findLast/findLastIndex
+    # paren-arrow twins, codePointAt laundering, Math rounding
+    # wrappers, Symbol.replace/Symbol.split staging, and
+    # seal-on-slice decoders. Each parses a strict whole-text
+    # grammar; every filed shape BREAKs on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Disjoint from siblings by grammar
+    # (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1289_stmt_decode, _js_f1290_stmt_decode,
+                     _js_f1291_stmt_decode, _js_f1292_stmt_decode,
+                     _js_f1293_stmt_decode, _js_f1294_stmt_decode,
+                     _js_f1295_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1281/F1282: destructuring-spread and accessor-mediated
+    # accumulation decoders (wave-410 lane 4). Each parses a
+    # strict whole-text grammar; every filed shape BREAKs on the
+    # open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint
+    # from siblings by grammar (documented per hook). Additive,
+    # in F-number order.
+    for _stmtdec in (_js_f1281_stmt_decode,
+                     _js_f1282_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1296-F1302 (wave-411 lane 2): hex codec / RegExp indices /
+    # Symbol.match / accumulator indirection / freeze-on-slice /
+    # preventExtensions-on-slice / codePointAt identity decoders.
+    # Each parses a strict whole-text grammar; every filed shape
+    # BREAKs on the open tree, so no earlier production decoded
+    # them and the pre-existing variant order (F441) is preserved.
+    # Disjoint from siblings by grammar (documented per hook).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1296_stmt_decode, _js_f1297_stmt_decode,
+                     _js_f1298_stmt_decode, _js_f1299_stmt_decode,
+                     _js_f1300_stmt_decode, _js_f1301_stmt_decode,
+                     _js_f1302_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1303-F1308/F1316-F1318: computed-at, iterator-generator,
+    # raw-tagged-substitution, descriptors, ownKeys, var-slice, and
+    # surrogate/nonempty-init/eval-fcp residual decoders (wave-411
+    # lane 3). Each parses a strict whole-text grammar; every filed
+    # shape BREAKs on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint from siblings by grammar (documented per
+    # hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1303_stmt_decode, _js_f1304_stmt_decode,
+                     _js_f1305_stmt_decode, _js_f1306_stmt_decode,
+                     _js_f1307_stmt_decode, _js_f1308_stmt_decode,
+                     _js_f1316_stmt_decode, _js_f1317_stmt_decode,
+                     _js_f1318_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1319/F1320/F1321/F1322 (wave-411 lane 4): accessor and
+    # destructuring residual decoders -- set-before-get
+    # defineProperty, arrow-function forEach, backing-field-last
+    # literal, three-index object destructuring. Each parses a
+    # strict whole-text grammar; every filed shape BREAKs on the
+    # open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint
+    # from F1281/F1282 by grammar (documented per hook).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1319_stmt_decode, _js_f1320_stmt_decode,
+                     _js_f1321_stmt_decode, _js_f1322_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1337-F1343 (wave-412 lane 3): seal slice-arg twins, charCodeAt
+    # staging twin, Symbol.replace map-body twin, findLast 3-arg
+    # callbacks, Math wrapper expression twins, octal/binary codec,
+    # and F1296 arrow block-body residual decoders. Each parses a
+    # strict whole-text grammar; every filed shape BREAKs on the
+    # open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint
+    # from siblings by grammar (documented per hook). Additive,
+    # in F-number order.
+    for _stmtdec in (_js_f1337_stmt_decode, _js_f1338_stmt_decode,
+                     _js_f1339_stmt_decode, _js_f1340_stmt_decode,
+                     _js_f1341_stmt_decode, _js_f1342_stmt_decode,
+                     _js_f1343_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F953/F954/F955/F956: top-level statement-sequence decode --
+    # `var` declaration runs with switch/for/for-in accumulation
+    # ending in `var RESULT=...;` node-evaluate to the assembled
+    # string while the expression-level decoders produce zero
+    # variants. Additive at the end so pre-existing variant order
+    # is preserved exactly (F441).
+    _top = _js_f95x_top_seq(text)
+    if _top is not None:
+        _add(_top)
+    # F1123: single-wrapper-level unwrap -- strip one leading/trailing
+    # statement or one wrapper level (`{...}`, `if(true){...}`, `lbl:`,
+    # `function g(){...}var RESULT=g();`, `var RESULT=(()=>{...})();`,
+    # `do{...}while(false);`, `try{...}catch(e){}`) and re-emit the
+    # inner text as a candidate variant. The layer-2 pass runs all
+    # statement decoders on it, so only genuinely-decodable inner
+    # text becomes a credential hit. Additive at the end so the
+    # pre-existing variant order is preserved exactly (F441).
+    for _unwrapped in _js_f1123_unwrap(text):
+        _add(_unwrapped)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    return variants
+
+
+def _decoded_variants(text, max_layers=2):
+    """All distinct decoded variants of *text* up to *max_layers* deep."""
+    seen = {text}
+    out = []
+    frontier = [text]
+    for _ in range(max_layers):
+        nxt = []
+        for t in frontier:
+            for v in _decode_layer(t):
+                if v not in seen:
+                    seen.add(v)
+                    out.append(v)
+                    nxt.append(v)
+        if not nxt:
+            break
+        frontier = nxt
+    return out
+
+
+def _match_credential_rules(text):
+    for rule_id, rx in _CREDENTIAL_RULES:
+        if rx.search(text):
+            return rule_id
+    return None
+
+
+def _match_credential_forms(text):
+    """Match the credential rules against *text* in its deterministic
+    form variants (F8): as-is, whitespace-stripped, and reversed.
+
+    These are precise transforms of a known-format credential — a match
+    on any form means the text genuinely carries credential-shaped
+    material, so the false-positive surface is the regexes themselves,
+    not the transforms.
+    """
+    for candidate in (text, _WS_RUN.sub("", text), text[::-1]):
+        rule = _match_credential_rules(candidate)
+        if rule:
+            return rule
+    return None
+
+
+def _find_credential_strict(text):
+    """Credential regexes over *text* and its decoded variants (F2/F8).
+
+    No entropy tripwire: this is the precise half of the check, used for
+    the per-field scan and for the cross-param joined buffer.
+    """
+    rule = _match_credential_forms(text)
+    if rule:
+        return rule
+    for variant in _decoded_variants(text):
+        rule = _match_credential_forms(variant)
+        if rule:
+            return rule
+    # F439: bounded base64 decode-until-fixpoint (max _MAX_B64_ROUNDS
+    # rounds). Checked directly, not fed back into the layer pipeline,
+    # so depth-4+ base64 stacks stay a documented non-goal.
+    for variant in _b64_fixpoint_variants(text):
+        rule = _match_credential_forms(variant)
+        if rule:
+            return rule
+    return None
+
+
+# ------------------------------------------------------------------ scanning
+
+def find_credential(text):
+    """Return the id of the first blocking credential rule matching *text*,
+    or None. Also fires the entropy tripwire for unknown key formats.
+
+    Encoding-aware (F2/F8/F428/F429/F430/F431): before giving up, decodes likely encodings
+    (base64/base64url, base32, hex, URL-encoding, JSFuck, JS string
+    expressions (F444: whole-text scan defeats junk-prefix budget
+    starvation), backslash
+    escapes, numeric HTML entities, double HTML-entity encoding (F440),
+    UTF-16 null-interleave, confusable
+    normalization incl. the Cyrillic-homoglyph map, bidi-override
+    normalization -- bounded, 2 layers), short base64/base32 runs when
+    the strict decode is credential-shaped (F445), plus a bounded base64
+    decode-until-fixpoint pass (F439: max 3 rounds; depth-4+ base64
+    stacks are a documented non-goal), and
+    re-runs the credential rules on each decoded variant, in
+    whitespace-stripped and reversed form as well. The entropy tripwire
+    runs on the original text only (documented boundary, see module
+    docstring).
+    """
+    rule = _find_credential_strict(text)
+    if rule:
+        return rule
+    # Entropy tripwire: a long high-entropy token sitting near a
+    # credential keyword (matched in normalized space: synonyms, spaced
+    # forms, leetspeak — F16) is treated as an unknown key format.
+    if _tripwire_hit(text):
+        return "dlp-entropy-tripwire"
+    return None
+
+
+def _try_ascii_leaf(value):
+    """Decode a non-string arg leaf to ASCII text, or None.
+
+    F128 (wave-63): non-string leaves are scannable credential
+    carriers — a bytes blob, or a JSON-native int array (the canonical
+    byte encoding, like base64), holding a credential-shaped string is
+    still that credential. Only strict ASCII decodes yield a variant
+    (printable-gated, length-gated): the strict credential rules run on
+    decoded leaves exactly as they do on str leaves, and the entropy
+    tripwire stays on the original text (documented F2/F8 boundary).
+    """
+    raw = None
+    if isinstance(value, (bytes, bytearray)):
+        if len(value) < 8:
+            return None
+        raw = bytes(value)
+    elif isinstance(value, (list, tuple)):
+        if len(value) < 8:
+            return None
+        if not all(isinstance(i, int) and not isinstance(i, bool)
+                   and 0 <= i <= 255 for i in value):
+            return None
+        raw = bytes(value)
+    else:
+        return None
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    if not all(c.isprintable() or c in " \t\n\r" for c in text):
+        return None
+    return text
+
+
+def _collect_strings(value, out):
+    """Recursively collect every string leaf of an arg mapping.
+
+    F128: also collects ASCII-decoded forms of bytes/bytearray leaves
+    and all-int (0-255) list/tuple leaves. Dict KEYS are deliberately
+    NOT collected here: this feed joins into one buffer, and key
+    fragments glued onto adjacent values poison alignment-sensitive
+    decoding (wave-63: keys "a"/"b" glued onto b64 halves broke the
+    cross-field reassembly). Keys are scanned individually, not joined
+    (see find_credential_cross_field). Used by the cross-field
+    (strict-rules-only) scan, so decoded leaves never reach the
+    entropy tripwire.
+    """
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, (bytes, bytearray)):
+        decoded = _try_ascii_leaf(value)
+        if decoded is not None:
+            out.append(decoded)
+    elif isinstance(value, dict):
+        for v in value.values():
+            _collect_strings(v, out)
+    elif isinstance(value, (list, tuple)):
+        decoded = _try_ascii_leaf(value)
+        if decoded is not None:
+            out.append(decoded)
+        for v in value:
+            _collect_strings(v, out)
+
+
+def _collect_keys(value, out):
+    """Recursively collect every dict key of an arg mapping.
+
+    F128: keys are scanned INDIVIDUALLY (never joined into the
+    cross-field buffer — see _collect_strings). A credential-shaped
+    string as an object key is still the credential.
+    """
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if isinstance(k, str):
+                out.append(k)
+            elif isinstance(k, (bytes, bytearray)):
+                decoded = _try_ascii_leaf(k)
+                if decoded is not None:
+                    out.append(decoded)
+            _collect_keys(v, out)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _collect_keys(v, out)
+
+
+def find_credential_cross_field(args):
+    """Scan the concatenation of ALL string param values (F8).
+
+    Catches a credential chunked across params, where every chunk is
+    innocent alone. Uses the strict (regex + decodings) half only — never
+    the entropy tripwire — so joining fields cannot manufacture a
+    heuristic hit; only a genuine known-format credential spanning the
+    join blocks.
+
+    F128: dict keys are strict-scanned individually (a credential as an
+    object key is still the credential); keys never enter the joined
+    buffer (glue poisoning — see _collect_strings).
+    """
+    parts = []
+    _collect_strings(args or {}, parts)
+    joined = "".join(parts)
+    if joined:
+        hit = _find_credential_strict(joined)
+        if hit:
+            return hit
+    keys = []
+    _collect_keys(args or {}, keys)
+    for k in keys:
+        hit = _find_credential_strict(k)
+        if hit:
+            return hit
+    return None
+
+
+def scrub_pii(text):
+    """Redact PII in *text*. Returns (redacted_text, [rule_ids])."""
+    hits = []
+
+    def _replace(rule_id, rx, s):
+        def _sub(m):
+            hits.append(rule_id)
+            return "[REDACTED:%s]" % rule_id
+        return rx.sub(_sub, s)
+
+    # F171: linear-time guards. The pii-email/phone/card regexes
+    # backtrack quadratically on long runs of word characters with no
+    # possible match (e.g. 60KB of 'd's: ~7s; 263KB: minutes), and
+    # scrub_pii runs inside executor.call() BEFORE the F33 byte-cap
+    # projection — an agent-controlled payload burned governor CPU
+    # before the cap could deny it. Each rule only runs when its
+    # trigger characters are present (a match is impossible
+    # otherwise), so the whole scrub stays linear in the input length.
+    # The triggers are necessary conditions of the patterns, never
+    # sufficient ones: redaction behavior is unchanged.
+    has_digit = any(ch.isdigit() for ch in text)  # O(n), early exit
+    _triggers_ok = {
+        "pii-ssn": "-" in text and has_digit,
+        "pii-email": "@" in text,
+        "pii-phone": has_digit,
+    }
+    out = text
+    for rule_id, rx in _PII_RULES:
+        if _triggers_ok.get(rule_id, True):
+            out = _replace(rule_id, rx, out)
+
+    def _card_sub(m):
+        digits = re.sub(r"\D", "", m.group(0))
+        if 13 <= len(digits) <= 19 and _luhn_ok(digits):
+            hits.append("pii-card")
+            return "[REDACTED:pii-card]"
+        return m.group(0)
+
+    # F171: the card pattern needs a digit to match; skip the regex
+    # (and its per-candidate Luhn check) when there is none.
+    if has_digit:
+        out = _CARD_RE.sub(_card_sub, out)
+    return out, sorted(set(hits))
+
+
+def _summarize_content(value):
+    raw = value if isinstance(value, str) else str(value)
+    data = raw.encode("utf-8", "replace")
+    return {"bytes": len(data),
+            "sha256_prefix": hashlib.sha256(data).hexdigest()[:16]}
+
+
+# Fields that stay readable in logs/approvals because they are the
+# audit-relevant routing of the action (who/where), never its payload.
+_AUDIT_FIELDS = {
+    "send_email": {"to"},
+    "http_post": {"url"},
+    "read_file": {"path"},
+    "write_file": {"path"},
+    "delete_file": {"path"},
+    "api_call": {"endpoint"},
+}
+
+# Payload fields whose values are summarized to {bytes, sha256} rather than
+# stored verbatim: they can carry arbitrary secret material.
+_SUMMARY_FIELDS = {
+    "write_file": {"content"},
+    "send_email": {"body"},
+    "http_post": {"payload"},
+}
+
+
+def scan_value(text):
+    """Scan one string: returns (blocked, rule_id, redacted, [pii_hits])."""
+    rule = find_credential(text)
+    if rule:
+        return True, rule, "[BLOCKED:%s]" % rule, []
+    redacted, hits = scrub_pii(text)
+    return False, None, redacted, hits
+
+
+def scan_tool_args(tool, args):
+    """Scan a tool's argument mapping.
+
+    Returns ``(blocked, blocking_rule, redacted_args, redactions)`` where
+    ``redacted_args`` is safe to store in logs/approvals and ``redactions``
+    lists every rule that fired (blocking rule first, then PII rules, then
+    ``field:<tool>.<name>`` markers for summarized fields).
+    """
+    audit = _AUDIT_FIELDS.get(tool, set())
+    summary = _SUMMARY_FIELDS.get(tool, set())
+    redacted = {}
+    redactions = []
+    blocked = False
+    blocking_rule = None
+    for name, value in (args or {}).items():
+        if name in summary:
+            redacted[name] = _summarize_content(value)
+            redactions.append("field:%s.%s" % (tool, name))
+            # The summarized value is still scanned for the blocking rules
+            # using the ORIGINAL value, so a secret triggers the block even
+            # though only the summary is stored.
+            raw = value if isinstance(value, str) else str(value)
+            rule = find_credential(raw)
+            if rule and not blocked:
+                blocked, blocking_rule = True, rule
+                redactions.insert(0, blocking_rule)
+            continue
+        if isinstance(value, str):
+            if name in audit:
+                # Audit fields (recipients, URLs, paths) stay readable: they
+                # are the routing envelope the reviewer must see, and
+                # subject/body redaction already covers the payload. Only
+                # credential patterns in them still block (a secret pasted
+                # into "to" is still a leak).
+                rule = find_credential(value)
+                if rule and not blocked:
+                    blocked, blocking_rule = True, rule
+                    redactions.insert(0, blocking_rule)
+                redacted[name] = value
+            else:
+                is_blocked, rule, clean, hits = scan_value(value)
+                redacted[name] = clean
+                if is_blocked and not blocked:
+                    blocked, blocking_rule = True, rule
+                    redactions.insert(0, blocking_rule)
+                redactions.extend(h for h in hits if h not in redactions)
+        elif isinstance(value, dict):
+            sub_blocked, sub_rule, sub_red, sub_hits = scan_tool_args(
+                tool, {str(k): v for k, v in value.items()})
+            redacted[name] = sub_red
+            if sub_blocked and not blocked:
+                blocked, blocking_rule = True, sub_rule
+                redactions.insert(0, blocking_rule)
+            redactions.extend(h for h in sub_hits if h not in redactions)
+        elif isinstance(value, (bytes, bytearray)):
+            # F128: a bytes/bytearray field value is a scannable
+            # credential carrier — strict rules on the ASCII-decoded
+            # form (the entropy tripwire stays on the original str
+            # text, per the documented F2/F8 boundary). The stored
+            # redaction keeps the original value untouched.
+            redacted[name] = value
+            decoded = _try_ascii_leaf(value)
+            if decoded is not None:
+                rule = _find_credential_strict(decoded)
+                if rule and not blocked:
+                    blocked, blocking_rule = True, rule
+                    redactions.insert(0, blocking_rule)
+        else:
+            redacted[name] = value
+    # F8: a credential chunked across params is innocent per-field. Scan
+    # the joined buffer of all string values as well (strict rules only).
+    if not blocked:
+        rule = find_credential_cross_field(args)
+        if rule:
+            blocked, blocking_rule = True, rule
+            redactions.insert(0, blocking_rule)
+    return blocked, blocking_rule, redacted, redactions
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -163736,6 +166454,25 @@ def _decode_layer(text):
     # order.
     for _stmtdec in (_js_f1330_stmt_decode, _js_f1331_stmt_decode,
                      _js_f1336_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1337-F1343 (wave-412 lane 3): seal slice-arg twins, charCodeAt
+    # staging twin, Symbol.replace map-body twin, findLast 3-arg
+    # callbacks, Math wrapper expression twins, octal/binary codec,
+    # and F1296 arrow block-body residual decoders. Each parses a
+    # strict whole-text grammar; every filed shape BREAKs on the
+    # open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint
+    # from siblings by grammar (documented per hook). Additive,
+    # in F-number order.
+    for _stmtdec in (_js_f1337_stmt_decode, _js_f1338_stmt_decode,
+                     _js_f1339_stmt_decode, _js_f1340_stmt_decode,
+                     _js_f1341_stmt_decode, _js_f1342_stmt_decode,
+                     _js_f1343_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)

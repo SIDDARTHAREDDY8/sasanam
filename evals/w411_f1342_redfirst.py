@@ -52,9 +52,9 @@ def _payload(tmpl, secret):
 
 _TMPLS = [
     ("octal",
-     "var C={{I}};var D=C.map(c=>parseInt(c.toString(8),8));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+     "var C={I};var D=C.map(c=>parseInt(c.toString(8),8));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("binary",
-     "var C={{I}};var D=C.map(c=>parseInt(c.toString(2),2));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+     "var C={I};var D=C.map(c=>parseInt(c.toString(2),2));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
 ]
 
 _CONTROLS = [

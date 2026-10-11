@@ -52,7 +52,7 @@ def _payload(tmpl, secret):
 
 _TMPLS = [
     ("arrow-block",
-     "var C={{I}};var D=C.map(c=>{return parseInt(c.toString(16),16);});var S=String.fromCharCode(...D);var RESULT=S;"),
+     "var C={I};var D=C.map(c=>{return parseInt(c.toString(16),16);});var S=String.fromCharCode(...D);var RESULT=S;"),
 ]
 
 _CONTROLS = [
