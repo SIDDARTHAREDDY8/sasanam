@@ -184590,14 +184590,15 @@ def _js_f1626_stmt_decode(text):
     `var|let|const C=[INT,...];`
     `var|let|const S=C.map(function(c){return String.fromCharCode(c);}).join('');`
       (or the arrow twin)
-    `var|let|const T=S.normalize('NFC');`
+    `var|let|const T=S.normalize('NFC'|'NFD'|'NFKC'|'NFKD');`
     `var|let|const RESULT=T;`
     then end-of-text.
 
-    Node-exact (v24.20.0): String.prototype.normalize('NFC') is the
-    identity on ASCII strings (credentials are ASCII xoxb-...).
-    Only the 'NFC' form is admitted; other normalization forms
-    (NFD, NFKC, NFKD) can change the string and fail closed.
+    Node-exact (v24.20.0): String.prototype.normalize() with any of the
+    four standard forms (NFC, NFD, NFKC, NFKD) is the identity on ASCII
+    strings (credentials are ASCII xoxb-...). F1626 filed the 'NFC' form;
+    F1670 ('NFD') and F1671 ('NFKC') extend to the other forms, all
+    identity on ASCII. Any other argument fails closed.
     Disjoint from every other _stmtdec hook by the `.normalize(`
     anchor. Anything else fails closed: a miss, never a mis-decode.
     Returns the decoded string, or None. Never evals.
@@ -184627,8 +184628,8 @@ def _js_f1626_stmt_decode(text):
             raise _JSExprFail(what + " not normalize")
         j = _js_expect(text, m, "(")
         form, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
-        if form != "NFC":
-            raise _JSExprFail(what + " not NFC form")
+        if form not in ("NFC", "NFD", "NFKC", "NFKD"):
+            raise _JSExprFail(what + " not known normalize form")
         j = _js_expect(text, j, ")")
         j = _js_expect(text, j, ";")
         _js_f96x_charge(state, what + " normalize")
@@ -184816,18 +184817,22 @@ def _js_f1629_stmt_decode(text):
 
     `var|let|const C=[INT,...];`
     `var|let|const D=C.slice();`
-    `D.fill(0,C.length);`
+    `D.fill(<int>,C.length);`
     `var|let|const S=String.fromCharCode.apply(null,D);`
     `var|let|const RESULT=S;`
     then end-of-text.
 
     Node-exact (v24.20.0): Array.prototype.fill(value, start, end)
-    with start == length is a no-op (nothing to fill). Only the exact
-    `D.fill(0,C.length)` form is admitted: fill value 0, start is the
-    `C.length` property access on the original array name. Any other
-    fill arguments fail closed. Disjoint from every other _stmtdec hook
-    by the fill no-op anchor. Anything else fails closed: a miss, never
-    a mis-decode. Returns the decoded string, or None. Never evals.
+    with start == length is a no-op (nothing to fill), regardless of
+    the fill value. F1629 filed the fill(0,C.length) form; F1667 extends
+    to any integer fill value (e.g. fill(1,C.length)) — the value is
+    irrelevant when start==length, only the no-op geometry matters.
+    Only an integer literal fill value is admitted; the start must be
+    the `C.length` property access on the original array name. Any
+    other fill arguments fail closed. Disjoint from every other
+    _stmtdec hook by the fill no-op anchor. Anything else fails
+    closed: a miss, never a mis-decode. Returns the decoded string,
+    or None. Never evals.
     """
     if ".fill(" not in text or "fromCharCode" not in text:
         return None
@@ -184862,9 +184867,14 @@ def _js_f1629_stmt_decode(text):
             raise _JSExprFail(what + " not fill")
         j = _js_expect(text, m2, "(")
         j = _js_skip_ws(text, j)
-        if j >= len(text) or text[j] != "0":
-            raise _JSExprFail(what + " fill value not 0")
-        j += 1
+        # Fill value: any non-negative integer literal (F1667: the value
+        # is irrelevant when start==length; only the no-op geometry matters)
+        k = j
+        while k < len(text) and text[k].isdigit():
+            k += 1
+        if k == j:
+            raise _JSExprFail(what + " fill value not int literal")
+        j = k
         j = _js_expect(text, _js_skip_ws(text, j), ",")
         nm3, j = _js_parse_ident(text, _js_skip_ws(text, j))
         if nm3 != cname:
@@ -185036,13 +185046,16 @@ def _js_f1631_stmt_decode(text):
     `var|let|const C=[INT,...];`
     `var|let|const S=C.map(function(c){return String.fromCharCode(c);}).join('');`
       (or the arrow twin)
-    `var|let|const T=S.toLocaleString();`
+    `var|let|const T=S.toLocaleString();` or `S.toLocaleString('<locale>');`
     `var|let|const RESULT=T;`
     then end-of-text.
 
     Node-exact (v24.20.0): String.prototype.toLocaleString() is the
     identity on strings (inherited from Object, returns this for
-    strings). Disjoint from every other _stmtdec hook by the
+    strings); locale arguments are ignored for strings. F1631 filed
+    the no-arg form; F1668 extends to a single string-literal locale
+    argument (e.g. 'de-DE'), still identity on ASCII credentials.
+    Disjoint from every other _stmtdec hook by the
     `.toLocaleString(` anchor. Anything else fails closed: a miss,
     never a mis-decode. Returns the decoded string, or None. Never
     evals.
@@ -185071,6 +185084,12 @@ def _js_f1631_stmt_decode(text):
         if m is None:
             raise _JSExprFail(what + " not toLocaleString")
         j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] != ")":
+            # Optional locale argument (F1668): a single string literal;
+            # ignored for strings, still identity on ASCII credentials.
+            _, j = _js_f99x_parse_str(text, j)
+            j = _js_skip_ws(text, j)
         j = _js_expect(text, j, ")")
         j = _js_expect(text, j, ";")
         _js_f96x_charge(state, what + " toLocaleString")
@@ -185202,7 +185221,8 @@ def _js_f1633_stmt_decode(text):
 
     `var|let|const C=[INT,...];`
     then one of:
-      `var|let|const S=Array.prototype.join.call(C,',');`
+      `var|let|const S=Array.prototype.join.call(C,',');` (or `C` with
+        default separator — F1669; the default is ',')
       `var|let|const T=S.split(',').map(Number);`
       `var|let|const U=String.fromCharCode.apply(null,T);`
       `var|let|const RESULT=U;`
@@ -185217,13 +185237,15 @@ def _js_f1633_stmt_decode(text):
     then end-of-text.
 
     Node-exact (v24.20.0): Array.prototype.join.call(C,',') joins the
-    array; slice.call(C) copies it; map.call(C,identity) copies it.
-    The split(',').map(Number) + fromCharCode.apply readout restores
-    the credential for the join.call shape. Disjoint from every other
-    _stmtdec hook by the `Array.prototype.<m>.call(` anchor (round-65
-    Reflect apply/call variants held for fromCharCode, not for array
-    methods). Anything else fails closed: a miss, never a mis-decode.
-    Returns the decoded string, or None. Never evals.
+    array with ','; join.call(C) with no separator uses the default
+    ',', identical. slice.call(C) copies it; map.call(C,identity)
+    copies it. The split(',').map(Number) + fromCharCode.apply readout
+    restores the credential for the join.call shape. Disjoint from
+    every other _stmtdec hook by the `Array.prototype.<m>.call(`
+    anchor (round-65 Reflect apply/call variants held for
+    fromCharCode, not for array methods). Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
     """
     if "Array.prototype." not in text or ".call(" not in text:
         return None
@@ -185273,11 +185295,18 @@ def _js_f1633_stmt_decode(text):
         if nm != cname:
             raise _JSExprFail(what + " call base mismatch")
         if method == "join":
-            j = _js_expect(text, _js_skip_ws(text, j), ",")
-            sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
-            if sep != ",":
-                raise _JSExprFail(what + " join sep not comma")
-            j = _js_expect(text, j, ")")
+            j = _js_skip_ws(text, j)
+            if j < len(text) and text[j] == ",":
+                # Explicit separator: must be ',' (F1633)
+                j += 1
+                sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+                if sep != ",":
+                    raise _JSExprFail(what + " join sep not comma")
+                j = _js_expect(text, j, ")")
+            else:
+                # Default separator (F1669): Array.prototype.join.call(C)
+                # uses ',' when the separator argument is omitted.
+                j = _js_expect(text, j, ")")
             j = _js_expect(text, j, ";")
             _js_f96x_charge(state, what + " join.call")
             # T=S.split(',').map(Number);
