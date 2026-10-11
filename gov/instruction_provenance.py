@@ -1044,6 +1044,63 @@ def _has_hidden_meta_plain_description(text):
     return False
 
 
+def _has_hidden_meta_keywords(text):
+    """True when prose hides in a plain `<meta name="keywords">`
+    content attribute (F1180).
+
+    F1180: F1064's `_has_hidden_meta_descriptions` covers only the
+    og: (`property="og:description"`) and twitter:
+    (`name="twitter:description"`) social-card variants; F1151's
+    `_has_hidden_meta_plain_description` covers only
+    `name="description"`. The plain `<meta name="keywords">` is page
+    metadata, never rendered in the page body, so prose in its
+    content attribute is hidden from the human reader (the F1024
+    rationale). Honest machine tokens (whitespace-free keyword lists)
+    stay quiet via the prose-shape gate. Disjoint from F1064's and
+    F1151's variants (`name="keywords"` != `name="description"` !=
+    `name="twitter:description"`; the og: variant uses the
+    `property` attribute, not `name`). Never evals.
+    """
+    for m in re.finditer(r"<meta\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        name, has_name = _f1047_attr_value(tag, "name")
+        if not (has_name and name.lower() == "keywords"):
+            continue
+        content, has_content = _f1047_attr_value(tag, "content")
+        if has_content and _is_prose_shaped(content):
+            return True
+    return False
+
+
+def _has_hidden_meta_author_and_article_tags(text):
+    """True when prose hides in `<meta name="author">` or `<meta
+    property="article:tag">` content attributes (F1181).
+
+    F1181: F1064's `_has_hidden_meta_descriptions` covers only the
+    og: (`property="og:description"`) and twitter:
+    (`name="twitter:description"`) social-card variants; F1151 covers
+    plain `name="description"`; F1180 covers plain `name="keywords"`.
+    The author and article:tag metas are page metadata, never
+    rendered in the page body, so prose in their content attributes
+    is hidden from the human reader (the F1024 rationale). Honest
+    machine tokens stay quiet via the prose-shape gate. Disjoint
+    from all prior meta variants (`name="author"` and
+    `property="article:tag"` are distinct attribute values from the
+    ones those detectors admit). Never evals.
+    """
+    for m in re.finditer(r"<meta\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        prop, has_prop = _f1047_attr_value(tag, "property")
+        name, has_name = _f1047_attr_value(tag, "name")
+        if not ((has_prop and prop.lower() == "article:tag")
+                or (has_name and name.lower() == "author")):
+            continue
+        content, has_content = _f1047_attr_value(tag, "content")
+        if has_content and _is_prose_shaped(content):
+            return True
+    return False
+
+
 def _has_hidden_hidden_option(text):
     """True when prose hides in `<option hidden>` (F1064).
 
@@ -1837,8 +1894,20 @@ def instruction_shaped(text):
     # rationale). Disjoint from F1064's og:/twitter: meta
     # descriptions and from the round-68 track-kind triage-out
     # (documented per detector).
-    return (_has_hidden_meta_plain_description(norm)
-            or _has_hidden_track_label(norm))
+    if (_has_hidden_meta_plain_description(norm)
+            or _has_hidden_track_label(norm)):
+        return True
+    # F1180/F1181: the same construction for three further
+    # hidden-from-human carriers -- plain `<meta name="keywords">`
+    # content, `<meta name="author">` content, and `<meta
+    # property="article:tag">` content. All are page metadata never
+    # rendered inline in the consuming view, so prose there is
+    # hidden from the human reader (the F1024 rationale). Disjoint
+    # from F1064's og:/twitter: variants, F1151's plain
+    # name="description", and F1180's plain name="keywords"
+    # (documented per detector).
+    return (_has_hidden_meta_keywords(norm)
+            or _has_hidden_meta_author_and_article_tags(norm))
 
 
 class ActionRequest(object):
