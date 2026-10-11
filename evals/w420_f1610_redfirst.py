@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""F1610 red-first: Object.assign(new Array(0),C) copy staging.
+"""F1610 red-first: sort comparator variants beyond F1572
 
-Filed 2026-10-11 (wave-420 lane 3 spec-review residual; local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
-`new Array(0)` is an empty array -- Object.assign copies every index, node-exact (v24.20.0).
-Distinct from F1595 (CLOSED: `new Array()` no-arg).
+Filed 2026-10-11 20:59 UTC, wave-420 attack round 88 (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -46,17 +44,27 @@ def _codes(s):
     return "[" + ",".join(str(ord(c)) for c in s) + "]"
 
 
+def _strcodes(s):
+    return "[" + ",".join('"%d"' % ord(c) for c in s) + "]"
+
+
 _TMPLS = [
-    ('f1610-0',
-     "var C={I};var D=Object.assign(new Array(0),C);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');")
+    ("f1610-0",
+     "var C={I};var D=C.slice().sort(function(a,b){return Number(a>b);});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("f1610-1",
+     "var C={I};var D=C.slice().sort(function(a,b){return b>=a;});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+]
+
+_CONTROLS = [
+    ("direct-ctrl", 'var C={I};var S=String.fromCharCode.apply(null,C);var RESULT=S;'),
 ]
 
 
 def main():
     fails = 0
     for name, tmpl in _TMPLS:
-        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
-            payload = tmpl.replace("{I}", _codes(secret))
+        for secret, label, coder in ((SECRET_S, "short", _codes), (SECRET_L, "long", _codes)):
+            payload = tmpl.replace("{I}", coder(secret)).replace("{J}", _strcodes(secret))
             nc = subprocess.run(
                 ["node", "-e",
                  payload + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
@@ -70,6 +78,28 @@ def main():
             print(("BREAK " if ok else "FAIL ") + "%s %s node=%s scanner=%s" % (name, label, node_ok, verdict))
             if not ok:
                 fails += 1
+    for name, tmpl in _CONTROLS:
+        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
+            payload = tmpl.replace("{I}", _codes(secret))
+            nc = subprocess.run(
+                ["node", "-e",
+                 payload + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
+                capture_output=True, text=True, timeout=30)
+            node_ok = False
+            for line in (nc.stdout or "").strip().split("\n"):
+                if line.startswith("OUT:"):
+                    node_ok = (line[4:] == secret)
+            verdict = _scan(payload)
+            ok = node_ok and verdict == "HIT"
+            print(("CTRL-OK " if ok else "CTRL-FAIL ") + "%s %s node=%s scanner=%s" % (name, label, node_ok, verdict))
+            if not ok:
+                fails += 1
+    junk = _TMPLS[0][1].replace("{I}", "[55,57,113,50]").replace("{J}", '["55","57"]')
+    v = _scan(junk)
+    ok = (v == "MISS")
+    print(("CTRL-OK " if ok else "CTRL-FAIL ") + "machine-token -> " + v)
+    if not ok:
+        fails += 1
     print("RESULT: " + ("BREAK" if fails == 0 else "NO-BREAK") + " (%d fails)" % fails)
     return 1 if fails else 0
 

@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""F1609 red-first: Array.prototype.flat(-0.0) shallow copy.
+"""F1609 red-first: padStart/padEnd padString variants beyond F1571
 
-Filed 2026-10-11 (wave-420 lane 3 spec-review residual; local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
-`-0.0` is a zero-valued depth -- flat() returns a shallow copy, node-exact (v24.20.0).
-Distinct from F1599 (CLOSED: `-0` literal).
+Filed 2026-10-11 20:59 UTC, wave-420 attack round 88 (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -46,17 +44,35 @@ def _codes(s):
     return "[" + ",".join(str(ord(c)) for c in s) + "]"
 
 
+def _strcodes(s):
+    return "[" + ",".join('"%d"' % ord(c) for c in s) + "]"
+
+
 _TMPLS = [
-    ('f1609-0',
-     "var C={I};var D=C.flat(-0.0);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');")
+    ("f1609-0",
+     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padStart(S.length+8,'abcd');var T=P.slice(-S.length);var RESULT=T;"),
+    ("f1609-1",
+     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padEnd(S.length+8,'wxyz');var T=P.slice(0,S.length);var RESULT=T;"),
+    ("f1609-2",
+     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padStart(S.length+4,`ab`);var T=P.slice(-S.length);var RESULT=T;"),
+    ("f1609-3",
+     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.padStart(S.length);var RESULT=T;"),
+    ("f1609-4",
+     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.padEnd(S.length,'x');var RESULT=T;"),
+    ("f1609-5",
+     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.padStart(0);var RESULT=T;"),
+]
+
+_CONTROLS = [
+    ("direct-ctrl", 'var C={I};var S=String.fromCharCode.apply(null,C);var RESULT=S;'),
 ]
 
 
 def main():
     fails = 0
     for name, tmpl in _TMPLS:
-        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
-            payload = tmpl.replace("{I}", _codes(secret))
+        for secret, label, coder in ((SECRET_S, "short", _codes), (SECRET_L, "long", _codes)):
+            payload = tmpl.replace("{I}", coder(secret)).replace("{J}", _strcodes(secret))
             nc = subprocess.run(
                 ["node", "-e",
                  payload + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
@@ -70,6 +86,28 @@ def main():
             print(("BREAK " if ok else "FAIL ") + "%s %s node=%s scanner=%s" % (name, label, node_ok, verdict))
             if not ok:
                 fails += 1
+    for name, tmpl in _CONTROLS:
+        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
+            payload = tmpl.replace("{I}", _codes(secret))
+            nc = subprocess.run(
+                ["node", "-e",
+                 payload + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
+                capture_output=True, text=True, timeout=30)
+            node_ok = False
+            for line in (nc.stdout or "").strip().split("\n"):
+                if line.startswith("OUT:"):
+                    node_ok = (line[4:] == secret)
+            verdict = _scan(payload)
+            ok = node_ok and verdict == "HIT"
+            print(("CTRL-OK " if ok else "CTRL-FAIL ") + "%s %s node=%s scanner=%s" % (name, label, node_ok, verdict))
+            if not ok:
+                fails += 1
+    junk = _TMPLS[0][1].replace("{I}", "[55,57,113,50]").replace("{J}", '["55","57"]')
+    v = _scan(junk)
+    ok = (v == "MISS")
+    print(("CTRL-OK " if ok else "CTRL-FAIL ") + "machine-token -> " + v)
+    if not ok:
+        fails += 1
     print("RESULT: " + ("BREAK" if fails == 0 else "NO-BREAK") + " (%d fails)" % fails)
     return 1 if fails else 0
 
