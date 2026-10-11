@@ -122,7 +122,7 @@ def _misses(payload):
 
 @_t
 def test_p0_pins():
-    """Pin 2143 holds; footer has wave-415 lineage; N_STMTDEC_LOOPS=78."""
+    """Pin 2143 holds; footer has wave-415 lineage; N_STMTDEC_LOOPS=81."""
     ok = True
     notes = []
     with open(os.path.join(REPO_ROOT, "evals",
@@ -135,7 +135,7 @@ def test_p0_pins():
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (pin == 78 and len(loops) == 78)
+    ok = (pin == 81 and len(loops) == 81)
     notes.append("loops=%d pin=%d" % (len(loops), pin))
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         ftxt = f.read()

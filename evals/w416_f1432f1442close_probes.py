@@ -100,7 +100,7 @@ def _misses(payload):
 
 @_t
 def test_p0_pins():
-    """Pin 2143 holds; N_STMTDEC_LOOPS=78; re.compile=29."""
+    """Pin 2143 holds; N_STMTDEC_LOOPS=81; re.compile=29."""
     ok = True
     notes = []
     with open(os.path.join(REPO_ROOT, "evals",
@@ -111,11 +111,11 @@ def test_p0_pins():
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         dsrc = f.read()
     actual = dsrc.count("for _stmtdec in (")
-    if pin != 78 or actual != 78:
+    if pin != 81 or actual != 81:
         ok = False
-        notes.append("N_STMTDEC_LOOPS pin=%d actual=%d (want 78)" % (pin, actual))
+        notes.append("N_STMTDEC_LOOPS pin=%d actual=%d (want 81)" % (pin, actual))
     else:
-        notes.append("N_STMTDEC_LOOPS=78")
+        notes.append("N_STMTDEC_LOOPS=81")
     rc = len(re.findall(r"re\.compile\(", dsrc))
     if rc != 29:
         ok = False
