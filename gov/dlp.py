@@ -7527,7 +7527,7 @@ def _js_parse_array_from(text, j, state):
                 _f963m_saved = dict(state)
                 try:
                     _me, _marr = _js_parse_f963_index_map(text, _mf,
-                                                          arr, depth,
+                                                          arr, 0,
                                                           state)
                     _mapped = _marr.elements
                 except _JSExprFail:
@@ -142636,43 +142636,375 @@ def _js_f1179_stmt_decode(text):
 
 
 
-def _js_f1193_parse_append_call(text, j, fname, cname, iname, state, what):
-    """Parse `F.append('k'+i,String.fromCharCode(c))` at text[j] (F1193).
+_JS_WS_COMPACT_RE = re.compile(r"\s+")
 
-    The key is a string literal concatenated with the index ident; the
-    value is String.fromCharCode(c). No trailing semicolon -- the
-    caller handles statement termination. Returns next_index.
-    Never evals.
+
+def _js_ws_compact(text):
+    """Return *text* with all whitespace removed (spec-review fix).
+
+    Fast-path gates must be whitespace-tolerant (`new FormData ()`,
+    `Object . freeze ( C )`, `String ( e )`): the grammars accept these
+    spellings via _js_skip_ws/_js_expect, so adjacency-requiring gates
+    silently missed them. The gate is only a pre-filter -- correctness
+    comes from the grammar, which fails closed. Never evals.
+    """
+    return _JS_WS_COMPACT_RE.sub("", text)
+
+
+def _js_f1193_parse_tmpl_key(text, j, iname, ename, what):
+    """Parse a template-literal FormData key at text[j] (F1193).
+
+    `` `lit${x}lit` `` -- exactly one interpolation with optional
+    literal chunks around it (chunks carry no credential; a second
+    `${` fails closed). The interpolated ident must be the index name
+    or the element name (anything else would throw or be unprovable
+    at runtime -- fail closed). Returns (uses_index, next_index):
+    uses_index is True when the interpolated ident is the index
+    name. Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "`")
+    k = j
+    while k < n:
+        ch = text[k]
+        if ch == "\\":
+            k += 2
+            continue
+        if ch == "`" or (ch == "$" and k + 1 < n
+                         and text[k + 1] == "{"):
+            break
+        k += 1
+    if k >= n or text[k] != "$":
+        raise _JSExprFail(what + " tmpl key needs interpolation")
+    nm, k = _js_parse_ident(text, _js_skip_ws(text, k + 2))
+    if nm != iname and nm != ename:
+        raise _JSExprFail(what + " tmpl key ident unbound")
+    uses_index = (iname is not None and nm == iname)
+    k = _js_expect(text, k, "}")
+    k2 = k
+    while k2 < n:
+        ch = text[k2]
+        if ch == "\\":
+            k2 += 2
+            continue
+        if ch == "`":
+            break
+        if ch == "$" and k2 + 1 < n and text[k2 + 1] == "{":
+            raise _JSExprFail(what + " tmpl key multi-interp")
+        k2 += 1
+    if k2 >= n or text[k2] != "`":
+        raise _JSExprFail(what + " tmpl key unterminated")
+    return uses_index, k2 + 1
+
+
+def _js_f1193_parse_key(text, j, iname, ename, what):
+    """Parse an F1193 FormData key at text[j].
+
+    Forms: `'<lit>'['+x]`, `"<lit>"["+x]`, `` `lit${x}lit` `` (single
+    interpolation), or a bare ident, where x is the index name (iname,
+    may be None for single-param callbacks) or the element name.
+    Any other ident fails closed (node would throw ReferenceError --
+    never a mis-decode). Returns (uses_index, next_index):
+    uses_index is True when the key provably varies with the
+    per-iteration index. Node-exact (v24.20.0): a constant key still
+    assembles under append (duplicate values keep insertion order)
+    but NOT under set (overwrite keeps only the last value) -- the
+    caller enforces that distinction. Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    n = len(text)
+    if j < n and text[j] == "`":
+        return _js_f1193_parse_tmpl_key(text, j, iname, ename, what)
+    if j < n and text[j] in "'\"":
+        _lit, j = _js_f99x_parse_str(text, j)
+        jj = _js_skip_ws(text, j)
+        if jj < n and text[jj] == "+" and not text.startswith("++", jj):
+            i2, j = _js_parse_ident(text, _js_skip_ws(text, jj + 1))
+            if i2 != iname and i2 != ename:
+                raise _JSExprFail(what + " key ident unbound")
+            return (iname is not None and i2 == iname), j
+        return False, j
+    nm, j = _js_parse_ident(text, j)
+    if nm != iname and nm != ename:
+        raise _JSExprFail(what + " key ident unbound")
+    return (iname is not None and nm == iname), j
+
+
+def _js_f1193_parse_fcc_elem(text, j, aname, ename, iname, what):
+    """Parse `String.fromCharCode(<elem>)` at text[j] (F1193).
+
+    <elem> is the element ident (forEach/for-of), or `A[i]`
+    (indexed-for; pass ename=None there so a bare `A` fails closed --
+    fromCharCode of the array itself does not assemble). Returns
+    next_index. Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail(what + " not String")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    nm, k = _js_parse_ident(text, _js_skip_ws(text, j))
+    if ename is not None and nm == ename:
+        j = k
+    elif nm == aname:
+        k = _js_expect(text, k, "[")
+        i2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        if i2 != iname:
+            raise _JSExprFail(what + " fcc index mismatch")
+        j = _js_expect(text, k, "]")
+    else:
+        raise _JSExprFail(what + " fcc arg mismatch")
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_f1193_parse_stage_call(text, j, fname, aname, ename, iname,
+                               state, what):
+    """Parse `F.append|set(<key>,String.fromCharCode(<elem>))` (F1193).
+
+    ename is the element ident (forEach/for-of) or None (indexed-for,
+    where <elem> is `A[i]`); iname is the index ident or None
+    (single-param forEach callbacks, where no index is bound). `set`
+    requires an index-dependent key (node-verified: constant-key set
+    overwrites and does not assemble); append accepts any key
+    (duplicates keep insertion order, node-verified). No trailing
+    semicolon -- the caller handles statement termination. Returns
+    next_index. Never evals.
     """
     f2, j = _js_parse_ident(text, _js_skip_ws(text, j))
     if f2 != fname:
         raise _JSExprFail(what + " form mismatch")
     j = _js_expect(text, j, ".")
-    m = _js_match_kw(text, j, "append")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "append")
+    is_set = False
     if m is None:
-        raise _JSExprFail(what + " not append")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "set")
+        if m is None:
+            raise _JSExprFail(what + " not append/set")
+        is_set = True
     j = _js_expect(text, m, "(")
-    _key, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
-    j = _js_skip_ws(text, j)
-    if j >= len(text) or text[j] != "+" or text.startswith("++", j):
-        raise _JSExprFail(what + " key not concat")
-    i2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
-    if i2 != iname:
-        raise _JSExprFail(what + " key idx mismatch")
+    uses_index, j = _js_f1193_parse_key(text, j, iname, ename, what)
+    if is_set and not uses_index:
+        raise _JSExprFail(what + " set needs index key")
     j = _js_expect(text, _js_skip_ws(text, j), ",")
-    j = _js_f1090f1091f1097_parse_fcc1(text, j, cname, what)
+    j = _js_f1193_parse_fcc_elem(text, j, aname, ename, iname, what)
     j = _js_expect(text, _js_skip_ws(text, j), ")")
-    _js_f96x_charge(state, what + " append")
+    _js_f96x_charge(state, what + " stage")
     return j
 
 
-def _js_f1193_parse_cb(text, j, fname, state, what):
+def _js_f1193_parse_incr(text, j, iname, what):
+    """Parse `i++`, `++i`, or `i+=1` at text[j] (F1193).
+
+    Returns next_index. Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    n = len(text)
+    if text.startswith("++", j):
+        nm, k = _js_parse_ident(text, _js_skip_ws(text, j + 2))
+        if nm != iname:
+            raise _JSExprFail(what + " incr mismatch")
+        return k
+    nm, k = _js_parse_ident(text, j)
+    if nm != iname:
+        raise _JSExprFail(what + " incr mismatch")
+    k = _js_skip_ws(text, k)
+    if text.startswith("++", k):
+        return k + 2
+    if (text.startswith("+=", k) and k + 2 < n and text[k + 2] == "1"
+            and not (k + 3 < n and text[k + 3] in _JS_IDENT_CONT)):
+        return k + 3
+    raise _JSExprFail(what + " not incr")
+
+
+def _js_f1193_parse_forof_body(text, j, fname, aname, ename, iname,
+                               state, what):
+    """Parse a for-of loop body (F1193): the stage call and the index
+    increment, each `;`-terminated, in either order (both assemble
+    node-exactly -- keys stay distinct either way). Returns
+    next_index. Never evals."""
+    j = _js_skip_ws(text, j)
+    save = j
+    try:
+        j = _js_f1193_parse_stage_call(text, j, fname, aname, ename,
+                                       iname, state, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_f1193_parse_incr(text, j, iname, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        return j
+    except _JSExprFail:
+        pass
+    j = save
+    j = _js_f1193_parse_incr(text, j, iname, what)
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_f1193_parse_stage_call(text, j, fname, aname, ename,
+                                   iname, state, what)
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    return j
+
+
+def _js_f1193_parse_for(text, j, aname, fname, counter, state, what,
+                        bound):
+    """Parse a `for(...)` staging loop at text[j] (F1193, j at `for`).
+
+    for-of: `for(<decl> <e> of <A>){<stage>;<incr>;}` (either order),
+      with a pre-declared `[var|let|const] <i>=0;` counter.
+    indexed: `for(<decl> <i>=0;<i> <A>.length;<incr>){<stage>;}`
+      (the init may cache the length: `for(<decl> <i>=0,<n>=<A>.length;
+      <i> <n>;<incr>)`)
+      staging `String.fromCharCode(A[i])`.
+    All node-verified (v24.20.0) to stage chars in insertion order.
+    Names colliding with bound outer names fail closed (node would
+    shadow/throw, not assemble). Returns next_index. Never evals.
+    """
+    m = _js_match_kw(text, j, "for")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    kw, k = _js_match_decl_kw(text, j)
+    if kw is None:
+        raise _JSExprFail(what + " for head not decl")
+    ename, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    m2 = _js_match_kw(text, _js_skip_ws(text, k), "of")
+    if m2 is not None:
+        if counter is None:
+            raise _JSExprFail(what + " for-of needs counter")
+        if ename in bound:
+            raise _JSExprFail(what + " for-of name clash")
+        a2, k = _js_parse_ident(text, _js_skip_ws(text, m2))
+        if a2 != aname:
+            raise _JSExprFail(what + " for-of arr mismatch")
+        j = _js_expect(text, k, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        bound.add(ename)
+        j = _js_f1193_parse_forof_body(text, j, fname, aname, ename,
+                                       counter, state, what)
+        j = _js_expect(text, j, "}")
+        _js_f96x_charge(state, what + " forof")
+        return j
+    iname = ename
+    k = _js_skip_ws(text, k)
+    n = len(text)
+    if k >= n or text[k] != "=" or text.startswith(("==", "=>"), k):
+        raise _JSExprFail(what + " for init not assign")
+    k = _js_skip_ws(text, k + 1)
+    if k >= n or text[k] != "0" or (
+            k + 1 < n and text[k + 1] in _JS_IDENT_CONT):
+        raise _JSExprFail(what + " for init not 0")
+    k += 1
+    # optional cached length: `,<cache>=<A>.length`
+    cache = None
+    kk = _js_skip_ws(text, k)
+    if kk < n and text[kk] == ",":
+        cnm, kk = _js_parse_ident(text, _js_skip_ws(text, kk + 1))
+        kk = _js_skip_ws(text, kk)
+        if (kk < n and text[kk] == "="
+                and not text.startswith(("==", "=>"), kk)):
+            a3, kk = _js_parse_ident(text, _js_skip_ws(text, kk + 1))
+            kk = _js_expect(text, kk, ".")
+            m3 = _js_match_kw(text, _js_skip_ws(text, kk), "length")
+            if (a3 == aname and m3 is not None
+                    and cnm != iname and cnm not in bound):
+                bound.add(cnm)
+                cache = cnm
+                k = m3
+    k = _js_expect(text, k, ";")
+    i2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if i2 != iname:
+        raise _JSExprFail(what + " for cond idx mismatch")
+    k = _js_expect(text, k, "<")
+    a2, k2 = _js_parse_ident(text, _js_skip_ws(text, k))
+    if a2 == aname:
+        k = _js_expect(text, k2, ".")
+        m2 = _js_match_kw(text, _js_skip_ws(text, k), "length")
+        if m2 is None:
+            raise _JSExprFail(what + " for cond not length")
+        k = m2
+    elif cache is not None and a2 == cache:
+        k = k2
+    else:
+        raise _JSExprFail(what + " for cond bad")
+    k = _js_expect(text, k, ";")
+    k = _js_f1193_parse_incr(text, k, iname, what)
+    j = _js_expect(text, k, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    if iname in bound:
+        raise _JSExprFail(what + " for idx clash")
+    bound.add(iname)
+    j = _js_f1193_parse_stage_call(text, j, fname, aname, None,
+                                   iname, state, what)
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_expect(text, j, "}")
+    _js_f96x_charge(state, what + " foridx")
+    return j
+
+
+def _js_f1193_parse_staging(text, j, aname, fname, bound, state, what):
+    """Parse the F1193 staging loop at text[j].
+
+    forEach: `A.forEach(<cb>);` (function or arrow callback; param
+      names flexible, roles positional).
+    for-of: `[var|let|const] <i>=0;for([var|let|const] <e> of A){...}`
+    indexed-for: `for([var|let|const] <i>=0;<i> <A>.length;<incr>){...}`
+    All node-verified (v24.20.0) to stage each char in insertion
+    order. Returns next_index. Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    if _js_match_kw(text, j, "for") is not None:
+        return _js_f1193_parse_for(text, j, aname, fname, None,
+                                   state, what, bound)
+    save = j
+    counter = None
+    try:
+        _kw, iname, k = _js_f96x_decl(text, j)
+        k = _js_skip_ws(text, k)
+        n = len(text)
+        if k >= n or text[k] != "0" or (
+                k + 1 < n and text[k + 1] in _JS_IDENT_CONT):
+            raise _JSExprFail(what + " counter not 0")
+        k = _js_expect(text, k + 1, ";")
+        k = _js_skip_ws(text, k)
+        if _js_match_kw(text, k, "for") is None:
+            raise _JSExprFail(what + " not for after counter")
+        if iname in bound:
+            raise _JSExprFail(what + " counter clash")
+        bound.add(iname)
+        counter = iname
+        j = k
+    except _JSExprFail:
+        j = save
+        counter = None
+    if counter is not None:
+        return _js_f1193_parse_for(text, j, aname, fname, counter,
+                                   state, what, bound)
+    c2, j = _js_parse_ident(text, j)
+    if c2 != aname:
+        raise _JSExprFail(what + " arr mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "forEach")
+    if m is None:
+        raise _JSExprFail(what + " not forEach")
+    j = _js_expect(text, m, "(")
+    j = _js_f1193_parse_cb(text, j, fname, aname, bound, state, what)
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    _js_f96x_charge(state, what + " staging")
+    return j
+
+
+def _js_f1193_parse_cb(text, j, fname, aname, bound, state, what):
     """Parse the F1193 forEach callback at text[j].
 
-    `function(c,i){F.append('k'+i,String.fromCharCode(c));}` or
-    `(c,i)=>F.append('k'+i,String.fromCharCode(c))` (param names are
-    flexible; the element/index roles are positional).
-    Returns next_index. Never evals.
+    `function(c,i){F.append|set(<key>,String.fromCharCode(c));}` or
+    `(c,i)=>F.append|set(<key>,String.fromCharCode(c))` (param names
+    are flexible; the element/index roles are positional). A single
+    element param (`function(c){...}`) is also modeled -- with no
+    index bound, only index-free keys decode (node-verified: `set`
+    then needs an index key and fails). Params colliding with bound
+    outer names, or with each other, fail closed (node would
+    shadow/throw, not assemble). Returns next_index. Never evals.
     """
     j = _js_skip_ws(text, j)
     n = len(text)
@@ -142680,25 +143012,39 @@ def _js_f1193_parse_cb(text, j, fname, state, what):
     if m is not None:
         j = _js_expect(text, m, "(")
         p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
-        j = _js_expect(text, _js_skip_ws(text, j), ",")
-        p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        p2 = None
+        jj = _js_skip_ws(text, j)
+        if jj < n and text[jj] == ",":
+            j = _js_expect(text, jj, ",")
+            p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if p1 == p2 or p1 in bound or p2 in bound:
+                raise _JSExprFail(what + " cb param clash")
+        elif p1 in bound:
+            raise _JSExprFail(what + " cb param clash")
         j = _js_expect(text, j, ")")
         j = _js_expect(text, _js_skip_ws(text, j), "{")
-        j = _js_f1193_parse_append_call(text, j, fname, p1, p2, state,
-                                         what)
+        j = _js_f1193_parse_stage_call(text, j, fname, aname, p1, p2,
+                                       state, what)
         j = _js_expect(text, _js_skip_ws(text, j), ";")
         j = _js_expect(text, j, "}")
     else:
         j = _js_expect(text, j, "(")
         p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
-        j = _js_expect(text, _js_skip_ws(text, j), ",")
-        p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        p2 = None
+        jj = _js_skip_ws(text, j)
+        if jj < n and text[jj] == ",":
+            j = _js_expect(text, jj, ",")
+            p2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if p1 == p2 or p1 in bound or p2 in bound:
+                raise _JSExprFail(what + " cb param clash")
+        elif p1 in bound:
+            raise _JSExprFail(what + " cb param clash")
         j = _js_expect(text, j, ")")
         j = _js_skip_ws(text, j)
         if j + 1 >= n or text[j] != "=" or text[j + 1] != ">":
             raise _JSExprFail(what + " not arrow")
-        j = _js_f1193_parse_append_call(text, j + 2, fname, p1, p2,
-                                         state, what)
+        j = _js_f1193_parse_stage_call(text, j + 2, fname, aname, p1,
+                                       p2, state, what)
     return j
 
 
@@ -142711,7 +143057,7 @@ def _js_f1193_parse_values(text, j, fname, what):
     if f2 != fname:
         raise _JSExprFail(what + " values form mismatch")
     j = _js_expect(text, j, ".")
-    m = _js_match_kw(text, j, "values")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "values")
     if m is None:
         raise _JSExprFail(what + " not values")
     j = _js_expect(text, m, "(")
@@ -142729,7 +143075,7 @@ def _js_f1193_parse_readback(text, j, fname, state, what):
     if _js_match_kw(text, j, "Array") is not None:
         m = _js_match_kw(text, j, "Array")
         j = _js_expect(text, _js_skip_ws(text, m), ".")
-        m = _js_match_kw(text, j, "from")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "from")
         if m is None:
             raise _JSExprFail(what + " not from")
         j = _js_expect(text, m, "(")
@@ -142743,7 +143089,7 @@ def _js_f1193_parse_readback(text, j, fname, state, what):
         j = _js_f1193_parse_values(text, j + 3, fname, what)
         j = _js_expect(text, _js_skip_ws(text, j), "]")
     j = _js_expect(text, j, ".")
-    m = _js_match_kw(text, j, "join")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "join")
     if m is None:
         raise _JSExprFail(what + " not join")
     j = _js_expect(text, m, "(")
@@ -142761,23 +143107,37 @@ def _js_f1193_stmt_decode(text):
 
     `var|let|const C=[INT,...];`
     `var|let|const F=new FormData();`
-    `C.forEach(function(c,i){F.append('k'+i,String.fromCharCode(c));});`
-    (or `C.forEach((c,i)=>F.append('k'+i,String.fromCharCode(c)));`)
+    staging (all node-verified v24.20.0 to stage chars in insertion
+    order):
+      `C.forEach(function(c,i){F.append|set(<key>,String.fromCharCode(c));});`
+      (or the `(c,i)=>` arrow twin; param names flexible, roles
+      positional; a single element param `(c)=>` is also modeled --
+      then no index is bound),
+      `let|var|const i=0;for(const|let|var c of C){F.append|set(<key>,String.fromCharCode(c));i++;}`,
+      `for(let|var i=0;i<C.length;i++){F.append|set(<key>,String.fromCharCode(C[i]));}`,
+      (the init may cache the length: `for(let|var i=0,n=C.length;i<n;i++)`),
+    where <key> is `'<lit>'+x`, `` `lit${x}lit` ``, or a bare ident
+    (x = the index or element name; any other ident fails closed),
+    or a constant literal (constant keys assemble under append only;
+    under set they overwrite -- enforced).
     `var|let|const S=Array.from(F.values()).join('');`
     (or `var|let|const S=[...F.values()].join('');`)
     `var|let|const RESULT=<additive of string literals and S>;`
     then end-of-text.
 
-    Node-exact (v24.20.0): FormData.append stores each char value in
-    insertion order; F.values() yields the values in that order, so
-    join('') concatenates fromCharCode(c0)+fromCharCode(c1)+...
-    (ToUint16 via _js_f996f997_fcc_chr). Disjoint from F1090
-    (map+join has no FormData): this requires `new FormData()` --
-    verified both directions. Anything else fails closed: a miss,
-    never a mis-decode. Returns the decoded string, or None. Never
-    evals.
+    Node-exact (v24.20.0): FormData.append/set store each char value
+    in insertion order (duplicate append keys keep every value);
+    F.values() yields the values in that order, so join('')
+    concatenates fromCharCode(c0)+fromCharCode(c1)+... (ToUint16 via
+    _js_f996f997_fcc_chr). Disjoint from F1090 (map+join has no
+    FormData): this requires `new FormData()` -- verified both
+    directions. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
     """
-    if "FormData(" not in text:
+    if "FormData" not in text:
+        return None
+    _compact = _js_ws_compact(text)
+    if "FormData(" not in _compact or "values(" not in _compact:
         return None
     state = {"ops": 0, "parts": 0}
     try:
@@ -142805,17 +143165,8 @@ def _js_f1193_stmt_decode(text):
         j = _js_expect(text, m, "(")
         j = _js_expect(text, _js_skip_ws(text, j), ")")
         j = _js_expect(text, _js_skip_ws(text, j), ";")
-        c2, j = _js_parse_ident(text, _js_skip_ws(text, j))
-        if c2 != cname:
-            raise _JSExprFail("F1193 arr mismatch")
-        j = _js_expect(text, j, ".")
-        m = _js_match_kw(text, j, "forEach")
-        if m is None:
-            raise _JSExprFail("F1193 not forEach")
-        j = _js_expect(text, m, "(")
-        j = _js_f1193_parse_cb(text, j, fname, state, "F1193")
-        j = _js_expect(text, _js_skip_ws(text, j), ")")
-        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_f1193_parse_staging(text, j, cname, fname, bound,
+                                    state, "F1193")
         dstr = _js_f996f997_fcc_chr(codes, "F1193")
         _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
         if sname in bound:
@@ -142833,30 +143184,108 @@ def _js_f1193_stmt_decode(text):
         return None
 
 
+def _js_f1194_parse_arg(text, j, cname, state, what):
+    """Parse the F1194 integrity-method argument at text[j].
+
+    One of `C`, `C.slice()`, `C.slice(0)`, `C.slice(0,C.length)`,
+    `Array.from(C)`, `Array.from(C,Number)`, `[...C]` -- all
+    node-verified (v24.20.0) to pass the codes through unchanged
+    (`Number` is the identity on numeric codes; any other mapper
+    fails closed). Anything else (e.g. `C.slice(1)`, which drops
+    codes) fails closed. Returns next_index. Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    n = len(text)
+    m = _js_match_kw(text, j, "Array")
+    if m is not None:
+        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "from")
+        if m is None:
+            raise _JSExprFail(what + " not Array.from")
+        j = _js_expect(text, m, "(")
+        a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if a2 != cname:
+            raise _JSExprFail(what + " arg mismatch")
+        jj = _js_skip_ws(text, j)
+        if jj < n and text[jj] == ",":
+            mpr, j = _js_parse_ident(text, _js_skip_ws(text, jj + 1))
+            if mpr != "Number":
+                raise _JSExprFail(what + " bad mapper")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " copyarg")
+        return j
+    if j < n and text[j] == "[":
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail(what + " not spread")
+        a2, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        if a2 != cname:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        _js_f96x_charge(state, what + " copyarg")
+        return j
+    a2, j = _js_parse_ident(text, j)
+    if a2 != cname:
+        raise _JSExprFail(what + " arg mismatch")
+    jj = _js_skip_ws(text, j)
+    if jj < n and text[jj] == ".":
+        j = _js_expect(text, jj, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j < n and text[j] == "0" and not (
+                j + 1 < n and text[j + 1] in _JS_IDENT_CONT):
+            j = _js_skip_ws(text, j + 1)
+            if j < n and text[j] == ",":
+                a3, k3 = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+                if a3 != cname:
+                    raise _JSExprFail(what + " slice end mismatch")
+                k3 = _js_expect(text, k3, ".")
+                m3 = _js_match_kw(text, _js_skip_ws(text, k3),
+                                  "length")
+                if m3 is None:
+                    raise _JSExprFail(what + " slice end not length")
+                j = m3
+        j = _js_expect(text, j, ")")
+        _js_f96x_charge(state, what + " slicearg")
+    return j
+
+
 def _js_f1194_stmt_decode(text):
     """Decode F1194 integrity-method wrapper staged reads (whole-text,
     _decode_layer hook).
 
     `var|let|const C=[INT,...];`
-    `var|let|const S=String.fromCharCode(...Object.<m>(C));`
-    (or `...Object.<m>(C.slice())`)
-    where <m> is one of freeze, seal, preventExtensions.
+    `var|let|const S=String.fromCharCode(...Object.<m>(<arg>));`
+    where <m> is one of freeze, seal, preventExtensions and <arg> is
+    one of `C`, `C.slice()`, `C.slice(0)`, `C.slice(0,C.length)`,
+    `Array.from(C)`, `Array.from(C,Number)`, `[...C]`.
     `var|let|const RESULT=<additive of string literals and S>;`
     then end-of-text.
 
     Node-exact (v24.20.0): Object.freeze/seal/preventExtensions
-    return their argument unchanged -- the int array is unmodified,
-    so spread passes each code to fromCharCode with ToUint16 masking
-    (F967 discipline via _js_f996f997_fcc_chr). Disjoint from F1114
-    (which requires the freeze argument to be the int-array literal
-    and covers only freeze): this requires the argument to be the
-    bound identifier C (or C.slice()) and admits seal and
-    preventExtensions -- verified both directions. Anything else
-    fails closed: a miss, never a mis-decode. Returns the decoded
-    string, or None. Never evals.
+    return their argument unchanged -- the int array (or an
+    identical copy) is unmodified, so spread passes each code to
+    fromCharCode with ToUint16 masking (F967 discipline via
+    _js_f996f997_fcc_chr). Disjoint from F1114 (which requires the
+    freeze argument to be the int-array literal and covers only
+    freeze): this requires the argument to be the bound identifier C
+    (or a copy of it) and admits seal and preventExtensions --
+    verified both directions. Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None. Never
+    evals.
     """
-    if ("Object.freeze(" not in text and "Object.seal(" not in text
-            and "Object.preventExtensions(" not in text):
+    if "Object" not in text:
+        return None
+    _compact = _js_ws_compact(text)
+    if ("Object.freeze(" not in _compact
+            and "Object.seal(" not in _compact
+            and "Object.preventExtensions(" not in _compact):
+        return None
+    if "fromCharCode(" not in _compact:
         return None
     state = {"ops": 0, "parts": 0}
     try:
@@ -142880,7 +143309,7 @@ def _js_f1194_stmt_decode(text):
         if m is None:
             raise _JSExprFail("F1194 not String")
         j = _js_expect(text, _js_skip_ws(text, m), ".")
-        m = _js_match_kw(text, j, "fromCharCode")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
         if m is None:
             raise _JSExprFail("F1194 not fromCharCode")
         j = _js_expect(text, m, "(")
@@ -142891,7 +143320,8 @@ def _js_f1194_stmt_decode(text):
         m = _js_match_kw(text, j, "Object")
         if m is None:
             raise _JSExprFail("F1194 not Object")
-        j = _js_expect(text, _js_skip_ws(text, m), ".")
+        j = _js_skip_ws(text, _js_expect(text, _js_skip_ws(text, m),
+                                              "."))
         meth = None
         for _cand in ("freeze", "seal", "preventExtensions"):
             _mm = _js_match_kw(text, j, _cand)
@@ -142902,17 +143332,7 @@ def _js_f1194_stmt_decode(text):
         if meth is None:
             raise _JSExprFail("F1194 bad method")
         j = _js_expect(text, j, "(")
-        a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
-        if a2 != cname:
-            raise _JSExprFail("F1194 arg mismatch")
-        jj = _js_skip_ws(text, j)
-        if jj < len(text) and text[jj] == ".":
-            j = _js_expect(text, jj, ".")
-            m = _js_match_kw(text, j, "slice")
-            if m is None:
-                raise _JSExprFail("F1194 not slice")
-            j = _js_expect(text, m, "(")
-            j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_f1194_parse_arg(text, j, cname, state, "F1194")
         j = _js_expect(text, _js_skip_ws(text, j), ")")
         j = _js_expect(text, _js_skip_ws(text, j), ")")
         j = _js_expect(text, _js_skip_ws(text, j), ";")
@@ -142960,7 +143380,7 @@ def _js_f1195_parse_map_call(text, j, cname, state, what):
     if c2 != cname:
         raise _JSExprFail(what + " map base mismatch")
     j = _js_expect(text, j, ".")
-    m = _js_match_kw(text, j, "map")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "map")
     if m is None:
         raise _JSExprFail(what + " not map")
     j = _js_expect(text, m, "(")
@@ -142976,7 +143396,7 @@ def _js_f1195_parse_join_call(text, j, state, what):
     Returns next_index. Never evals.
     """
     j = _js_expect(text, j, ".")
-    m = _js_match_kw(text, j, "join")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "join")
     if m is None:
         raise _JSExprFail(what + " not join")
     j = _js_expect(text, m, "(")
@@ -142998,7 +143418,7 @@ def _js_f1195_parse_h_join(text, j, hname, state, what):
     if h2 != hname:
         raise _JSExprFail(what + " join base mismatch")
     j = _js_expect(text, j, ".")
-    m = _js_match_kw(text, j, "join")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "join")
     if m is None:
         raise _JSExprFail(what + " not join")
     j = _js_expect(text, m, "(")
@@ -143010,40 +143430,92 @@ def _js_f1195_parse_h_join(text, j, hname, state, what):
     return j
 
 
-def _js_f1195_parse_wrapper(text, j, parse_expr, state, what):
-    """Parse the F1195 expression wrapper at text[j].
+def _js_f1195_parse_tmpl(text, j, parse_expr, state, what):
+    """Parse `` `lit*${<wrapped>}lit*` `` at text[j] (F1195, j at the
+    opening backtick). Exactly one interpolation; literal chunks may
+    not contain an unescaped backtick or `${`. Returns next_index.
+    Never evals.
+    """
+    n = len(text)
+    j = _js_expect(text, j, "`")
+    k = j
+    while k < n:
+        ch = text[k]
+        if ch == "\\":
+            k += 2
+            continue
+        if ch == "`" or (ch == "$" and k + 1 < n
+                         and text[k + 1] == "{"):
+            break
+        k += 1
+    if k >= n or text[k] != "$":
+        raise _JSExprFail(what + " tmpl needs interpolation")
+    j = _js_f1195_parse_wrapper(text, k + 2, parse_expr, state, what)
+    j = _js_expect(text, j, "}")
+    k = j
+    while k < n:
+        ch = text[k]
+        if ch == "\\":
+            k += 2
+            continue
+        if ch == "`":
+            break
+        if ch == "$" and k + 1 < n and text[k + 1] == "{":
+            raise _JSExprFail(what + " tmpl multi-interp")
+        k += 1
+    if k >= n or text[k] != "`":
+        raise _JSExprFail(what + " tmpl unterminated")
+    return k + 1
 
-    `` `${<expr>}` `` (single-interpolation template), `String(<expr>)`,
-    or `''+<expr>` (either quote), where <expr> is parsed by
-    parse_expr(text, j, state, what). Returns next_index. Never evals.
+
+def _js_f1195_parse_wrapper(text, j, parse_expr, state, what):
+    """Parse the F1195 expression-wrapper chain at text[j].
+
+    <wrapped> := <template> | String(<wrapped>) | <strlit>+<wrapped>
+                 | <wrapped>+<strlit> | <expr>
+    <template> := `lit*${<wrapped>}lit*` (exactly one interpolation;
+                 literal chunks carry no credential -- the decoded
+                 value is the inner expression, which the scanner
+                 matches by containment).
+    Nesting (e.g. String(`${<expr>}`)) recurses; each layer charges
+    the F452 part budget, so deep nesting fails closed. Returns
+    next_index. Never evals.
     """
     j = _js_skip_ws(text, j)
     n = len(text)
     if j < n and text[j] == "`":
-        j += 1
-        if j + 1 >= n or text[j] != "$" or text[j + 1] != "{":
-            raise _JSExprFail(what + " not interpolation")
-        j = parse_expr(text, j + 2, state, what)
-        j = _js_expect(text, _js_skip_ws(text, j), "}")
-        if j >= n or text[j] != "`":
-            raise _JSExprFail(what + " template not closed")
-        return j + 1
-    m = _js_match_kw(text, j, "String")
-    if m is not None:
-        j = _js_expect(text, m, "(")
-        j = parse_expr(text, j, state, what)
-        j = _js_expect(text, _js_skip_ws(text, j), ")")
-        return j
-    if j < n and text[j] in "'\"":
-        lit, j = _js_f99x_parse_str(text, j)
-        if lit != "":
-            raise _JSExprFail(what + " concat lhs not empty")
-        j = _js_skip_ws(text, j)
-        if j >= n or text[j] != "+" or text.startswith("++", j):
-            raise _JSExprFail(what + " not concat")
-        j = parse_expr(text, j + 1, state, what)
-        return j
-    raise _JSExprFail(what + " bad wrapper")
+        j = _js_f1195_parse_tmpl(text, j, parse_expr, state, what)
+    else:
+        m = _js_match_kw(text, j, "String")
+        if m is not None:
+            j = _js_expect(text, m, "(")
+            j = _js_f1195_parse_wrapper(text, j, parse_expr, state,
+                                        what)
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+        elif j < n and text[j] in "'\"":
+            _lit, j = _js_f99x_parse_str(text, j)
+            j = _js_skip_ws(text, j)
+            if j >= n or text[j] != "+" or text.startswith("++", j):
+                raise _JSExprFail(what + " not concat")
+            j = _js_f1195_parse_wrapper(text, j + 1, parse_expr,
+                                        state, what)
+        else:
+            j = parse_expr(text, j, state, what)
+    _js_f96x_charge(state, what + " wrap")
+    while True:
+        jj = _js_skip_ws(text, j)
+        if jj >= n or text[jj] != "+" or text.startswith("++", jj):
+            break
+        kk = _js_skip_ws(text, jj + 1)
+        if kk >= n or text[kk] not in "'\"":
+            break
+        try:
+            _lit, knew = _js_f99x_parse_str(text, kk)
+        except _JSExprFail:
+            break
+        _js_f96x_charge(state, what + " wrapsfx")
+        j = knew
+    return j
 
 
 def _js_f1195_stmt_decode(text):
@@ -143057,14 +143529,15 @@ def _js_f1195_stmt_decode(text):
       (b) `var|let|const S=<wrapper>;` where <wrapper> wraps
           `C.map(<cb>).join('')` inline
     where <cb> is `function(c){return String.fromCharCode(c);}` (or the
-    `(c)=>String.fromCharCode(c)` arrow twin) and <wrapper> is one of
-    `` `${<expr>}` ``, `String(<expr>)`, `''+<expr>`.
+    `(c)=>String.fromCharCode(c)` arrow twin) and <wrapper> is a chain
+    of `` `lit*${...}lit*` `` (exactly one interpolation), `String(...)`,
+    `<strlit>+...`, `...+<strlit>` layers around the join expression.
     `var|let|const RESULT=<additive of string literals and S>;`
     then end-of-text.
 
-    Node-exact (v24.20.0): a single-interpolation template, String(),
-    and ''+ are each the identity on the already-string join result,
-    so the decoded value is fromCharCode of each code (ToUint16 via
+    Node-exact (v24.20.0): each wrapper layer is the identity (or adds
+    literal text around) the already-string join result, so the
+    decoded value contains fromCharCode of each code (ToUint16 via
     _js_f996f997_fcc_chr). Disjoint from F1090 (which requires the
     map+join assigned directly to S): this requires the expression
     wrapper around the join -- verified both directions.
@@ -143073,9 +143546,19 @@ def _js_f1195_stmt_decode(text):
     else fails closed: a miss, never a mis-decode. Returns the
     decoded string, or None. Never evals.
     """
-    if ("${" not in text and "String(" not in text
-            and "''+" not in text and '""+' not in text):
+    if ("${" not in text and "String" not in text and "'" not in text
+            and '"' not in text):
         return None
+    _compact = _js_ws_compact(text)
+    if ("${" not in _compact and "String(" not in _compact
+            and "join(" not in _compact):
+        return None
+    # A template or String() wrapper needs no `+`; a string-concat
+    # wrapper does (quote adjacent to `+`, whitespace-tolerant).
+    if "${" not in _compact and "String(" not in _compact:
+        if not any(_s in _compact for _s in
+                   ("''+", '""+', "+''", '+""', "'+", '"+', "+'", '+"')):
+            return None
     state = {"ops": 0, "parts": 0}
     try:
         j = _js_skip_ws(text, 0)
@@ -143102,7 +143585,8 @@ def _js_f1195_stmt_decode(text):
             pjj = _js_skip_ws(text, pjj)
             is_a = (pnm == cname and pjj < len(text)
                     and text[pjj] == "."
-                    and _js_match_kw(text, pjj + 1, "map") is not None)
+                    and _js_match_kw(text, _js_skip_ws(text, pjj + 1),
+                                     "map") is not None)
         except _JSExprFail:
             is_a = False
         if is_a:
@@ -144189,10 +144673,15 @@ def _decode_layer(text):
 
 
     # F1193/F1194/F1195 (wave-407 lane 3): wrapper-residual
-    # decoders -- FormData staged reads (append/values), integrity-
-    # method wrapper staged reads (freeze/seal/preventExtensions of
-    # the bound array or its slice copy), and expression-wrapper
-    # laundering (template/String()/''+ around a blocked map+join).
+    # decoders -- FormData staged reads (append/set + values, forEach /
+    # for-of / indexed-for staging, flexible keys), integrity-method
+    # wrapper staged reads (freeze/seal/preventExtensions of the bound
+    # array or a copy: slice/Array.from/spread), and
+    # expression-wrapper laundering (template/String()/string-concat
+    # wrapper chains around a blocked map+join). Whitespace-tolerant
+    # fast-path gates (spec-review fix): the grammars accept
+    # `new FormData ()`-style spellings, so the gates compact
+    # whitespace before matching.
     # Each returns the decoded string or None; all filed shapes BREAK
     # on the open tree, so no earlier production decoded them and the
     # pre-existing variant order (F441) is preserved. Disjoint from
