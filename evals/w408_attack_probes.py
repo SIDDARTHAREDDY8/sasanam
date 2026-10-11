@@ -5,7 +5,8 @@ Pins marked OPEN: verdict HELD while the payload still MISSES (finding open),
 BREAK if the payload ever gets blocked (pin broken). New pins F1229-F1255 + F1259
 via their w408 red-first SHAPES (decoder seam, find_credential); F1255-F1258
 via their w408 red-first SHAPES (provenance seam, instruction_shaped quiet).
-Carries forward F1199-F1227 OPEN pins (must still MISS).
+Carries forward F1199-F1228 CLOSED pins (must BLOCK) via their w408 red-first
+SHAPES (decoder seam, find_credential).
 $0-spend-by-construction (no harness/paid refs; model spend lives in the ledger).
 """
 import importlib.util
@@ -55,13 +56,13 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-408 attack footer (F1228-F1258 filed OPEN (31); F1228 renumbered to F1259 at merge (wave-272); next free F1260)."""
+    """Control: wave-408 merged footer (F1199-F1228 CLOSED (30);
+    F1229-F1259 OPEN (31); next free F1260)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1229-F1259 filed OPEN (31," in text
-          and "next free F1259" in text
-          and "F1182-F1198 CLOSED (17)" in text
-          and "F1199-F1227 OPEN (29)" in text)
+    ok = ("F1199-F1228 CLOSED (30" in text
+          and "F1229-F1259 OPEN (31" in text
+          and "next free F1260" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -111,9 +112,27 @@ _open_pin("w408", 1259)
 for _n in range(1255, 1259):
     _open_prov_pin("w408", _n)
 
-# Round-75 pins carried forward (F1199-F1227) -- still OPEN.
+def _closed_pin(prefix, num):
+    """All red-first shapes for a CLOSED decoder finding must now BLOCK."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _misses(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
+
+
+# Round-75 pins carried forward -- CLOSED by wave-408 lanes.
+# Via the w407 red-first SHAPES (the FINDINGS.md red-first lines cite
+# w407 for F1199-F1227); F1228 via its w408 red-first SHAPES (lane-4
+# filing; no w407 red-first file exists for it).
 for _n in range(1199, 1228):
-    _open_pin("w407", _n)
+    _closed_pin("w407", _n)
+_closed_pin("w408", 1228)
 
 
 @_t
@@ -127,7 +146,7 @@ def test_c0_junk_quiet():
 
 @_t
 def test_green_w407():
-    """Depth-1 green check on w407's battery (carries F1199-F1227 pins)."""
+    """Depth-1 green check on w407's battery (carries F1199-F1227 CLOSED pins)."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         print("HELD  test_green_w407 (skipped: GOV_SKIP_GREEN=1)")
         return True

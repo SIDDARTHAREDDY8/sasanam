@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Round-75 attack battery: 23 new pins (expected miss/quiet).
+"""Round-75 attack battery: 29 pins, CLOSED at the wave-408 merge.
 
-Pins marked OPEN: verdict HELD while the payload still MISSES (finding open),
-BREAK if the payload ever gets blocked (pin broken). New pins F1199-F1221
+Pins marked CLOSED: verdict HELD while every red-first shape still BLOCKS
+(finding closed), BREAK if a shape ever MISSES (pin broken). Pins F1199-F1227
 via their w407 red-first SHAPES (decoder seam, find_credential).
 $0-spend-by-construction (no harness/paid refs; model spend lives in the ledger).
 """
@@ -48,13 +48,13 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-407 merged footer (F1182-F1198 CLOSED (17);
-    F1199-F1227 OPEN (29); next free F1228)."""
+    """Control: wave-408 merged footer (F1199-F1228 CLOSED (30);
+    F1229-F1259 OPEN (31); next free F1260)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1182-F1198 CLOSED (17)" in text
-          and "F1199-F1227 OPEN (29)" in text
-          and "next free F1228" in text)
+    ok = ("F1199-F1228 CLOSED (30" in text
+          and "F1229-F1259 OPEN (31" in text
+          and "next free F1260" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -67,27 +67,28 @@ def test_b1_taxonomy_pin():
     return ok
 
 
-def _open_pin(prefix, num):
-    """All red-first shapes for an OPEN decoder finding must still MISS."""
+def _closed_pin(prefix, num):
+    """All red-first shapes for a CLOSED decoder finding must now BLOCK."""
     @_t
     def _fn():
         shapes = _redfirst_shapes(prefix, num)
-        bad = [name for name, payload in shapes if not _misses(payload)]
+        bad = [name for name, payload in shapes if _misses(payload)]
         ok = not bad
-        print(("HELD " if ok else "BREAK") + " test_open_%s_f%d (%d shapes%s)" % (
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
             prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
         return ok
-    _fn.__name__ = "test_open_%s_f%d" % (prefix, num)
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
     return _fn
 
 
-# New round-75 decoder pins (F1199-F1221) -- still OPEN.
+# Round-75 decoder pins (F1199-F1221) -- CLOSED by wave-408 lanes 1-3.
 for _n in range(1199, 1222):
-    _open_pin("w407", _n)
+    _closed_pin("w407", _n)
 
-# Lane 2 residuals renumbered (F1222-F1223) + lane 3 filings (F1224-F1227) -- still OPEN.
+# Lane 2 residuals renumbered (F1222-F1223) + lane 3 filings (F1224-F1227)
+# -- CLOSED by wave-408 lane 4.
 for _n in range(1222, 1228):
-    _open_pin("w407", _n)
+    _closed_pin("w407", _n)
 
 # Round-74 pins (F1182-F1198) are carried by w406_attack_probes.py;
 # verified via the depth-1 green check below.

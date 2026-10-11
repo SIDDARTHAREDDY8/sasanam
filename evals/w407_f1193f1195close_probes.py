@@ -73,7 +73,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 29  # +1 _JS_WS_COMPACT_RE in this lane's follow-up
-N_STMTDEC_LOOPS_PIN = 50  # wave-408 lane 4: +1 dispatch loop  # +1 dispatch loop in this lane (F1193/F1194/F1195)
+N_STMTDEC_LOOPS_PIN = 53  # wave-408 merge: 49 base + 4 (lanes 1-4, +1 dispatch loop each)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -403,24 +403,24 @@ def _redfirst_shapes_w407(num):
 
 @_t
 def test_p8_new_findings_open():
-    """F1224-F1227 (spec-review follow-up filings) still MISS."""
+    """F1224-F1227 now BLOCK (all CLOSED by wave-408 lane 4 per FINDINGS.md stamps)."""
     bad = []
     for n in (1224, 1225, 1226, 1227):
         shapes = _redfirst_shapes_w407(n)
         for name, payload in shapes:
-            if not _misses(payload):
+            if _misses(payload):
                 bad.append("f%d:%s" % (n, name))
-    return (not bad, "new filings still MISS%s"
+    return (not bad, "f1224-f1227 all BLOCK%s"
             % ("" if not bad else ": " + ",".join(bad[:5])))
 
 
 # ---------------- g0: green check ----------------
 
 def _green_check():
-    """Depth-1 green check on w406's attack battery (round-74 opens).
+    """Depth-1 green check on w406's attack battery (round-74 pins).
 
-    Expects exactly the F1193/F1194/F1195 pins to flip to BREAK (now
-    closed); every other pin must stay HELD. Honors GOV_SKIP_GREEN.
+    Expects all 14 F1182-F1195 CLOSED pins HELD on the merged tree.
+    Honors GOV_SKIP_GREEN.
     """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w406_attack): skipped via GOV_SKIP_GREEN=1")
@@ -436,7 +436,8 @@ def _green_check():
         out = (r.stdout or "") + (r.stderr or "")
         held = set()
         for line in out.split("\n"):
-            if line.startswith("HELD test_closed_w406_f"):
+            # w406 prints "HELD " + " test_closed_..." (double space).
+            if line.startswith("HELD  test_closed_w406_f"):
                 m = re.search(r"test_closed_w406_f(\d+)", line)
                 if m:
                     held.add(int(m.group(1)))
