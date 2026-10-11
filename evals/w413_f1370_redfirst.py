@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""F1360 red-first: F1357 multi-char SEP residual (Spec-review residual).
+"""F1370 red-first: F1357 multi-char SEP residual (Spec-review residual).
 
 `D.join('ab').split('ab').join('')` with a credential containing 'a' but not 'b'
 is node-identity (v24.20.0) but `_js_f1357_stmt_decode` fails closed (SEP-char check

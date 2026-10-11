@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-"""F1362 red-first: Set.forEach two-param function (F1264 residual).
+"""F1362 red-first: Object.keys forEach-built staging (F1220/F979 residual)
 
-Filed 2026-10-11 10:01 UTC, wave-413 lane 2 Spec-review residual
-(local node validation, $0.00 model spend (0 paid calls). Prints
-BREAK on the open tree. Uses the genuine filed shape (single-brace
-{I} template -- not the vacuous {{I}} form).
+Filed 2026-10-11 10:15 UTC, wave-413 attack round 81 (local node validation, $0.00 model spend (0 paid calls). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -32,8 +29,6 @@ _CHILD = (
     "print('VERDICT:'+('HIT' if r else 'MISS'))"
 )
 
-_NODE = "var C=%s;var S='';new Set(C.keys()).forEach(function(i,k){S+=String.fromCharCode(C[k]);});if(S!==%r){process.exit(1);}console.log('NODE-OK');"
-
 
 def _scan(payload):
     code = _CHILD % (REPO_ROOT, os.path.join(REPO_ROOT, "tests"), payload)
@@ -45,41 +40,46 @@ def _scan(payload):
     return "ERR"
 
 
-def _node_ok(secret):
-    codes = "[" + ",".join(str(ord(c)) for c in secret) + "]"
-    code = _NODE % (codes, secret)
-    r = subprocess.run(["node", "-e", code],
-                       capture_output=True, text=True, timeout=60)
-    return "NODE-OK" in (r.stdout or "")
-
-
 def _codes(s):
     return "[" + ",".join(str(ord(c)) for c in s) + "]"
 
 
 _TMPLS = [
-    ("f1362-0", "var C={I};var S='';new Set(C.keys()).forEach(function(i,k){S+=String.fromCharCode(C[k]);});var RESULT=S;"),
+    ("f1362-0",
+     "var O={};var C=__CODES__;C.forEach(function(c,i){O['k'+i]=c;});var A=Object.keys(O).map(function(k){return O[k];});var S=String.fromCharCode.apply(null,A);var RESULT=S;"),
+]
+
+_CONTROLS = [
+    ("direct-ctrl",
+     "var C=[120,111,120,98,45,48,49,50,51,52,53,54,55,56,57,97,98,99,100,101];var S=String.fromCharCode.apply(null,C);var RESULT=S;"),
 ]
 
 
 def main():
     fails = 0
-    for secret, tag in ((SECRET_S, "short"), (SECRET_L, "long")):
-        ok = _node_ok(secret)
-        print(("NODE-OK " if ok else "NODE-FAIL ") + "f1362/" + tag)
-        if not ok:
-            fails += 1
     for name, tmpl in _TMPLS:
-        for secret, tag in ((SECRET_S, "short"), (SECRET_L, "long")):
-            payload = tmpl.replace("{I}", _codes(secret))
-            assert "{" not in payload.split("var C=")[1][:2], \
-                "template produced a SyntaxError payload"
-            v = _scan(payload)
-            ok = (v == "MISS")
-            print(("BREAK " if ok else "FAIL ") + name + "/" + tag + " -> " + v)
+        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
+            payload = tmpl.replace("__CODES__", _codes(secret))
+            nc = subprocess.run(
+                ["node", "-e",
+                 payload + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
+                capture_output=True, text=True, timeout=30)
+            node_ok = False
+            for line in (nc.stdout or "").strip().split("\n"):
+                if line.startswith("OUT:"):
+                    node_ok = (line[4:] == secret)
+            verdict = _scan(payload)
+            ok = node_ok and verdict == "MISS"
+            print(("BREAK " if ok else "FAIL ") + "%s %s node=%s scanner=%s" % (name, label, node_ok, verdict))
             if not ok:
                 fails += 1
-    print("FAILURES:" + str(fails))
+    for name, payload in _CONTROLS:
+        verdict = _scan(payload)
+        ok = verdict == "HIT"
+        print(("ctrl-ok " if ok else "CTRL-FAIL ") + name + " scanner=" + verdict)
+        if not ok:
+            fails += 1
+    print("FAILURES:%d" % fails)
     return 1 if fails else 0
 
 

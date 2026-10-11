@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""F1361 red-first: F1358 arrow-twin residual (Spec-review residual).
+"""F1371 red-first: F1358 arrow-twin residual (Spec-review residual).
 
 `C.reduceRight((acc,c)=>String.fromCharCode(c)+acc,'')` is node-identity
 (v24.20.0) but `_js_f1358_stmt_decode` requires the `function` keyword ->

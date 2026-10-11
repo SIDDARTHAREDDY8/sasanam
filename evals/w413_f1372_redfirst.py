@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""F1360 red-first: Set.forEach two-param arrow using first param (F1355 residual).
+"""F1372 red-first: Set.forEach two-param arrow using first param (F1355 residual).
 
 Filed 2026-10-11 10:01 UTC, wave-413 lane 2 Spec-review residual
 (local node validation, $0.00 model spend (0 paid calls). Prints
