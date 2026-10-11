@@ -1525,6 +1525,24 @@ def _has_hidden_form_action(text):
     return False
 
 
+def _has_hidden_area_download(text):
+    """True when prose hides in an `<area download>` attribute (F1359).
+
+    F1359: the download attribute is the suggested filename -- it
+    is never rendered as page-body text, so prose there is hidden
+    from the human reader (the F1024 rationale). Honest filenames
+    (file.pdf) stay quiet via the prose-shape gate. Twin of F1312
+    (CLOSED: `<a download>`), whose `<a\\b` regex does not match
+    `<area>`. No filed area-download class exists. Never evals.
+    """
+    for m in re.finditer(r"<area\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "download")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
 def _has_hidden_hidden_option(text):
     """True when prose hides in `<option hidden>` (F1064).
 
@@ -2404,10 +2422,17 @@ def instruction_shaped(text):
     # and F1256's `<form name>` (different elements/attributes);
     # documented per detector. Honest machine tokens stay quiet
     # via the prose-shape gate.
-    return (_has_hidden_menuitem_label(norm)
+    if (_has_hidden_menuitem_label(norm)
             or _has_hidden_menu_label(norm)
             or _has_hidden_td_abbr(norm)
-            or _has_hidden_form_action(norm))
+            or _has_hidden_form_action(norm)):
+        return True
+    # F1359: `<area download>` -- twin of F1312 (`<a download>`,
+    # CLOSED), whose `<a\b` regex does not match `<area>`. The
+    # download attribute is the suggested filename, never rendered
+    # as page-body text (the F1024 rationale). Honest filenames
+    # stay quiet via the prose-shape gate. Never evals.
+    return _has_hidden_area_download(norm)
 
 
 class ActionRequest(object):
