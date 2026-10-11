@@ -214,17 +214,21 @@ def test_p2_generalizations():
                   "let D=%s;let K=Object.keys(D);let T='';for(let j=0;j<K.length;j++){T+=String.fromCharCode(D[K[j]]);}let RESULT=T;" % cs))
     cases.append(("f1220-prefix-long",
                   "var C=%s;var K=Object.keys(C);var S='';for(var i=0;i<K.length;++i){S+=String.fromCharCode(C[K[i]]);}var RESULT=S;" % cl))
-    # F1221: arrow + const/renamed.
+    # F1221: arrow + const/renamed + no mapFn.
     cases.append(("f1221-arrow",
                   "var C=%s;var S=String.fromCharCode(...Array.from(C,c=>c));var RESULT=S;" % cs))
     cases.append(("f1221-const-long",
                   "const D=%s;const T=String.fromCharCode(...Array.from(D,function(x){return x;}));const RESULT=T;" % cl))
+    cases.append(("f1221-no-mapfn",
+                  "var C=%s;var S=String.fromCharCode(...Array.from(C));var RESULT=S;" % cs))
     # F1222: let/renamed (depth 1).
     cases.append(("f1222-let",
                   "let C=%s;let N=C.map((c)=>[[c]]);let S=String.fromCharCode(...N.flat(1));let RESULT=S;" % cs))
-    # F1223: renamed generator + paren arrow.
+    # F1223: renamed generator + paren arrow + block-body arrow.
     cases.append(("f1223-gen-long",
                   "var C=%s;async function *gen(){yield* C.map((c)=>String.fromCharCode(c));}var S='';for await(var ch of gen()){S+=ch;}var RESULT=S;" % cl))
+    cases.append(("f1223-block-arrow",
+                  "var C=%s;async function *g(){yield* C.map(c=>{return String.fromCharCode(c);});}var S='';for await(var ch of g()){S+=ch;}var RESULT=S;" % cs))
     # F1224: set + prefix incr + var.
     cases.append(("f1224-set-incr",
                   "var C=%s;var F=new FormData();var i=0;while(i<C.length){F.set('k'+i,String.fromCharCode(C[i]));++i;}var S=[...F.values()].join('');var RESULT=S;" % cs))
@@ -236,18 +240,32 @@ def test_p2_generalizations():
                   'var C=%s;var S=String.fromCharCode(...Object.defineProperty(C,"y",{value:2}));var RESULT=S;' % cs))
     cases.append(("f1226-multi-long",
                   "var C=%s;var S=String.fromCharCode(...Object.defineProperties(C,{a:{value:1},b:{value:2}}));var RESULT=S;" % cl))
-    # F1227: multi-empty + const.
+    # F1227: multi-empty + const + safe-key object + empty array.
     cases.append(("f1227-multi",
                   "var C=%s;var S=String.fromCharCode(...Object.assign(C, {}, {}));var RESULT=S;" % cs))
     cases.append(("f1227-const-long",
                   "const D=%s;const T=String.fromCharCode(...Object.assign(D,{}));const RESULT=T;" % cl))
-    # F1228: depth variants.
+    cases.append(("f1227-safe-key",
+                  "var C=%s;var S=String.fromCharCode(...Object.assign(C,{a:1}));var RESULT=S;" % cs))
+    cases.append(("f1227-empty-array",
+                  "var C=%s;var S=String.fromCharCode(...Object.assign(C,[]));var RESULT=S;" % cs))
+    # F1228: depth variants (all node-verified to assemble).
     cases.append(("f1228-flat0",
                   "var C=%s;var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(0));var RESULT=S;" % cs))
     cases.append(("f1228-flat3-long",
                   "var C=%s;var N=C.map(c=>[[c]]);var S=String.fromCharCode(...N.flat(3));var RESULT=S;" % cl))
     cases.append(("f1228-flat-noarg",
                   "var C=%s;var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat());var RESULT=S;" % cs))
+    cases.append(("f1228-flat-nan",
+                  "var C=%s;var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(NaN));var RESULT=S;" % cs))
+    cases.append(("f1228-flat-null",
+                  "var C=%s;var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(null));var RESULT=S;" % cs))
+    cases.append(("f1228-flat-undefined",
+                  "var C=%s;var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(undefined));var RESULT=S;" % cs))
+    cases.append(("f1228-flat-str2",
+                  'var C=%s;var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat("2"));var RESULT=S;' % cs))
+    cases.append(("f1228-flat-strx",
+                  'var C=%s;var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat("x"));var RESULT=S;' % cs))
     bad = [name for name, payload in cases if not _blocked(payload)]
     return (not bad, "%d/%d generalizations block%s"
             % (len(cases) - len(bad), len(cases),
@@ -270,8 +288,6 @@ def test_p3_fail_closed():
         "var C=%s;var D=[1,2];var K=Object.keys(D);var S='';for(var i=0;i<K.length;i++){S+=String.fromCharCode(C[K[i]]);}var RESULT=S;" % cs,
         # F1221: transforming callback (not identity).
         "var C=%s;var S=String.fromCharCode(...Array.from(C,function(c){return c+1;}));var RESULT=S;" % cs,
-        # F1222/F1228: flat('x') is not a numeric depth.
-        "var C=%s;var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat('x'));var RESULT=S;" % cs,
         # F1223: yield* of a non-map iterable.
         "var C=%s;async function *g(){yield* C;}var S='';for await(var ch of g()){S+=ch;}var RESULT=S;" % cs,
         # F1226: numeric-index property would mutate the array.
@@ -280,8 +296,8 @@ def test_p3_fail_closed():
         "var C=%s;var S=String.fromCharCode(...Object.defineProperty(C,'length',{value:1}));var RESULT=S;" % cs,
         # F1226: defineProperties with an index key.
         "var C=%s;var S=String.fromCharCode(...Object.defineProperties(C,{0:{value:999}}));var RESULT=S;" % cs,
-        # F1227: non-empty source could overwrite elements.
-        "var C=%s;var S=String.fromCharCode(...Object.assign(C, {x:1}));var RESULT=S;" % cs,
+        # F1227: unsafe key (index) would overwrite elements.
+        "var C=%s;var S=String.fromCharCode(...Object.assign(C, {0:999}));var RESULT=S;" % cs,
         # F1227: target is not C.
         "var C=%s;var S=String.fromCharCode(...Object.assign(D, {}));var RESULT=S;" % cs,
     ]

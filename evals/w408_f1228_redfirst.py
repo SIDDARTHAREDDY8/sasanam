@@ -2,13 +2,17 @@
 """Red-first for F1228: flat() depth-literal variants (F1222 residual).
 
 `flat(0)`, `flat(3)`, `flat(10)`, `flat(-1)`, `flat(1.5)`, `flat(0x2)`,
-`flat(Infinity)`, and `flat()` (no arg, defaults to depth 1) on the
+`flat(Infinity)`, `flat()` (no arg, defaults to depth 1), `flat(NaN)`,
+`flat(null)`, `flat(undefined)`, `flat("2")`, and `flat("x")` on the
 F1187/F1222 `C.map(c=>[[c]])` production all assemble node-exactly
 (v24.20.0) while find_credential MISSED. Residual of F1222 (CLOSED):
 the widened hook enforced depth in {1,2}.
 
 Filed 2026-10-11 04:32 UTC, wave-408 lane 4 (local node validation,
 $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
+
+Spec-review update 2026-10-11: added NaN/null/undefined/string depths
+(all node-verified to assemble via ToIntegerOrInfinity coercion).
 """
 import os
 import subprocess
@@ -72,11 +76,20 @@ _TMPLS = [
      "var C={I};var N=C.map(c=>[[c]]);var S=String.fromCharCode(...N.flat(Infinity));var RESULT=S;"),
     ("flat-noarg",
      "var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat());var RESULT=S;"),
+    ("flat-nan",
+     "var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(NaN));var RESULT=S;"),
+    ("flat-null",
+     "var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(null));var RESULT=S;"),
+    ("flat-undefined",
+     "var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(undefined));var RESULT=S;"),
+    ("flat-str2",
+     'var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat("2"));var RESULT=S;'),
+    ("flat-strx",
+     'var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat("x"));var RESULT=S;'),
 ]
 
 _CONTROLS = [
     ("ctrl-f1187-flat2", "var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(2));var RESULT=S;", True),
-    ("ctrl-flat-string", "var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat('x'));var RESULT=S;", False),
     ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
 ]
 
