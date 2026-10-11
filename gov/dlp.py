@@ -146012,6 +146012,859 @@ def _js_f1205_stmt_decode(text):
         return None
 
 
+# ---------------------------------------------------------------------------
+# F1206/F1207/F1208/F1209/F1210/F1211/F1212 (wave-408 lane 2):
+# function-staging and no-op-wrapper residual decoders.
+#
+#   F1206: Reflect.get function staging --
+#          `var F=Reflect.get(String,'fromCharCode');` then a staged
+#          accumulation loop calling `F(C[i])`.
+#   F1207: no-op method wrappers -- a blocked map+join production
+#          wrapped in `encodeURI(H)`, `H.toLowerCase()`,
+#          `H.normalize()`, or `H.slice(0)` (identity on the
+#          credential alphabet).
+#   F1208: rest-destructuring copy spread -- `var D=[...C];` then
+#          `String.fromCharCode(...D)` (F1131 residual).
+#   F1209: while-shift accumulation --
+#          `while(D.length){S+=String.fromCharCode(D.shift());}`.
+#   F1210: Function.call.bind staging --
+#          `var F=String.fromCharCode.call.bind(String.fromCharCode);`
+#          then `F(null,C[i])` in the loop (F1066 residual).
+#   F1211: escape/unescape roundtrip -- `unescape(escape(H))` around a
+#          blocked map+join production (always identity).
+#   F1212: URI-component roundtrip --
+#          `decodeURIComponent(encodeURIComponent(H))` around a
+#          blocked map+join production (identity: no surrogates can
+#          reach it -- _safe_chr rejects them).
+#
+# Cleanliness contract: every helper below takes j at a ws-skipped
+# token start (callers pass `_js_skip_ws` positions); `_js_expect`
+# returns a raw position (callers re-skip). Anything else fails
+# closed (a miss, never a mis-decode). Never evals.
+# ---------------------------------------------------------------------------
+
+_F1207_ENCODEURI_SAFE = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789;,/?:@&=+$-_.!~*'()#")
+
+
+def _js_f1206f1212_parse_c_decl(text, j, state, what):
+    """Parse `var|let|const C=[INT,...];` at text[j].
+
+    Returns (cname, dstr, next_index); dstr is the ToUint16
+    fromCharCode decode of the int array (F996/F997 discipline,
+    _MAX_DECODE_BYTES-bounded). Never evals.
+    """
+    _, cname, j = _js_f96x_decl(text, j)
+    if cname in ("RESULT", "String", "Reflect"):
+        raise _JSExprFail(what + " bad arr name")
+    codes, j = _js_f1046_parse_int_array(text, j, state)
+    if not codes:
+        raise _JSExprFail(what + " empty array")
+    j = _js_expect(text, j, ";")
+    return cname, _js_f996f997_fcc_chr(codes, what), j
+
+
+def _js_f1206f1212_parse_fcc1(text, j, pname, what):
+    """Parse `String.fromCharCode(PNAME)` at text[j].
+
+    Returns next_index. The argument must be exactly the modeled
+    parameter name; anything else fails closed. Never evals.
+    """
+    m = _js_match_kw(text, j, "String")
+    if m is None:
+        raise _JSExprFail(what + " not String")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != pname:
+        raise _JSExprFail(what + " fcc arg mismatch")
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_f1206f1212_parse_map_cb(text, j, what):
+    """Parse a `.map(<cb>)` callback returning `String.fromCharCode(p)`.
+
+    Accepts `function(p){return String.fromCharCode(p);}` or
+    `p=>String.fromCharCode(p)` / `(p)=>String.fromCharCode(p)`
+    (param name flexible). Returns (pname, next_index_after_cb).
+    Never evals.
+    """
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        m2 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m2 is None:
+            raise _JSExprFail(what + " cb no return")
+        j = _js_f1206f1212_parse_fcc1(text, _js_skip_ws(text, m2),
+                                      pname, what)
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        return pname, j
+    j2 = j
+    if text.startswith("(", j2):
+        pname, j2 = _js_parse_ident(text, _js_skip_ws(text, j2 + 1))
+        j2 = _js_expect(text, j2, ")")
+    else:
+        pname, j2 = _js_parse_ident(text, j2)
+    j2 = _js_skip_ws(text, j2)
+    if not text.startswith("=>", j2):
+        raise _JSExprFail(what + " cb not arrow")
+    j = _js_f1206f1212_parse_fcc1(text, _js_skip_ws(text, j2 + 2),
+                                  pname, what)
+    return pname, j
+
+
+def _js_f1206f1212_parse_h_mapjoin(text, j, cname, bound, state, what):
+    """Parse `var|let|const H=C.map(<cb>).join('');` at text[j].
+
+    Returns (hname, next_index). Never evals.
+    """
+    _, hname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if hname in bound:
+        raise _JSExprFail(what + " bad h name")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " map base mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+    if m is None:
+        raise _JSExprFail(what + " not map")
+    j = _js_expect(text, m, "(")
+    pname, j = _js_f1206f1212_parse_map_cb(text, _js_skip_ws(text, j),
+                                           what)
+    if pname in bound:
+        raise _JSExprFail(what + " cb param clash")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+    if m is None:
+        raise _JSExprFail(what + " no join")
+    j = _js_expect(text, m, "(")
+    init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    if init != "":
+        raise _JSExprFail(what + " join not empty")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    bound.add(hname)
+    return hname, j
+
+
+def _js_f1206f1212_parse_result(text, j, dstr, sname, state, what):
+    """Parse `var|let|const RESULT=<additive>;` + end-of-text.
+
+    Returns the decoded string. Never evals.
+    """
+    _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if rname != "RESULT":
+        raise _JSExprFail(what + " not RESULT")
+    val, j = _js_f104x_additive_result(text, j, dstr, sname, state,
+                                       what)
+    _js_f96x_expect_semi_end(text, j)
+    return val
+
+
+def _js_f1206f1212_parse_incr(text, j, iname, what):
+    """Parse `i++`, `++i`, or `i+=1` at text[j]; returns next index."""
+    n = len(text)
+    if text.startswith("++", j):
+        nm, k = _js_parse_ident(text, _js_skip_ws(text, j + 2))
+        if nm != iname:
+            raise _JSExprFail(what + " incr mismatch")
+        return k
+    nm, k = _js_parse_ident(text, j)
+    if nm != iname:
+        raise _JSExprFail(what + " incr mismatch")
+    k = _js_skip_ws(text, k)
+    if text.startswith("++", k):
+        return k + 2
+    if (text.startswith("+=", k) and k + 2 < n and text[k + 2] == "1"
+            and not (k + 3 < n and text[k + 3] in _JS_IDENT_CONT)):
+        return k + 3
+    raise _JSExprFail(what + " not incr")
+
+
+def _js_f1206f1212_parse_accum_call(text, j, sname, fname, cname, ivar,
+                                    extra_null, what):
+    """Parse the staged-accumulation statement at text[j].
+
+    `S+=F(C[IV]);` or `S=S+F(C[IV]);` (extra_null=False, F1206);
+    `S+=F(null,C[IV]);` or `S=S+F(null,C[IV]);` (extra_null=True,
+    F1210). Returns next index. Never evals.
+    """
+    n = len(text)
+    acc, j = _js_parse_ident(text, j)
+    if acc != sname:
+        raise _JSExprFail(what + " accum target mismatch")
+    j = _js_skip_ws(text, j)
+    if j < n and text.startswith("+=", j):
+        j = _js_skip_ws(text, j + 2)
+    elif (j < n and text[j] == "="
+            and not text.startswith(("==", "=>"), j)):
+        acc2, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if acc2 != sname:
+            raise _JSExprFail(what + " accum target mismatch")
+        j = _js_skip_ws(text, j)
+        if text.startswith("++", j) or not text.startswith("+", j):
+            raise _JSExprFail(what + " accum not plus")
+        j = _js_skip_ws(text, j + 1)
+    else:
+        raise _JSExprFail(what + " accum not assign")
+    fn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if fn != fname:
+        raise _JSExprFail(what + " call target mismatch")
+    j = _js_expect(text, j, "(")
+    if extra_null:
+        m = _js_match_kw(text, _js_skip_ws(text, j), "null")
+        if m is None:
+            raise _JSExprFail(what + " not null thisarg")
+        j = _js_expect(text, m, ",")
+    arr, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if arr != cname:
+        raise _JSExprFail(what + " call arr mismatch")
+    j = _js_expect(text, j, "[")
+    ix, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if ix != ivar:
+        raise _JSExprFail(what + " call idx mismatch")
+    j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_f1206f1212_parse_for_loop(text, j, cname, sname, fname, bound,
+                                  extra_null, what):
+    """Parse `for(var|let IV=0;IV<C.length;IV++){<accum>;}` at text[j].
+
+    The body is the F1206/F1210 staged accumulation (see
+    _js_f1206f1212_parse_accum_call). Returns next index past `}`.
+    Never evals.
+    """
+    m = _js_match_kw(text, j, "for")
+    if m is None:
+        raise _JSExprFail(what + " not for")
+    j = _js_expect(text, m, "(")
+    kw, ivar, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if kw == "const":
+        raise _JSExprFail(what + " const loop var")
+    if ivar in bound:
+        raise _JSExprFail(what + " loop var clash")
+    j = _js_skip_ws(text, j)
+    n = len(text)
+    if (j >= n or text[j] != "0"
+            or (j + 1 < n and text[j + 1] in _JS_IDENT_CONT)):
+        raise _JSExprFail(what + " loop init not 0")
+    j = _js_expect(text, j + 1, ";")
+    i2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if i2 != ivar:
+        raise _JSExprFail(what + " loop cond var mismatch")
+    j = _js_expect(text, j, "<")
+    a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if a2 != cname:
+        raise _JSExprFail(what + " loop cond arr mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+    if m is None:
+        raise _JSExprFail(what + " loop cond not length")
+    j = _js_expect(text, m, ";")
+    j = _js_f1206f1212_parse_incr(text, _js_skip_ws(text, j), ivar,
+                                  what)
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    bound.add(ivar)
+    j = _js_f1206f1212_parse_accum_call(text, _js_skip_ws(text, j),
+                                        sname, fname, cname, ivar,
+                                        extra_null, what)
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, j, "}")
+    return j
+
+
+def _js_f1206f1212_parse_h_wrap_seq(text, state, what, parse_wrapper):
+    """Parse the shared F1207/F1211/F1212 skeleton (text start).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const H=C.map(<cb>).join('');`
+    `var|let|const S=<parse_wrapper>;`
+    `var|let|const RESULT=<additive>;` + end-of-text.
+    parse_wrapper(text, j, hname, dstr, bound, what) parses the
+    wrapper production and returns next index. Returns the decoded
+    string. Never evals.
+    """
+    j = _js_skip_ws(text, 0)
+    cname, dstr, j = _js_f1206f1212_parse_c_decl(text, j, state, what)
+    bound = {cname, "RESULT", "String"}
+    hname, j = _js_f1206f1212_parse_h_mapjoin(text, j, cname, bound,
+                                             state, what)
+    _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if sname in bound:
+        raise _JSExprFail(what + " bad acc name")
+    bound.add(sname)
+    j = parse_wrapper(text, _js_skip_ws(text, j), hname, dstr, bound,
+                      what)
+    j = _js_expect(text, j, ";")
+    return _js_f1206f1212_parse_result(text, j, dstr, sname, state,
+                                       what)
+
+
+def _js_f1206_stmt_decode(text):
+    """Decode F1206 Reflect.get function staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const F=Reflect.get(String,'fromCharCode');` (either quote)
+    `var|let|const S='';`
+    `for(var|let IV=0;IV<C.length;IV++){S+=F(C[IV]);}`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `Reflect.get(String,'fromCharCode')` is
+    the fromCharCode function object; `F(C[i])` applies ToUint16 per
+    code (F996 discipline via _js_f996f997_fcc_chr -- fromCharCode
+    ignores its receiver); the loop accumulates in index order.
+    Disjoint from the direct-loop twin (blocks coded -- the attack's
+    ctrl-direct-loop) by requiring the `Reflect.get(String,...)`
+    binding, and from F491 (expression-level Reflect.get desugar)
+    by the whole-text statement-sequence grammar (verified: the
+    filed shapes BREAK on the open tree). Anything else fails
+    closed: a miss, never a mis-decode. Returns the decoded string,
+    or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "Reflect.get(" not in _compact or "fromCharCode" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1206f1212_parse_c_decl(text, j, state,
+                                                    "F1206")
+        bound = {cname, "RESULT", "String", "Reflect"}
+        _, fname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if fname in bound:
+            raise _JSExprFail("F1206 bad fn name")
+        bound.add(fname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Reflect")
+        if m is None:
+            raise _JSExprFail("F1206 not Reflect")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+        if m is None:
+            raise _JSExprFail("F1206 not get")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1206 not String")
+        j = _js_expect(text, m, ",")
+        lit, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if lit != "fromCharCode":
+            raise _JSExprFail("F1206 not fcc lit")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1206 bad acc name")
+        bound.add(sname)
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1206 acc not empty")
+        j = _js_expect(text, j, ";")
+        j = _js_f1206f1212_parse_for_loop(text, _js_skip_ws(text, j),
+                                          cname, sname, fname, bound,
+                                          False, "F1206")
+        return _js_f1206f1212_parse_result(text, j, dstr, sname,
+                                           state, "F1206")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1207_parse_wrapper(text, j, hname, dstr, bound, what):
+    """Parse the F1207 no-op wrapper production at text[j].
+
+    `encodeURI(H)`, `H.toLowerCase()`, `H.normalize()`, or
+    `H.slice(0)` -- each verified identity on the decoded string
+    (fail closed otherwise). Returns next index. Never evals.
+    """
+    m = _js_match_kw(text, j, "encodeURI")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != hname:
+            raise _JSExprFail(what + " wrap arg mismatch")
+        j = _js_expect(text, j, ")")
+        # encodeURI escapes every char outside the unreserved +
+        # reserved + '#' set; identity iff the decoded string has
+        # no escapable char (node-exact per ECMA-262).
+        if not all(ch in _F1207_ENCODEURI_SAFE for ch in dstr):
+            raise _JSExprFail(what + " encodeURI not identity")
+        return j
+    nm, j = _js_parse_ident(text, j)
+    if nm != hname:
+        raise _JSExprFail(what + " wrap base mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "toLowerCase")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        # toLowerCase is identity on ASCII strings with no A-Z;
+        # non-ASCII fails closed (locale-independent Unicode case
+        # mapping is not modeled).
+        if not (dstr.isascii() and dstr == dstr.lower()):
+            raise _JSExprFail(what + " toLowerCase not identity")
+        return j
+    m = _js_match_kw(text, _js_skip_ws(text, j), "normalize")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        # normalize() defaults to NFC; NFC is identity on ASCII.
+        # Non-ASCII fails closed (Unicode-version skew between the
+        # model and V8 is not modeled).
+        if not dstr.isascii():
+            raise _JSExprFail(what + " normalize not identity")
+        return j
+    m = _js_match_kw(text, _js_skip_ws(text, j), "slice")
+    if m is None:
+        raise _JSExprFail(what + " bad wrapper")
+    j = _js_expect(text, m, "(")
+    j = _js_skip_ws(text, j)
+    n = len(text)
+    if (j >= n or text[j] != "0"
+            or (j + 1 < n and text[j + 1] in _JS_IDENT_CONT)):
+        raise _JSExprFail(what + " slice not 0")
+    j = _js_expect(text, j + 1, ")")
+    return j
+
+
+def _js_f1207_stmt_decode(text):
+    """Decode F1207 no-op method wrappers (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const H=C.map(<cb>).join('');` where <cb> is
+      `function(p){return String.fromCharCode(p);}` or the
+      `p=>` / `(p)=>` arrow twin
+    `var|let|const S=<wrapper>;` where <wrapper> is `encodeURI(H)`,
+      `H.toLowerCase()`, `H.normalize()`, or `H.slice(0)`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): each wrapper is the identity on the
+    decoded string -- encodeURI escapes nothing in the
+    unreserved/reserved/`#` alphabet (checked per char),
+    toLowerCase is identity on lowercase ASCII, normalize() (NFC)
+    is identity on ASCII, slice(0) copies the whole string -- so
+    the decoded value is the map+join assembly (ToUint16 via
+    _js_f996f997_fcc_chr). Disjoint from F1090 (which requires the
+    map+join assigned directly to S) by the wrapper production,
+    and from F1195 (template/String()/string-concat wrappers) by
+    the wrapper grammar (verified both directions). Sibling of
+    F1195 (OPEN). Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "fromCharCode" not in _compact or ".join(" not in _compact:
+        return None
+    if not any(s in _compact for s in ("encodeURI(", "toLowerCase(",
+                                       "normalize(", "slice(0)")):
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        return _js_f1206f1212_parse_h_wrap_seq(text, state, "F1207",
+                                               _js_f1207_parse_wrapper)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1208_stmt_decode(text):
+    """Decode F1208 rest-destructuring copy spread (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=[...C];`
+    `var|let|const S=String.fromCharCode(...D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `[...C]` is a shallow copy of the int
+    array; spreading it into fromCharCode applies ToUint16 per
+    element (F996 discipline via _js_f996f997_fcc_chr). Residual
+    of F1131 (CLOSED: splice/concat/new Array/map-identity/fill-map
+    copies) -- disjoint by grammar: F1131 requires those copy
+    forms, this requires the `[...C]` array-literal spread (the
+    `...C.slice()` twin blocks coded via F1131). Anything else
+    fails closed: a miss, never a mis-decode. Returns the decoded
+    string, or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "..." not in _compact or "fromCharCode(" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1206f1212_parse_c_decl(text, j, state,
+                                                    "F1208")
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if dname in bound:
+            raise _JSExprFail("F1208 bad copy name")
+        bound.add(dname)
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail("F1208 not spread")
+        nm, j = _js_parse_ident(text, j + 3)
+        if nm != cname:
+            raise _JSExprFail("F1208 spread base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1208 bad acc name")
+        bound.add(sname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1208 not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1208 not fromCharCode")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail("F1208 not spread call")
+        nm, j = _js_parse_ident(text, j + 3)
+        if nm != dname:
+            raise _JSExprFail("F1208 spread name mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        return _js_f1206f1212_parse_result(text, j, dstr, sname,
+                                           state, "F1208")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1209_stmt_decode(text):
+    """Decode F1209 while-shift accumulation (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.slice();`
+    `var|let|const S='';`
+    `while(D.length){S+=String.fromCharCode(D.shift());}`
+    (`>0` / `!=0` / `!==0` condition twins also modeled)
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `D.shift()` removes and returns the
+    first element; the loop runs until D is empty, accumulating
+    fromCharCode of each shifted code in order (ToUint16 via
+    _js_f996f997_fcc_chr). The `>0`/`!=0`/`!==0` conditions are
+    equivalent to the truthiness check for non-negative integer
+    lengths. Disjoint from the indexed-loop twin (blocks coded --
+    the attack's ctrl-direct-loop) by the `while`/`.shift()`
+    grammar. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "while(" not in _compact or ".shift()" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1206f1212_parse_c_decl(text, j, state,
+                                                    "F1209")
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if dname in bound:
+            raise _JSExprFail("F1209 bad copy name")
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail("F1209 slice base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "slice")
+        if m is None:
+            raise _JSExprFail("F1209 not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1209 bad acc name")
+        bound.add(sname)
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1209 acc not empty")
+        j = _js_expect(text, j, ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "while")
+        if m is None:
+            raise _JSExprFail("F1209 not while")
+        j = _js_expect(text, m, "(")
+        dn, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if dn != dname:
+            raise _JSExprFail("F1209 while arr mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+        if m is None:
+            raise _JSExprFail("F1209 while not length")
+        j = _js_skip_ws(text, m)
+        n = len(text)
+        jj = None
+        if text.startswith("!==", j):
+            jj = j + 3
+        elif text.startswith("!=", j):
+            jj = j + 2
+        elif text.startswith(">", j):
+            jj = j + 1
+        if jj is not None:
+            jj = _js_skip_ws(text, jj)
+            if (jj >= n or text[jj] != "0"
+                    or (jj + 1 < n
+                        and text[jj + 1] in _JS_IDENT_CONT)):
+                raise _JSExprFail("F1209 while cond not zero")
+            j = jj + 1
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        acc, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if acc != sname:
+            raise _JSExprFail("F1209 accum target mismatch")
+        j = _js_skip_ws(text, j)
+        if j < n and text.startswith("+=", j):
+            j = _js_skip_ws(text, j + 2)
+        else:
+            raise _JSExprFail("F1209 accum not plus-assign")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1209 not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1209 not fromCharCode")
+        j = _js_expect(text, m, "(")
+        dn2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if dn2 != dname:
+            raise _JSExprFail("F1209 shift arr mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "shift")
+        if m is None:
+            raise _JSExprFail("F1209 not shift")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        return _js_f1206f1212_parse_result(text, j, dstr, sname,
+                                           state, "F1209")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1210_stmt_decode(text):
+    """Decode F1210 Function.call.bind staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const F=String.fromCharCode.call.bind(String.fromCharCode);`
+    `var|let|const S='';`
+    `for(var|let IV=0;IV<C.length;IV++){S+=F(null,C[IV]);}`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `String.fromCharCode.call` is
+    `Function.prototype.call` with receiver fromCharCode;
+    `.bind(String.fromCharCode)` fixes its thisArg, so
+    `F(null,C[i])` invokes `fromCharCode.call(null,C[i])`, i.e.
+    `fromCharCode(C[i])` (the receiver is ignored) -- ToUint16
+    per code (F996 discipline via _js_f996f997_fcc_chr); the loop
+    accumulates in index order. Residual of F1066 (CLOSED: the
+    `.bind` variant) -- disjoint by requiring `.call.bind(`.
+    Disjoint from the direct-loop twin (blocks coded) by the
+    binding production. Anything else fails closed: a miss, never
+    a mis-decode. Returns the decoded string, or None. Never
+    evals.
+    """
+    _compact = _js_ws_compact(text)
+    if ".call.bind(" not in _compact or "fromCharCode" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1206f1212_parse_c_decl(text, j, state,
+                                                    "F1210")
+        bound = {cname, "RESULT", "String"}
+        _, fname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if fname in bound:
+            raise _JSExprFail("F1210 bad fn name")
+        bound.add(fname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1210 not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1210 not fromCharCode")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "call")
+        if m is None:
+            raise _JSExprFail("F1210 not call")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "bind")
+        if m is None:
+            raise _JSExprFail("F1210 not bind")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1210 not String2")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1210 not fromCharCode2")
+        j = _js_expect(text, m, ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in bound:
+            raise _JSExprFail("F1210 bad acc name")
+        bound.add(sname)
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail("F1210 acc not empty")
+        j = _js_expect(text, j, ";")
+        j = _js_f1206f1212_parse_for_loop(text, _js_skip_ws(text, j),
+                                          cname, sname, fname, bound,
+                                          True, "F1210")
+        return _js_f1206f1212_parse_result(text, j, dstr, sname,
+                                           state, "F1210")
+    except _JSExprFail:
+        return None
+
+
+def _js_f1211_parse_wrapper(text, j, hname, dstr, bound, what):
+    """Parse the F1211 `unescape(escape(H))` wrapper at text[j].
+
+    `unescape(escape(s)) === s` for every string (escape is
+    injective on its output alphabet and unescape is its inverse),
+    so no identity check is needed. Returns next index. Never
+    evals.
+    """
+    m = _js_match_kw(text, j, "unescape")
+    if m is None:
+        raise _JSExprFail(what + " not unescape")
+    j = _js_expect(text, m, "(")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "escape")
+    if m is None:
+        raise _JSExprFail(what + " not escape")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != hname:
+        raise _JSExprFail(what + " wrap arg mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_f1211_stmt_decode(text):
+    """Decode F1211 escape/unescape roundtrip (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const H=C.map(<cb>).join('');` (same <cb> as F1207)
+    `var|let|const S=unescape(escape(H));`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `unescape(escape(s)) === s` for every
+    string -- `escape` maps each non-unreserved char to `%XX` /
+    `%uXXXX` and `unescape` decodes exactly those forms back, so
+    the decoded value is the map+join assembly (ToUint16 via
+    _js_f996f997_fcc_chr). Disjoint from F1090 (bare map+join) by
+    the wrapper production and from F1207/F1212 (other wrappers)
+    by the wrapper grammar. Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "unescape(" not in _compact or "escape(" not in _compact:
+        return None
+    if "fromCharCode" not in _compact or ".join(" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        return _js_f1206f1212_parse_h_wrap_seq(text, state, "F1211",
+                                               _js_f1211_parse_wrapper)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1212_parse_wrapper(text, j, hname, dstr, bound, what):
+    """Parse the F1212 `decodeURIComponent(encodeURIComponent(H))`
+    wrapper at text[j].
+
+    The roundtrip is the identity only when `encodeURIComponent`
+    does not throw: it throws URIError on lone surrogates.
+    Surrogates CAN reach dstr via ToUint16 wraparound (e.g. code
+    120832 -> '\uD800' -- `_safe_chr` rejects the surrogate range
+    itself, but the `& 0xFFFF` mask applies after), so check
+    explicitly and fail closed (node throws: no successful
+    exfiltration to detect). Returns next index. Never evals.
+    """
+    # Fail closed on lone surrogates (spec-review fix): node throws
+    # URIError here, so the laundering never completes.
+    if any(0xD800 <= ord(ch) <= 0xDFFF for ch in dstr):
+        raise _JSExprFail(what + " lone surrogate")
+    m = _js_match_kw(text, j, "decodeURIComponent")
+    if m is None:
+        raise _JSExprFail(what + " not decodeURIComponent")
+    j = _js_expect(text, m, "(")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "encodeURIComponent")
+    if m is None:
+        raise _JSExprFail(what + " not encodeURIComponent")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != hname:
+        raise _JSExprFail(what + " wrap arg mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_f1212_stmt_decode(text):
+    """Decode F1212 URI-component roundtrip (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const H=C.map(<cb>).join('');` (same <cb> as F1207)
+    `var|let|const S=decodeURIComponent(encodeURIComponent(H));`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `decodeURIComponent(encodeURIComponent(s))
+    === s` whenever `encodeURIComponent` does not throw; it throws
+    only on lone surrogates. Surrogates can reach the decoded
+    string via ToUint16 wraparound (e.g. code 120832 -> '\uD800'),
+    so the wrapper fails closed on any lone surrogate (node
+    throws: no successful exfiltration to detect). Otherwise the
+    decoded value is the map+join assembly (ToUint16 via
+    _js_f996f997_fcc_chr). Disjoint from F1090 (bare map+join)
+    by the wrapper production and from F1207/F1211 (other
+    wrappers) by the wrapper grammar. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or
+    None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if ("decodeURIComponent(" not in _compact
+            or "encodeURIComponent(" not in _compact):
+        return None
+    if "fromCharCode" not in _compact or ".join(" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        return _js_f1206f1212_parse_h_wrap_seq(text, state, "F1212",
+                                               _js_f1212_parse_wrapper)
+    except _JSExprFail:
+        return None
+
+
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -147142,6 +147995,37 @@ def _decode_layer(text):
                      _js_f1201_stmt_decode, _js_f1202_stmt_decode,
                      _js_f1203_stmt_decode, _js_f1204_stmt_decode,
                      _js_f1205_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1206/F1207/F1208/F1209/F1210/F1211/F1212 (wave-408 lane 2):
+    # function-staging and no-op-wrapper residual decoders --
+    # Reflect.get staging, no-op method wrappers (encodeURI/
+    # toLowerCase/normalize/slice(0)), rest-destructuring copy
+    # spread, while-shift accumulation, Function.call.bind staging,
+    # escape/unescape roundtrip, and URI-component roundtrip. Each
+    # returns the decoded string or None; all filed shapes BREAK on
+    # the open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1090 (bare map+join), F1131 (other copy forms), F1066
+    # (.bind), F491 (expression-level Reflect.get), and F1195
+    # (other wrappers) by grammar (documented per hook). Additive,
+    # in F-number order.
+    for _stmtdec in (_js_f1206_stmt_decode, _js_f1207_stmt_decode,
+                     _js_f1208_stmt_decode, _js_f1209_stmt_decode,
+                     _js_f1210_stmt_decode, _js_f1211_stmt_decode,
+                     _js_f1212_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
