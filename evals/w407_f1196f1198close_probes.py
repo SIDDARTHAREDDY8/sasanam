@@ -47,7 +47,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
-RECOMPILE_PIN = 28  # gov/dlp.py untouched by this lane
+RECOMPILE_PIN = 29  # wave-407 merged  # gov/dlp.py untouched by this lane
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -335,8 +335,8 @@ def test_sibling_provenance_pins():
 
 
 @_t
-def test_still_open_f1182f1195():
-    """Round-74 DLP findings F1182-F1195 still MISS on this tree."""
+def test_now_closed_f1182f1195():
+    """Round-74 DLP findings F1182-F1195 now BLOCK on the merged tree."""
     nums = list(range(1182, 1196))
     bad = []
     total = 0
@@ -344,11 +344,11 @@ def test_still_open_f1182f1195():
         shapes = _redfirst_shapes("w406", num)
         total += len(shapes)
         for name, payload in shapes:
-            if not _misses(payload):
+            if _misses(payload):
                 bad.append(name)
     ok = not bad
     print(("HELD " if ok else "BREAK") +
-          " test_still_open_f1182f1195 (%d shapes%s)" %
+          " test_now_closed_f1182f1195 (%d shapes%s)" %
           (total, "" if ok else ": " + ",".join(bad)))
     return ok
 

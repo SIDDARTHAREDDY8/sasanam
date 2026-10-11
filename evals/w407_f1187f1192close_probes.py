@@ -45,8 +45,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143
-RECOMPILE_PIN = 28
-N_STMTDEC_LOOPS_PIN = 47  # wave-407 lane 2: 46 base + 1 new loop
+RECOMPILE_PIN = 29  # wave-407 merged
+N_STMTDEC_LOOPS_PIN = 49  # wave-407 merged  # wave-407 lane 2: 46 base + 1 new loop
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -342,22 +342,22 @@ def test_p5_siblings_hold():
 
 
 @_t
-def test_p5_still_open_miss():
-    """F1182-F1186, F1193-F1198 still MISS/QUIET on the lane tree."""
+def test_p5_now_closed_block():
+    """F1182-F1186, F1193-F1198 now BLOCK/FLAG on the merged tree."""
     bad = []
     for fn in list(range(1182, 1187)) + list(range(1193, 1196)):
         shapes = _redfirst_shapes("w406", fn)
-        hit = [name for name, p in shapes if not _misses(p)]
-        if hit:
-            bad.append("f%d:%s" % (fn, ",".join(hit)))
+        miss = [name for name, p in shapes if _misses(p)]
+        if miss:
+            bad.append("f%d:%s" % (fn, ",".join(miss)))
     from gov.instruction_provenance import instruction_shaped
     for fn in range(1196, 1199):
         shapes = _redfirst_shapes("w406", fn)
-        flagged = [name for name, p in shapes if instruction_shaped(p)]
-        if flagged:
-            bad.append("f%d:%s" % (fn, ",".join(flagged)))
-    return (not bad, "still-open%s"
-            % ((" BAD=" + ",".join(bad)) if bad else " (all MISS/quiet)"))
+        quiet = [name for name, p in shapes if not instruction_shaped(p)]
+        if quiet:
+            bad.append("f%d:%s" % (fn, ",".join(quiet)))
+    return (not bad, "now-closed%s"
+            % ((" BAD=" + ",".join(bad)) if bad else " (all BLOCK/flag)"))
 
 
 @_t

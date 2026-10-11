@@ -73,7 +73,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 29  # +1 _JS_WS_COMPACT_RE in this lane's follow-up
-N_STMTDEC_LOOPS_PIN = 47  # +1 dispatch loop in this lane (F1193/F1194/F1195)
+N_STMTDEC_LOOPS_PIN = 49  # wave-407 merged  # +1 dispatch loop in this lane (F1193/F1194/F1195)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -371,15 +371,21 @@ def test_p6_perf():
 # ---------------- p7: still-open ----------------
 
 @_t
-def test_p7_still_open():
-    """Round-74 opens outside this lane still MISS."""
+def test_p7_now_closed():
+    """Round-74 findings outside this lane now BLOCK/FLAG on the merged tree."""
     bad = []
-    for n in list(range(1182, 1193)) + list(range(1196, 1199)):
+    for n in range(1182, 1193):
         shapes = _redfirst_shapes("w406", n)
         for name, payload in shapes:
-            if not _misses(payload):
+            if _misses(payload):
                 bad.append("f%d:%s" % (n, name))
-    return (not bad, "round-74 opens still MISS%s"
+    from gov.instruction_provenance import instruction_shaped
+    for n in range(1196, 1199):
+        shapes = _redfirst_shapes("w406", n)
+        for name, payload in shapes:
+            if not instruction_shaped(payload):
+                bad.append("f%d:%s" % (n, name))
+    return (not bad, "round-74 now BLOCK/FLAG%s"
             % ("" if not bad else ": " + ",".join(bad[:5])))
 
 

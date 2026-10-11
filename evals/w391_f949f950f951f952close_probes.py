@@ -118,13 +118,14 @@ def test_p0_pin_recompile():
 
 @_t
 def test_p0_footer_state():
-    """Merged footer (wave-392): F949-F952 CLOSED (wave-391 lane 1); F967-F987 CLOSED; next F1005."""
+    """F949-F952 entries are CLOSED (wave-391 lane 1); footer lineage intact."""
     text = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("Next free finding: **F1005**" in text and "F949-F966 CLOSED (18)." in text
-          and "F967-F974 CLOSED (8" in text)
+    ok = True
     for fid in ("F949", "F950", "F951", "F952"):
         lines = [ln for ln in text.split("\n") if ln.startswith("(%s " % fid)]
         ok = ok and len(lines) == 1 and "CLOSED" in lines[0]
+    # Wave-407 merged footer present
+    ok = ok and "F1182-F1198 CLOSED (17)" in text and "next free F1228" in text
     return ("HELD" if ok else "BREAK", "footer-refs=%s" % ok)
 
 
