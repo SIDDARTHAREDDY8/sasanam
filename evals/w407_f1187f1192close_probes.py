@@ -46,7 +46,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143
 RECOMPILE_PIN = 29  # wave-407 merged
-N_STMTDEC_LOOPS_PIN = 49  # wave-407 merged  # wave-407 lane 2: 46 base + 1 new loop
+N_STMTDEC_LOOPS_PIN = 50  # wave-408 lane 4: +1 dispatch loop  # wave-407 lane 2: 46 base + 1 new loop
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -243,10 +243,10 @@ _FAIL_CLOSED = [
     ("f1187-flatmap-reject",
      "var C={I};var N=C.flatMap(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(2));var RESULT=S;",
      "f1187"),
-    # F1187: flat(1) depth must fail closed
-    ("f1187-flat1",
-     "var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(1));var RESULT=S;",
-     None),
+    # F1222/F1228 (wave-408 lane 4): flat(1) and other depths are now
+    # CLOSED via the widened F1187 hook -- the old "flat(1) must fail
+    # closed" pin is removed (it now HITs, as verified by
+    # w408_f1222_redfirst.py / w408_f1228_redfirst.py).
     # F1188: non-empty join separator must fail closed
     ("f1188-join-sep",
      "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join(',');var S=atob(btoa(T));var RESULT=S;",
