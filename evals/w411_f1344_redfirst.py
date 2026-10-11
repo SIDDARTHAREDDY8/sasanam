@@ -52,11 +52,11 @@ def _payload(tmpl, secret):
 
 _TMPLS = [
     ("spread-idx",
-     "var C={{I}};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/d.exec(T);var S=T.substring(...m.indices[1]);var RESULT=S;"),
+     "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/d.exec(T);var S=T.substring(...m.indices[1]);var RESULT=S;"),
     ("group0",
-     "var C={{I}};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/d.exec(T);var S=T.substring(m.indices[0][0],m.indices[0][1]);var RESULT=S;"),
+     "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/d.exec(T);var S=T.substring(m.indices[0][0],m.indices[0][1]);var RESULT=S;"),
     ("slice",
-     "var C={{I}};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/d.exec(T);var S=T.slice(m.indices[1][0],m.indices[1][1]);var RESULT=S;"),
+     "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/d.exec(T);var S=T.slice(m.indices[1][0],m.indices[1][1]);var RESULT=S;"),
 ]
 
 _CONTROLS = [

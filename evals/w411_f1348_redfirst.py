@@ -52,7 +52,7 @@ def _payload(tmpl, secret):
 
 _TMPLS = [
     ("arrow",
-     "var C={{I}};var D=C.map(c=>String.fromCodePoint(c));var E=D.join('');var F=[];for(var i=0;i<E.length;i++){F.push(String.fromCodePoint(E.codePointAt(i)));}var S=F.join('');var RESULT=S;"),
+     "var C={I};var D=C.map(c=>String.fromCodePoint(c));var E=D.join('');var F=[];for(var i=0;i<E.length;i++){F.push(String.fromCodePoint(E.codePointAt(i)));}var S=F.join('');var RESULT=S;"),
 ]
 
 _CONTROLS = [

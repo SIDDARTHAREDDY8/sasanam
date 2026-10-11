@@ -52,7 +52,7 @@ def _payload(tmpl, secret):
 
 _TMPLS = [
     ("slice0",
-     "var C={{I}};var D=Object.freeze(C.slice(0));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+     "var C={I};var D=Object.freeze(C.slice(0));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
 ]
 
 _CONTROLS = [
