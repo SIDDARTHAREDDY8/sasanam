@@ -73,7 +73,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 29
-N_STMTDEC_LOOPS_PIN = 50  # wave-407 merged 49; +1 dispatch loop in this lane (F1213-F1219)
+N_STMTDEC_LOOPS_PIN = 53  # wave-408 merge: 49 + 4 lanes  # wave-407 merged 49; +1 dispatch loop in this lane (F1213-F1219)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -330,14 +330,14 @@ def test_p6_perf():
 
 @_t
 def test_p7_still_open():
-    """Round-75 findings outside this lane still MISS."""
+    """Round-75 findings outside this lane now BLOCK on merged tree (all closed)."""
     bad = []
     for n in list(range(1199, 1213)) + list(range(1220, 1228)):
         shapes = _redfirst_shapes("w407", n)
         for name, payload in shapes:
-            if not _misses(payload):
+            if _misses(payload):
                 bad.append("f%d:%s" % (n, name))
-    return (not bad, "round-75 others still MISS%s"
+    return (not bad, "round-75 others now BLOCK%s"
             % ("" if not bad else ": " + ",".join(bad[:5])))
 
 
@@ -346,8 +346,8 @@ def test_p7_still_open():
 def _green_check():
     """Depth-1 green check on w407's attack battery (round-75 opens).
 
-    Expects exactly the F1213-F1219 pins to flip to BREAK (now
-    closed); every other pin must stay HELD. Honors GOV_SKIP_GREEN.
+    On merged tree, all F1199-F1227 pins flip to BREAK (all closed).
+    Honors GOV_SKIP_GREEN.
     """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w407_attack): skipped via GOV_SKIP_GREEN=1")
@@ -367,9 +367,9 @@ def _green_check():
                 m = re.search(r"test_open_w407_f(\d+)", line)
                 if m:
                     held.add(int(m.group(1)))
-        expected = set(range(1199, 1213)) | set(range(1220, 1228))
-        flipped = set(range(1213, 1220))
-        ok = (expected <= held) and not (flipped & held)
+        expected = set()
+        flipped = set(range(1199, 1228))
+        ok = not (flipped & held)
         tail = out.strip().split("\n")[-3:] if not ok else []
         return (ok, "green(w407_attack): held=%d/22 open, flipped=%d/7 %s"
                 % (len(expected & held), len(flipped - held),

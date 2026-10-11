@@ -62,7 +62,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 29
-STMTDEC_PIN = 50  # wave-408 lane 1: +1 F1199-F1205 dispatch loop
+STMTDEC_PIN = 53  # wave-408 merge: 49 + 4 lanes (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -284,19 +284,14 @@ def test_p0_stmtdec_pin():
 
 @_t
 def test_p0_footer_state():
-    """Lane-local footer: F1199-F1205 stamped CLOSED by this lane;
-    F1206-F1227 remain OPEN."""
+    """Merged tree: F1199-F1228 stamped CLOSED (all lanes)."""
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         text = f.read()
     bad = []
-    for num in range(1199, 1206):
-        if not re.search(r"\(F%d filed .*?\[CLOSED 2026-10-11 wave-408 lane 1\]" % num,
-                         text, re.DOTALL):
-            bad.append("F%d-not-closed" % num)
-    for num in range(1206, 1228):
+    for num in range(1199, 1229):
         m = re.search(r"\(F%d filed .*?; LOW, (OPEN|\[CLOSED)" % num, text)
-        if not m or m.group(1) != "OPEN":
-            bad.append("F%d-not-open" % num)
+        if not m or not m.group(1).startswith("[CLOSED"):
+            bad.append("F%d-not-closed" % num)
     ok = not bad
     print(("HELD " if ok else "BREAK") + " test_p0_footer_state%s"
           % ("" if ok else ": " + ",".join(bad)))
@@ -395,13 +390,13 @@ def test_sibling_closed_still_hit():
 
 @_t
 def test_still_open():
-    """F1206-F1227 (other lanes' scope) still MISS."""
+    """F1206-F1227 (other lanes' scope) now BLOCK on merged tree (all closed)."""
     bad = []
     total = 0
     for num in (1206, 1210, 1217, 1222, 1224):
         for name, payload in _redfirst_shapes("w407", num):
             total += 1
-            if not _misses(payload):
+            if _misses(payload):
                 bad.append("f%d" % num)
                 break
     ok = not bad
@@ -457,9 +452,8 @@ def test_perf_200_sites():
 
 @_t
 def test_green_w407():
-    """Depth-1 green check on w407's attack battery. On this lane's
-    tree, F1199-F1205 are CLOSED (their open pins must BREAK); all
-    other pins (F1206-F1227) must HELD. Honor GOV_SKIP_GREEN."""
+    """Depth-1 green check on w407's attack battery. On the merged
+    tree, F1199-F1228 are CLOSED (their open pins must BREAK). Honor GOV_SKIP_GREEN."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         print("HELD  test_green_w407 (skipped: GOV_SKIP_GREEN=1)")
         return True
@@ -477,10 +471,8 @@ def test_green_w407():
             parts = line.split()
             if len(parts) >= 2 and parts[1].startswith("test_open_w407_f"):
                 (held if parts[0] == "HELD" else broke).add(parts[1])
-        expect_broke = {"test_open_w407_f%d" % n for n in range(1199, 1206)}
-        expect_held = {"test_open_w407_f%d" % n for n in range(1206, 1228)}
-        ok = (expect_broke <= broke and expect_held <= held
-              and not (expect_held & broke) and not (expect_broke & held))
+        expect_broke = {"test_open_w407_f%d" % n for n in range(1199, 1228)}
+        ok = (expect_broke <= broke and not (expect_broke & held))
         print(("HELD " if ok else "BREAK") +
               " test_green_w407 (broke=%d held=%d)" % (len(broke), len(held)))
         if not ok:

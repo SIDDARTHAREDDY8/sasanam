@@ -56,7 +56,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
 TAXONOMY_PIN = 2143
 RECOMPILE_PIN = 29  # wave-407 merged
-N_STMTDEC_LOOPS_PIN = 50  # wave-407 merged (49) + 1 new lane-2 loop
+N_STMTDEC_LOOPS_PIN = 53  # wave-408 merge: 49 + 4 lanes  # wave-407 merged (49) + 1 new lane-2 loop
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -360,15 +360,15 @@ def test_p5_siblings_hold():
 
 @_t
 def test_p5_still_open_miss():
-    """F1199-F1205, F1213-F1227 still MISS on the lane tree."""
+    """F1199-F1205, F1213-F1227 now BLOCK on merged tree (all closed)."""
     bad = []
     for fn in list(range(1199, 1206)) + list(range(1213, 1228)):
         shapes = _redfirst_shapes("w407", fn)
-        miss = [name for name, p in shapes if not _misses(p)]
-        if miss:
-            bad.append("f%d:%s" % (fn, ",".join(miss)))
-    return (not bad, "still-open%s"
-            % ((" BAD=" + ",".join(bad)) if bad else " (all MISS)"))
+        hit = [name for name, p in shapes if _misses(p)]
+        if hit:
+            bad.append("f%d:%s" % (fn, ",".join(hit)))
+    return (not bad, "now-closed%s"
+            % ((" BAD=" + ",".join(bad)) if bad else " (all BLOCK)"))
 
 
 @_t
@@ -415,9 +415,7 @@ def test_p7_perf_200_sites():
 def _green_check():
     """Depth-1 green check on w407's round-75 attack battery.
 
-    On the lane tree, w407_attack_probes.py pins F1199-F1227 as OPEN.
-    The 7 now-closed findings (F1206-F1212) must BREAK (shapes now HIT);
-    the remaining 22 pins (F1199-F1205, F1213-F1227) must stay HELD.
+    On the merged tree, all F1199-F1227 pins BREAK (all closed).
     Honor GOV_SKIP_GREEN.
     """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
@@ -438,13 +436,10 @@ def _green_check():
             parts = line.split()
             if len(parts) >= 2 and parts[1].startswith("test_open_w407_f"):
                 (held if parts[0] == "HELD" else broke).add(parts[1])
-        expect_held = ({"test_open_w407_f%d" % n
-                        for n in list(range(1199, 1206)) + list(range(1213, 1228))})
-        expect_broke = {"test_open_w407_f%d" % n for n in range(1206, 1213)}
-        ok = (expect_held <= held and expect_broke <= broke
-              and not (expect_held & broke) and not (expect_broke & held))
-        return (ok, "green(w407_attack): held=%d/22 still-open, broke=%d/7 closed"
-                % (len(expect_held & held), len(expect_broke & broke)))
+        expect_broke = {"test_open_w407_f%d" % n for n in range(1199, 1228)}
+        ok = (expect_broke <= broke and not (expect_broke & held))
+        return (ok, "green(w407_attack): broke=%d/29 closed"
+                % (len(expect_broke & broke)))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
 

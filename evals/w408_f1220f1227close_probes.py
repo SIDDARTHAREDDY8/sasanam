@@ -83,7 +83,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 29
-N_STMTDEC_LOOPS_PIN = 50  # wave-408 lane 4: +1 dispatch loop (F1220/F1221/F1226/F1227)
+N_STMTDEC_LOOPS_PIN = 53  # wave-408 merge: 49 + 4 lanes  # wave-408 lane 4: +1 dispatch loop (F1220/F1221/F1226/F1227)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
@@ -417,14 +417,14 @@ def test_p6_perf():
 
 @_t
 def test_p7_other_opens_miss():
-    """F1199-F1219 (attack round 75, other lanes) still MISS."""
+    """F1199-F1219 (attack round 75, other lanes) now BLOCK on merged tree (all closed)."""
     bad = []
     for n in range(1199, 1220):
         shapes = _redfirst_shapes("w407", n)
         for name, payload in shapes:
-            if not _misses(payload):
+            if _misses(payload):
                 bad.append("f%d:%s" % (n, name))
-    return (not bad, "other opens still MISS%s"
+    return (not bad, "other opens now BLOCK%s"
             % ("" if not bad else ": " + ",".join(bad[:5])))
 
 
@@ -433,10 +433,8 @@ def test_p7_other_opens_miss():
 def _green_check():
     """Depth-1 green check on w407's attack battery (round-75 opens).
 
-    Expects exactly the F1220-F1227 pins to flip to BREAK (now
-    closed); every other pin must stay HELD. (F1228 was filed in
-    wave-408, not wave-407, so it has no pin here.) Honors
-    GOV_SKIP_GREEN.
+    On merged tree, all F1199-F1227 pins flip to BREAK (all closed).
+    Honors GOV_SKIP_GREEN.
     """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green(w407_attack): skipped via GOV_SKIP_GREEN=1")
@@ -456,12 +454,10 @@ def _green_check():
             m = re.search(r"(HELD|BREAK)\s+test_open_w407_f(\d+)", line)
             if m:
                 (held if m.group(1) == "HELD" else broken).add(int(m.group(2)))
-        expected_broken = set(range(1220, 1228))
-        expected_held = set(range(1199, 1220))
-        ok = (expected_broken <= broken and expected_held <= held
-              and not (expected_broken & held) and not (expected_held & broken))
-        return (ok, "green(w407_attack): broken=%s held=%d/21%s"
-                % (sorted(broken & expected_broken), len(expected_held & held),
+        expected_broken = set(range(1199, 1228))
+        ok = (expected_broken <= broken and not (expected_broken & held))
+        return (ok, "green(w407_attack): broken=%d/29%s"
+                % (len(expected_broken & broken),
                    "" if ok else " MISMATCH"))
     except Exception as e:  # noqa: BLE001
         return (False, "green check error: %r" % e)
