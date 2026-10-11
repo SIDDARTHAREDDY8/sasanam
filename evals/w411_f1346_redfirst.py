@@ -52,7 +52,7 @@ def _payload(tmpl, secret):
 
 _TMPLS = [
     ("three-hop",
-     "var C={{I}};var R='';for(var i=0;i<C.length;i++){R+=String.fromCharCode(C[i]);}var S=R;var T=S;var U=T;var RESULT=U;"),
+     "var C={I};var R='';for(var i=0;i<C.length;i++){R+=String.fromCharCode(C[i]);}var S=R;var T=S;var U=T;var RESULT=U;"),
 ]
 
 _CONTROLS = [

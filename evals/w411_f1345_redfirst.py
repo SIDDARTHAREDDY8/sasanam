@@ -54,7 +54,7 @@ _TMPLS = [
     ("dotall",
      "var C=[120,10,121];var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=/(.+)/ds.exec(T);var S=T.substring(m.indices[1][0],m.indices[1][1]);var RESULT=S;"),
     ("no-dflag",
-     "var C={{I}};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=[...T.matchAll(/(.)/g)];var S=m.map(function(x){return x[0];}).join('');var RESULT=S;"),
+     "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var m=[...T.matchAll(/(.)/g)];var S=m.map(function(x){return x[0];}).join('');var RESULT=S;"),
 ]
 
 _CONTROLS = [
