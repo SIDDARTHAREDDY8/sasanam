@@ -69,6 +69,7 @@ SECRET = "xoxb-01" + "23456789abcdef"
 # New round-88 pins: (finding, [payload templates with {I}]) -- first shape per finding
 _NEW_PINS = [
     ("F1608", ["var C={I};var E=C.flatMap(function(c,i,a){return [String.fromCharCode(c)];},\"q\");var S=E.join('');var RESULT=S;"]),
+    ("F1609", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padStart(S.length+4,`ab`);var T=P.slice(-S.length);var RESULT=T;"]),
     ("F1610", ["var C={I};var D=C.slice().sort(function(a,b){return Number(a>b);});var S=String.fromCharCode.apply(null,D);var RESULT=S;"]),
     ("F1612", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.slice(0,undefined);var RESULT=T;"]),
     ("F1613", ["var C={I};var E=C.map(function(c){return Object(c).valueOf();});var S=String.fromCharCode.apply(null,E);var RESULT=S;"]),
