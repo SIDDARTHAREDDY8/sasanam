@@ -161968,6 +161968,325 @@ def _js_f1329_stmt_decode(text):
     return None
 
 
+def _js_f1330_stmt_decode(text):
+    """Decode F1330 structuredClone nested-object residual (whole-text).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const W={c:C};`  (or `var|let|const W={w:{c:C}};`)
+    `var|let|const V=structuredClone(W);`
+    `var|let|const S=String.fromCharCode.apply(null,V.c);`
+    (or `String.fromCharCode.apply(null,V.w.c)` for the nested form)
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): structuredClone deep-copies the object;
+    the clone's `.c` (or `.w.c`) array is element-identical to C,
+    so the apply spread assembles the credential exactly like the
+    direct form (which is already blocked). Disjoint from F1262
+    (which models structuredClone of char-array stagings and
+    `{a:...}` objects followed by `.join('')`, not code-array
+    `{c:...}` objects followed by `.apply`) by grammar. Returns
+    the decoded string, or None. Never evals.
+    """
+    if "structuredClone(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                    "F1330")
+        _, wname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if wname in ("RESULT", cname):
+            raise _JSExprFail("F1330 bad obj name")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_skip_ws(text, j)
+        nested = False
+        m = _js_match_kw(text, j, "w")
+        if m is not None:
+            nested = True
+            j = _js_expect(text, m, ":")
+            j = _js_expect(text, _js_skip_ws(text, j), "{")
+            j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "c")
+        if m is None:
+            raise _JSExprFail("F1330 not c key")
+        j = _js_expect(text, m, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail("F1330 c arr mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        if nested:
+            j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, vname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if vname in ("RESULT", cname, wname):
+            raise _JSExprFail("F1330 bad clone name")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "structuredClone")
+        if m is None:
+            raise _JSExprFail("F1330 not structuredClone")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != wname:
+            raise _JSExprFail("F1330 clone arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname, wname, vname):
+            raise _JSExprFail("F1330 bad acc name")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "String")
+        if m is None:
+            raise _JSExprFail("F1330 not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1330 not fcc")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "apply")
+        if m is None:
+            raise _JSExprFail("F1330 not apply")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "null")
+        if m is None:
+            raise _JSExprFail("F1330 not null")
+        j = _js_expect(text, _js_skip_ws(text, m), ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != vname:
+            raise _JSExprFail("F1330 apply base mismatch")
+        if nested:
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "w")
+            if m is None:
+                raise _JSExprFail("F1330 not .w")
+            j = m
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "c")
+        if m is None:
+            raise _JSExprFail("F1330 not .c")
+        j = m
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, "F1330 apply")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1330 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                          state, "F1330")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1331_stmt_decode(text):
+    """Decode F1331 structuredClone double-laundering residual (whole-text).
+
+    `var|let|const C=[INT,...];`
+    either (codes form):
+      `var|let|const V=structuredClone(structuredClone(C));`
+      `var|let|const S=String.fromCharCode.apply(null,V);`
+    or (chars form):
+      `var|let|const A=C.map(function(c){return String.fromCharCode(c);});`
+      `var|let|const V=structuredClone(structuredClone(A));`
+      `var|let|const S=V.join('');`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): structuredClone deep-copies twice; the
+    doubly-cloned array is element-identical to the original, so
+    the apply spread (codes) or join (chars) assembles the
+    credential exactly like the singly-cloned form. Disjoint from
+    F1262 (which models a single structuredClone unwrap) by the
+    doubled call. Returns the decoded string, or None. Never
+    evals.
+    """
+    if "structuredClone(structuredClone(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                    "F1331")
+        j = _js_skip_ws(text, j)
+        save = j
+        is_chars = False
+        try:
+            _, aname, j = _js_f96x_decl(text, j)
+            if aname in ("RESULT", cname):
+                raise _JSExprFail("F1331 bad arr name")
+            j = _js_f1103_parse_map_call(text, _js_skip_ws(text, j),
+                                        cname, "F1331")
+            j = _js_expect(text, j, ";")
+            is_chars = True
+            arrname = aname
+        except _JSExprFail:
+            j = save
+            arrname = cname
+        _, vname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if vname in ("RESULT", cname, arrname):
+            raise _JSExprFail("F1331 bad clone name")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "structuredClone")
+        if m is None:
+            raise _JSExprFail("F1331 not structuredClone")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "structuredClone")
+        if m is None:
+            raise _JSExprFail("F1331 not double clone")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != arrname:
+            raise _JSExprFail("F1331 clone arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname, arrname, vname):
+            raise _JSExprFail("F1331 bad acc name")
+        if is_chars:
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if nm != vname:
+                raise _JSExprFail("F1331 join base mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "join")
+            if m is None:
+                raise _JSExprFail("F1331 not join")
+            j = _js_expect(text, m, "(")
+            sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+            if sep != "":
+                raise _JSExprFail("F1331 join sep not empty")
+            j = _js_expect(text, j, ")")
+        else:
+            j = _js_skip_ws(text, j)
+            m = _js_match_kw(text, j, "String")
+            if m is None:
+                raise _JSExprFail("F1331 not String")
+            j = _js_expect(text, m, ".")
+            m = _js_match_kw(text, j, "fromCharCode")
+            if m is None:
+                raise _JSExprFail("F1331 not fcc")
+            j = _js_expect(text, m, ".")
+            m = _js_match_kw(text, j, "apply")
+            if m is None:
+                raise _JSExprFail("F1331 not apply")
+            j = _js_expect(text, m, "(")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "null")
+            if m is None:
+                raise _JSExprFail("F1331 not null")
+            j = _js_expect(text, _js_skip_ws(text, m), ",")
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if nm != vname:
+                raise _JSExprFail("F1331 apply base mismatch")
+            j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, "F1331 clone")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1331 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                          state, "F1331")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+def _js_f1336_stmt_decode(text):
+    """Decode F1336 Set.forEach arrow-callback twin (whole-text).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S=<string>;`  (empty or non-empty init)
+    `new Set(C.keys()).forEach(i=>S+=String.fromCharCode(C[i]));`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): C.keys() yields 0..n-1; the Set holds
+    them in insertion order; forEach visits in insertion order.
+    The arrow body `S+=String.fromCharCode(C[i])` is an assignment
+    expression, so the accumulation is `init + dstr` exactly like
+    the function-callback twins. Disjoint from F1264 (function
+    callback, empty init) and F1317 (function callback, non-empty
+    init) by the arrow `=>` callback form. Returns the decoded
+    string, or None. Never evals.
+    """
+    if "new Set(" not in text or ".forEach(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                    "F1336")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname):
+            raise _JSExprFail("F1336 bad acc name")
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ";")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "new")
+        if m is None:
+            raise _JSExprFail("F1336 not new")
+        j = _js_skip_ws(text, m)
+        if not text.startswith("Set", j):
+            raise _JSExprFail("F1336 not Set")
+        j = _js_expect(text, j + 3, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail("F1336 keys base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "keys")
+        if m is None:
+            raise _JSExprFail("F1336 not keys")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "forEach")
+        if m is None:
+            raise _JSExprFail("F1336 not forEach")
+        j = _js_expect(text, m, "(")
+        ip, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail("F1336 cb not arrow")
+        j += 2
+        a2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if a2 != sname:
+            raise _JSExprFail("F1336 accum target mismatch")
+        j = _js_skip_ws(text, j)
+        n = len(text)
+        if j + 1 >= n or text[j] != "+" or text[j + 1] != "=":
+            raise _JSExprFail("F1336 not plus-equals")
+        j += 2
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail("F1336 not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "fromCharCode")
+        if m is None:
+            raise _JSExprFail("F1336 not fcc")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail("F1336 arr mismatch")
+        j = _js_expect(text, j, "[")
+        ip2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if ip2 != ip:
+            raise _JSExprFail("F1336 idx mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, "F1336 forEach")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1336 not RESULT")
+        val, j = _js_f104x_additive_result(text, j, init + dstr,
+                                          sname, state, "F1336")
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
 
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
@@ -163400,6 +163719,23 @@ def _decode_layer(text):
                      _js_f1325_stmt_decode, _js_f1326_stmt_decode,
                      _js_f1327_stmt_decode, _js_f1328_stmt_decode,
                      _js_f1329_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1330/F1331/F1336 (wave-412 lane 2): structuredClone
+    # nested-object and double-laundering residuals, and the
+    # Set.forEach arrow-callback twin. Each parses a strict
+    # whole-text grammar; every filed shape BREAKs on the open
+    # tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint
+    # from F1262 (single clone), F1264/F1317 (function callback)
+    # by grammar (documented per hook). Additive, in F-number
+    # order.
+    for _stmtdec in (_js_f1330_stmt_decode, _js_f1331_stmt_decode,
+                     _js_f1336_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
