@@ -1230,6 +1230,122 @@ def _has_hidden_annotation_xml(text):
         if _is_prose_shaped(re.sub(r"<[^>]*>", "", region)):
             return True
     return False
+def _is_substantive_prose(value):
+    """True when *value* is substantive hidden prose (F1283-F1288).
+
+    The family-wide `_is_prose_shaped` gate (has whitespace) is
+    too permissive for these carriers: honest 2-word hints
+    ("Enter text", "50 percent", "Type here") must stay quiet
+    per the filed controls, while the 14-word filed prose flags.
+    Requires prose shape AND at least 3 whitespace-separated
+    words. Never evals.
+    """
+    return _is_prose_shaped(value) and len(value.split()) >= 3
+
+
+def _has_hidden_select_name(text):
+    """True when prose hides in a `<select name>` attribute (F1283).
+
+    F1283: the name attribute is the form control name -- it is
+    never rendered as page-body text, so prose there is hidden from
+    the human reader (the F1024 rationale). Honest machine names
+    (country-select) stay quiet via the prose-shape gate. Disjoint
+    from F1256's `<form name>` (different element). Never evals.
+    """
+    for m in re.finditer(r"<select\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "name")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_textarea_placeholder(text):
+    """True when prose hides in a `<textarea placeholder>` (F1284).
+
+    F1284: the placeholder is hint text, not content -- it is not
+    rendered as page-body text, so prose there is hidden from the
+    human reader (the F1024 rationale). Honest hint text (Enter
+    text) stays quiet via the prose-shape gate. Disjoint from
+    F1286's `<input placeholder>` (different element). Never evals.
+    """
+    for m in re.finditer(r"<textarea\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "placeholder")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_th_abbr(text):
+    """True when prose hides in a `<th abbr>` attribute (F1285).
+
+    F1285: the abbr attribute is the header abbreviation for
+    assistive tech -- it is never rendered as page-body text, so
+    prose there is hidden from the human reader (the F1024
+    rationale). Honest abbreviations (hdr) stay quiet via the
+    prose-shape gate. No filed th-abbr class exists. Never evals.
+    """
+    for m in re.finditer(r"<th\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "abbr")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_input_placeholder(text):
+    """True when prose hides in an `<input placeholder>` (F1286).
+
+    F1286: the placeholder is hint text, not content -- it is not
+    rendered as page-body text, so prose there is hidden from the
+    human reader (the F1024 rationale). Honest hint text (Search)
+    stays quiet via the prose-shape gate. Disjoint from F1284's
+    `<textarea placeholder>` (different element). Never evals.
+    """
+    for m in re.finditer(r"<input\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "placeholder")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_aria_valuetext(text):
+    """True when prose hides in an `aria-valuetext` attribute (F1287).
+
+    F1287: the valuetext is an assistive-tech alternative to the
+    value -- it is never rendered as page-body text, so prose
+    there is hidden from the human reader (the F1024 rationale).
+    Honest values (50 percent) stay quiet via the prose-shape
+    gate. Disjoint from F1098's aria-roledescription /
+    aria-description (different attribute names; _f1047_attr_value
+    anchors the full escaped name). Never evals.
+    """
+    for m in re.finditer(r"<[a-zA-Z][^>]*>", text):
+        value, has_value = _f1047_attr_value(m.group(0),
+                                             "aria-valuetext")
+        if has_value and _is_substantive_prose(value):
+            return True
+    return False
+
+
+def _has_hidden_aria_placeholder(text):
+    """True when prose hides in an `aria-placeholder` attribute (F1288).
+
+    F1288: the aria-placeholder is an assistive-tech hint -- it is
+    never rendered as page-body text, so prose there is hidden from
+    the human reader (the F1024 rationale). Honest hint text (Type
+    here) stays quiet via the prose-shape gate. Disjoint from
+    F1287's aria-valuetext and F1098's aria-roledescription /
+    aria-description (different attribute names). Never evals.
+    """
+    for m in re.finditer(r"<[a-zA-Z][^>]*>", text):
+        value, has_value = _f1047_attr_value(m.group(0),
+                                             "aria-placeholder")
+        if has_value and _is_substantive_prose(value):
+            return True
+    return False
 
 
 def _has_hidden_hidden_option(text):
@@ -2062,10 +2178,27 @@ def instruction_shaped(text):
     # title-attr, and F1073's annotation variants (different
     # elements/attributes); documented per detector. Honest
     # machine tokens stay quiet via the prose-shape gate.
-    return (_has_hidden_button_value(norm)
+    if (_has_hidden_button_value(norm)
             or _has_hidden_form_name(norm)
             or _has_hidden_math_alttext(norm)
-            or _has_hidden_annotation_xml(norm))
+            or _has_hidden_annotation_xml(norm)):
+        return True
+    # F1283/F1284/F1285/F1286/F1287/F1288: the same construction
+    # for six further hidden-from-human carriers -- `<select
+    # name>`, `<textarea placeholder>`, `<th abbr>`, `<input
+    # placeholder>`, `aria-valuetext`, and `aria-placeholder`.
+    # None is rendered as page-body text, so prose there is
+    # hidden from the human reader (the F1024 rationale).
+    # Disjoint from F1256's `<form name>` (different element),
+    # F1284 vs F1286 by element, and F1098's aria-* variants
+    # (different attribute names); documented per detector.
+    # Honest machine tokens stay quiet via the prose-shape gate.
+    return (_has_hidden_select_name(norm)
+            or _has_hidden_textarea_placeholder(norm)
+            or _has_hidden_th_abbr(norm)
+            or _has_hidden_input_placeholder(norm)
+            or _has_hidden_aria_valuetext(norm)
+            or _has_hidden_aria_placeholder(norm))
 
 
 class ActionRequest(object):
