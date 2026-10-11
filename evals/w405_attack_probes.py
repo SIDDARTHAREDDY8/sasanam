@@ -110,19 +110,9 @@ for _n in range(1159, 1180):
 for _n in range(1180, 1182):
     _open_prov_pin("w405", _n)
 
-# Carried round-72 decoder pins (F1142-F1150, F1153-F1155) -- still OPEN.
-for _n in range(1142, 1151):
-    _open_pin("w404", _n)
-for _n in (1153, 1154, 1155):
-    _open_pin("w404", _n)
-
-# Carried round-72 provenance pins (F1151-F1152) -- still OPEN (QUIET).
-for _n in range(1151, 1153):
-    _open_prov_pin("w404", _n)
-
-# Carried wave-404 merge-audit residual pins (F1156-F1157) -- still OPEN.
-for _n in range(1156, 1158):
-    _open_pin("w404", _n)
+# Carried round-72 pins (F1142-F1157) are now CLOSED on the merged tree
+# (wave-405 lanes 1-4); verified by w404_attack_probes.py (F1142-F1157 CLOSED).
+# Not duplicated here.
 
 
 @_t
