@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F1571 red-first: 1-param flatMap null thisArg
+"""F1571 red-first: String.prototype.replace with /./gsu regex and identity replacer
 
-Filed 2026-10-11 18:49 UTC, wave-419 lane 1 spec-review residual. Prints BREAK on the open tree.
+Filed 2026-10-11 18:37 UTC, wave-419 lane 3 Spec-review residual (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -46,12 +46,12 @@ def _codes(s):
 
 _TMPLS = [
     ('f1571-0',
-     "var C={I};var E=C.flatMap(function(c){return [String.fromCharCode(c)];},null);var S=E.join('');var RESULT=S;"),
+     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.replace(/./gsu,function(m){return m;});var RESULT=T;")
 ]
 
 _CONTROLS = [
-    ('direct-ctrl',
-     "var C={I};var E=C.flatMap(function(c){return [String.fromCharCode(c)];},[]);var S=E.join('');var RESULT=S;"),
+    ("direct-ctrl",
+     "var C={I};var D=C.map(function(c){return String.fromCharCode(c);});var S=D.join('');var U=S.replace('x','x');var RESULT=U;"),
 ]
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F1573 red-first: sort b<a without slice
+"""F1573 red-first: map(String) roundtrip with arrow Number callback
 
-Filed 2026-10-11 18:49 UTC, wave-419 lane 1 spec-review residual. Prints BREAK on the open tree.
+Filed 2026-10-11 18:37 UTC, wave-419 lane 3 Spec-review residual (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -46,12 +46,12 @@ def _codes(s):
 
 _TMPLS = [
     ('f1573-0',
-     "var C={I};var D=C.sort(function(a,b){return b<a;});var S=D.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;"),
+     "var C={I};var D=C.map(String);var T=D.join(',').split(',').map(x=>Number(x));var RESULT=T.map(function(c){return String.fromCharCode(c);}).join('');")
 ]
 
 _CONTROLS = [
-    ('direct-ctrl',
-     "var C={I};var D=C.slice().sort(function(a,b){return b<a;});var S=D.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;"),
+    ("direct-ctrl",
+     "var C={I};var D=C.map(function(c){return String.fromCharCode(c);});var S=D.join('');var U=S.replace('x','x');var RESULT=U;"),
 ]
 
 

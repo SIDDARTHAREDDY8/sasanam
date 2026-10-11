@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F1570 red-first: Direct-RESULT EM SPACE trim
+"""F1570 red-first: String.prototype.replace with arrow-function replacer identity
 
-Filed 2026-10-11 18:49 UTC, wave-419 lane 1 spec-review residual. Prints BREAK on the open tree.
+Filed 2026-10-11 18:37 UTC, wave-419 lane 3 Spec-review residual (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -46,12 +46,12 @@ def _codes(s):
 
 _TMPLS = [
     ('f1570-0',
-     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=('\\u2003'+S+'\\u2003').trim();"),
+     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.replace(/./g,(m)=>m);var RESULT=T;")
 ]
 
 _CONTROLS = [
-    ('direct-ctrl',
-     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T='\\u2003'+S+'\\u2003';var RESULT=T.trim();"),
+    ("direct-ctrl",
+     "var C={I};var D=C.map(function(c){return String.fromCharCode(c);});var S=D.join('');var U=S.replace('x','x');var RESULT=U;"),
 ]
 
 

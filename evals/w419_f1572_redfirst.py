@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F1572 red-first: padStart default padString
+"""F1572 red-first: map(String) roundtrip with default join separator
 
-Filed 2026-10-11 18:49 UTC, wave-419 lane 1 spec-review residual. Prints BREAK on the open tree.
+Filed 2026-10-11 18:37 UTC, wave-419 lane 3 Spec-review residual (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -46,12 +46,12 @@ def _codes(s):
 
 _TMPLS = [
     ('f1572-0',
-     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padStart(S.length+10);var RESULT=P.slice(-S.length);"),
+     "var C={I};var D=C.map(String);var T=D.join().split(',').map(Number);var RESULT=T.map(function(c){return String.fromCharCode(c);}).join('');")
 ]
 
 _CONTROLS = [
-    ('direct-ctrl',
-     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var P=S.padStart(S.length+10,'ab');var RESULT=P.slice(-S.length);"),
+    ("direct-ctrl",
+     "var C={I};var D=C.map(function(c){return String.fromCharCode(c);});var S=D.join('');var U=S.replace('x','x');var RESULT=U;"),
 ]
 
 

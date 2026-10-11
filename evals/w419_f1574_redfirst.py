@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F1574 red-first: substring(0,S.length)
+"""F1574 red-first: Object.assign(new Array(),C) copy staging
 
-Filed 2026-10-11 18:49 UTC, wave-419 lane 1 spec-review residual. Prints BREAK on the open tree.
+Filed 2026-10-11 18:37 UTC, wave-419 lane 3 Spec-review residual (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -46,12 +46,12 @@ def _codes(s):
 
 _TMPLS = [
     ('f1574-0',
-     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S.substring(0,S.length);"),
+     "var C={I};var D=Object.assign(new Array(),C);var RESULT=D.map(function(c){return String.fromCharCode(c);}).join('');")
 ]
 
 _CONTROLS = [
-    ('direct-ctrl',
-     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S.substring(S.length,0);"),
+    ("direct-ctrl",
+     "var C={I};var D=C.map(function(c){return String.fromCharCode(c);});var S=D.join('');var U=S.replace('x','x');var RESULT=U;"),
 ]
 
 
