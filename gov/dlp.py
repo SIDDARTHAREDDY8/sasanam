@@ -165459,6 +165459,339 @@ def _js_f1364_stmt_decode(text):
         return None
 
 
+# ---------------------------------------------------------------------------
+# F1365: splice(0) copy staging (F978 residual)
+# ---------------------------------------------------------------------------
+
+def _js_f1365_stmt_decode(text):
+    """Decode F1365 splice(0) copy staging (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.splice(0);` or
+    `var|let|const D=C.splice(0,C.length);`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): splice(0) returns a shallow copy of every
+    element; splice(0,C.length) evaluates deleteCount to the
+    pre-mutation length, also returning every element. D is therefore
+    exactly the C codes and the decode is dstr. Any other splice
+    arity or arguments -- splice(1), splice(0,1), the no-arg
+    splice() (returns []) -- fail closed: a miss, never a
+    mis-decode. Disjoint from F978 (splice removal/insertion
+    reassembly with arguments) by grammar -- the filed shapes BREAK
+    on the open tree. Returns the decoded string, or None. Never
+    evals.
+    """
+    _compact = _js_ws_compact(text)
+    if ".splice(" not in _compact or "fromCharCode" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1365"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                    what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " splice base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "splice")
+        if m is None:
+            raise _JSExprFail(what + " not splice")
+        j = _js_expect(text, m, "(")
+        start, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if start != 0:
+            raise _JSExprFail(what + " splice start not 0")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == ",":
+            j = _js_skip_ws(text, j + 1)
+            nm2, j = _js_parse_ident(text, j)
+            if nm2 != cname:
+                raise _JSExprFail(what + " splice len base mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+            if m is None:
+                raise _JSExprFail(what + " not length")
+            j = _js_skip_ws(text, m)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " splice")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1291f1292_parse_apply_null(text, j, dname, what)
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F1366: toExponential map codec (F1267 residual)
+# ---------------------------------------------------------------------------
+
+def _js_f1366_texp2(code):
+    """Node-exact Number(code.toExponential(2)) for 0<=code<=0x10FFFF.
+
+    V8's toExponential(2) rounds the 3-significant-digit mantissa
+    half-UP (node v24.20.0; verified differentially against node over
+    0..2000 plus 15k strided samples to 2M). Python's %.2e rounds
+    half-even, so this uses pure integer arithmetic instead: scale
+    to 3 significant digits, round half-up, scale back. The int-array
+    grammar admits only 0<=code<=0x10FFFF (exact binary64), so the
+    emulation is exact. Never evals.
+    """
+    if code == 0:
+        return 0
+    e = len(str(code)) - 3
+    if e < 0:
+        return code
+    div = 10 ** e
+    q, r = divmod(code, div)
+    if 2 * r >= div:
+        q += 1
+    return q * div
+
+
+def _js_f1366_parse_number_toexponential(text, j, pname, what):
+    """Parse `Number(pname.toExponential(2))` at text[j] (F1366 shared).
+
+    Only the filed digits literal 2 is admitted -- the node-exact
+    emulation is digit-specific. Returns next_index. Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "Number")
+    if m is None:
+        raise _JSExprFail(what + " not Number")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != pname:
+        raise _JSExprFail(what + " toexponential base mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "toExponential")
+    if m is None:
+        raise _JSExprFail(what + " not toExponential")
+    j = _js_expect(text, m, "(")
+    digs, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+    if digs != 2:
+        raise _JSExprFail(what + " toExponential digits not 2")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_f1366_stmt_decode(text):
+    """Decode F1366 toExponential map codec (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(c){return Number(c.toExponential(2));});`
+    or the `c=>Number(c.toExponential(2))` arrow twin.
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the int-array grammar admits only
+    0<=code<=0x10FFFF, and Number(code.toExponential(2)) is emulated
+    exactly (see _js_f1366_texp2: V8 rounds half-up); fromCharCode
+    then applies ToUint16 per code. Disjoint from F1267
+    (padStart/toString(16)/toPrecision codecs) and F1203/F1356
+    (toFixed codecs) by the codec grammar -- the filed shapes BREAK
+    on the open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if ".toExponential(" not in _compact or ".apply(null," not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1366"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        codes, j = _js_f1046_parse_int_array(text, _js_skip_ws(text,
+                                                               j),
+                                             state)
+        if not codes:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        bound = {cname, "RESULT", "String", "Number"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound,
+                                        {"String", "Number"}, what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " arr mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+        if m is None:
+            raise _JSExprFail(what + " not map")
+        j = _js_expect(text, m, "(")
+        # callback: function(c){return Number(c.toExponential(2));}
+        # or the arrow twin c=>Number(c.toExponential(2))
+        m2 = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m2 is not None:
+            j = _js_expect(text, m2, "(")
+            p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, "{")
+            m3 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+            if m3 is None:
+                raise _JSExprFail(what + " cb no return")
+            j = _js_f1366_parse_number_toexponential(text, m3, p1,
+                                                     what)
+            j = _js_expect(text, j, ";")
+            j = _js_expect(text, j, "}")
+        else:
+            j = _js_skip_ws(text, j)
+            p1, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            if not text.startswith("=>", j):
+                raise _JSExprFail(what + " cb not arrow")
+            j = _js_f1366_parse_number_toexponential(text, j + 2,
+                                                     p1, what)
+        if p1 in bound:
+            raise _JSExprFail(what + " cb param clash")
+        bound.add(p1)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        dstr = _js_f996f997_fcc_chr([_js_f1366_texp2(c) for c in codes],
+                                    what)
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1291f1292_parse_apply_null(text, j, dname, what)
+        _js_f96x_charge(state, what + " apply")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F1367: Math.abs wrapper staging (F1292 residual)
+# ---------------------------------------------------------------------------
+
+def _js_f1367_parse_math_abs(text, j, pname, what):
+    """Parse `Math.abs(pname)` at text[j] (F1367 shared).
+
+    Returns next_index. Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "Math")
+    if m is None:
+        raise _JSExprFail(what + " not Math")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "abs")
+    if m is None:
+        raise _JSExprFail(what + " not abs")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != pname:
+        raise _JSExprFail(what + " abs arg mismatch")
+    j = _js_expect(text, j, ")")
+    return j
+
+
+def _js_f1367_stmt_decode(text):
+    """Decode F1367 Math.abs wrapper staging (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(c){return Math.abs(c);});`
+    or the `c=>Math.abs(c)` arrow twin.
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the int-array grammar admits only
+    0<=code<=0x10FFFF, on which Math.abs is the identity, so the
+    decode is dstr. Disjoint from F1292 (Math trunc/floor/ceil/round
+    with p+/-0.1 expressions) by the wrapper grammar -- the filed
+    shapes BREAK on the open tree. Anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "Math.abs(" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1367"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                    what)
+        bound = {cname, "RESULT", "String", "Math"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound,
+                                        {"String", "Math"}, what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " arr mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+        if m is None:
+            raise _JSExprFail(what + " not map")
+        j = _js_expect(text, m, "(")
+        # callback: function(c){return Math.abs(c);} or arrow twin
+        m2 = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m2 is not None:
+            j = _js_expect(text, m2, "(")
+            p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, "{")
+            m3 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+            if m3 is None:
+                raise _JSExprFail(what + " cb no return")
+            j = _js_f1367_parse_math_abs(text, m3, p1, what)
+            j = _js_expect(text, j, ";")
+            j = _js_expect(text, j, "}")
+        else:
+            j = _js_skip_ws(text, j)
+            p1, j = _js_parse_ident(text, j)
+            j = _js_skip_ws(text, j)
+            if not text.startswith("=>", j):
+                raise _JSExprFail(what + " cb not arrow")
+            j = _js_f1367_parse_math_abs(text, j + 2, p1, what)
+        if p1 in bound:
+            raise _JSExprFail(what + " cb param clash")
+        bound.add(p1)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1291f1292_parse_apply_null(text, j, dname, what)
+        _js_f96x_charge(state, what + " apply")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname,
+                                           state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -167007,6 +167340,22 @@ def _decode_layer(text):
     for _stmtdec in (_js_f1360_stmt_decode, _js_f1361_stmt_decode,
                      _js_f1362_stmt_decode, _js_f1363_stmt_decode,
                      _js_f1364_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1365-F1367 (wave-414 lane 2): splice(0) copy staging (F978
+    # residual), toExponential map codec (F1267 residual), and
+    # Math.abs map wrapper (F1292 residual) decoders. Each parses a
+    # strict whole-text grammar; every filed shape BREAKs on the open
+    # tree, so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Disjoint from F978/F1267/
+    # F1292 by grammar (documented per hook). Additive, in F-number
+    # order.
+    for _stmtdec in (_js_f1365_stmt_decode, _js_f1366_stmt_decode,
+                     _js_f1367_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
