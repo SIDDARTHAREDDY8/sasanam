@@ -1,15 +1,7 @@
 #!/usr/bin/env python3
-"""F1518 red-first: splice single-arg negative drain staging.
+"""F1518 red-first: Array.prototype.flatMap with 4+ callback params / non-{} thisArg (beyond F1504 which covers 4-param function/arrow with {} and 5-param function)
 
-Filed 2026-10-11, wave-417 lane 2 Spec-review residual (local node
-validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
-
-`var C=[codes];var D=C.splice(-1);var E=C.concat(D);var S=String.fromCharCode.apply(null,E);`
-assembles node-exactly (v24.20.0): splice(-1) defaults deleteCount to the
-rest of the array (one element at start len-1), so D=[last] and
-E=C.concat(D) restores the original order -- identical to the F1513
-(-1,1) shape, which the F1513 hook deliberately does not admit
-(grammar-only fail-closed). Beyond triage.
+Filed 2026-10-11 14:58 UTC, wave-417 attack round 85 (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -53,13 +45,15 @@ def _codes(s):
 
 
 _TMPLS = [
-    ("f1518-0",
-     "var C={I};var D=C.splice(-1);var E=C.concat(D);var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
+    ('f1518-0',
+     'var C={I};var E=C.flatMap((c,i,a,t,u)=>[c]);var S=String.fromCharCode.apply(null,E);var RESULT=S;'),
+    ('f1518-1',
+     'var C={I};var E=C.flatMap(function(c,i,a,t){return [c];},null);var S=String.fromCharCode.apply(null,E);var RESULT=S;'),
 ]
 
 _CONTROLS = [
-    ("direct-ctrl",
-     'var C={I};var S=String.fromCharCode.apply(null,C);var RESULT=S;'),
+    ('direct-ctrl',
+     'var C={I};var E=C.flatMap(function(c){return [c];});var S=String.fromCharCode.apply(null,E);var RESULT=S;'),
 ]
 
 
@@ -82,13 +76,22 @@ def main():
             if not ok:
                 fails += 1
     for name, payload in _CONTROLS:
-        payload = payload.replace("{I}", _codes(SECRET_S))
-        verdict = _scan(payload)
-        ok = verdict == "HIT"
-        print(("ctrl-ok " if ok else "CTRL-FAIL ") + name + " scanner=" + verdict)
-        if not ok:
-            fails += 1
-    print("FAILURES:%d" % fails)
+        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
+            p = payload.replace("{I}", _codes(secret))
+            nc = subprocess.run(
+                ["node", "-e",
+                 p + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
+                capture_output=True, text=True, timeout=30)
+            node_ok = False
+            for line in (nc.stdout or "").strip().split("\n"):
+                if line.startswith("OUT:"):
+                    node_ok = (line[4:] == secret)
+            verdict = _scan(p)
+            ok = node_ok and verdict == "HIT"
+            print(("CTRL-OK " if ok else "CTRL-FAIL ") + "%s %s node=%s scanner=%s" % (name, label, node_ok, verdict))
+            if not ok:
+                fails += 1
+    print("RESULT: %s" % ("BREAK" if fails == 0 else "FAIL"))
     return 1 if fails else 0
 
 
