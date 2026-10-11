@@ -178578,6 +178578,846 @@ def _js_f1563_stmt_decode(text):
         return None
 
 
+# ---- F1564-F1569 (wave-419 lane 4) ----
+
+
+def _js_f1564_stmt_decode(text):
+    """Decode F1564 Map.set loop staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const M=new Map();`
+    `for(var|let i=0;i<C.length;i++){M.set(i,C[i]);}`
+    `var|let|const V=[...M.values()];`
+    `var|let|const RESULT=V.map(function(c){return String.fromCharCode(c);}).join('');`
+    (or the `(c)=>` / `c=>` arrow twin)
+    then end-of-text.
+
+    Node-exact (v24.20.0): the loop sets keys 0..len-1 in order, so
+    `[...M.values()]` is a copy of C in order; the map/join readout
+    assembles the credential. Disjoint from F1446 (CLOSED: Map for-of
+    drain), F1536 (CLOSED wave-418 lane 3: Map-constructor +
+    values() readout), and F1446 (Map-constructor values spread)
+    by grammar -- the filed
+    shape BREAKs on the open tree. Anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".set(" not in text or "new Map(" not in text or \
+            "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1564"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "Map"}
+        _, mname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(mname, bound, {"String"},
+                                        what)
+        bound.add(mname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "Map":
+            raise _JSExprFail(what + " not Map ctor")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        # for(var i=0;i<C.length;i++){M.set(i,C[i]);}
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail(what + " no for")
+        j = _js_expect(text, m, "(")
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None or kw == "const":
+            raise _JSExprFail(what + " loop var not declared")
+        j = k
+        iname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(iname, bound, {"String"},
+                                        what)
+        bound.add(iname)
+        j = _js_expect(text, j, "=")
+        z, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if z != 0:
+            raise _JSExprFail(what + " loop not from 0")
+        j = _js_expect(text, j, ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != iname:
+            raise _JSExprFail(what + " loop var mismatch")
+        j = _js_expect(text, j, "<")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " loop array mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+        if m is None:
+            raise _JSExprFail(what + " no length")
+        j = _js_expect(text, m, ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != iname:
+            raise _JSExprFail(what + " incr var mismatch")
+        j = _js_expect(text, j, "+")
+        j = _js_expect(text, j, "+")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != mname:
+            raise _JSExprFail(what + " set target mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "set")
+        if m is None:
+            raise _JSExprFail(what + " not set")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != iname:
+            raise _JSExprFail(what + " set key mismatch")
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " set val base mismatch")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != iname:
+            raise _JSExprFail(what + " set val index mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " setloop")
+        # var V=[...M.values()];
+        _, vname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(vname, bound, {"String"},
+                                        what)
+        bound.add(vname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail(what + " not spread")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        if nm != mname:
+            raise _JSExprFail(what + " values base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "values")
+        if m is None:
+            raise _JSExprFail(what + " not values")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ";")
+        # var RESULT=V.map(<fcc>).join('');
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        j = _js_f1213f1219_parse_map_join(text, _js_skip_ws(text, j),
+                                          vname, state, what)
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f156x_parse_str_value(text, j, what):
+    """Parse a string literal; return (value, end_index).
+
+    Strict escape handling: \\', \\", \\\\, \\n, \\r, \\t, \\b, \\f,
+    \\v, \\0 (not followed by a digit -- that would be legacy octal),
+    \\xHH, \\uHHHH. Anything else fails closed. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    e = _js_f1540_scan_string(text, j)
+    if e is None:
+        raise _JSExprFail(what + " not string literal")
+    body = text[j + 1:e - 1]
+    out = []
+    k = 0
+    m = len(body)
+    _esc = {"n": 0x0A, "r": 0x0D, "t": 0x09, "b": 0x08,
+            "f": 0x0C, "v": 0x0B, "'": 0x27, '"': 0x22,
+            "\\": 0x5C}
+    while k < m:
+        c = body[k]
+        if c != "\\":
+            out.append(ord(c))
+            k += 1
+            continue
+        k += 1
+        if k >= m:
+            raise _JSExprFail(what + " bad escape")
+        ec = body[k]
+        if ec in _esc:
+            out.append(_esc[ec])
+            k += 1
+        elif ec == "0":
+            if k + 1 < m and body[k + 1] in "0123456789":
+                raise _JSExprFail(what + " legacy octal")
+            out.append(0)
+            k += 1
+        elif ec == "x":
+            h = body[k + 1:k + 3]
+            if len(h) != 2 or not all(ch in "0123456789abcdefABCDEF"
+                                      for ch in h):
+                raise _JSExprFail(what + " bad hex escape")
+            out.append(int(h, 16))
+            k += 3
+        elif ec == "u":
+            h = body[k + 1:k + 5]
+            if len(h) != 4 or not all(ch in "0123456789abcdefABCDEF"
+                                      for ch in h):
+                raise _JSExprFail(what + " bad unicode escape")
+            out.append(int(h, 16))
+            k += 5
+        else:
+            raise _JSExprFail(what + " bad escape")
+    return "".join(chr(cp) for cp in out), e
+
+
+def _js_f1565_stmt_decode(text):
+    """Decode F1565 trimStart/trimEnd chained readout (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    (or the `(c)=>` / `c=>` arrow twin)
+    `var|let|const RESULT=(PAD1+S+PAD2).trimStart().trimEnd();`
+    (or `.trimEnd().trimStart()`)
+    then end-of-text, where PAD1/PAD2 are string literals whose
+    values consist entirely of trim-whitespace.
+
+    Node-exact (v24.20.0): the pads are all-whitespace, so the
+    chained trims remove exactly the pads -- provided S itself
+    neither starts nor ends with a trimmable code unit (fail-closed
+    on any ToUint16-masked edge code in _JS_TRIM_WS, the F1509
+    discipline). Disjoint from F1509-F1511 (CLOSED: trim applied to
+    the mapped string directly, not to a padded concatenation) by
+    grammar -- the filed shape BREAKs on the open tree. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if ".trimStart(" not in text and ".trimEnd(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1565"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        if (arr[0] & 0xFFFF) in _JS_TRIM_WS or \
+                (arr[-1] & 0xFFFF) in _JS_TRIM_WS:
+            raise _JSExprFail(what + " trimmable edge code")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1213f1219_parse_map_join(text, _js_skip_ws(text, j),
+                                          cname, state, what)
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        pad1, j = _js_f156x_parse_str_value(text, j, what)
+        if any(ord(c) not in _JS_TRIM_WS for c in pad1):
+            raise _JSExprFail(what + " pad1 not ws")
+        j = _js_expect(text, _js_skip_ws(text, j), "+")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " pad base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "+")
+        pad2, j = _js_f156x_parse_str_value(text, j, what)
+        if any(ord(c) not in _JS_TRIM_WS for c in pad2):
+            raise _JSExprFail(what + " pad2 not ws")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "trimStart")
+        first = "trimStart"
+        if m is None:
+            m = _js_match_kw(text, _js_skip_ws(text, j), "trimEnd")
+            first = "trimEnd"
+        if m is None:
+            raise _JSExprFail(what + " not trim chain")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ".")
+        second = "trimEnd" if first == "trimStart" else "trimStart"
+        m = _js_match_kw(text, _js_skip_ws(text, j), second)
+        if m is None:
+            raise _JSExprFail(what + " not trim chain 2")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1566_stmt_decode(text):
+    """Decode F1566 replace string-arg chained readout (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    (or the `(c)=>` / `c=>` arrow twin)
+    `var|let|const U=S.replace(A,A);` where A is a string literal
+    (both arguments the identical value),
+    `var|let|const RESULT=<additive of string literals and U>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): when the replacement argument contains no
+    `$` substitution patterns, `S.replace(A,A)` replaces the first
+    occurrence of A with A itself -- the identity on every string,
+    so U is S exactly. A `$` in the replacement is interpreted by JS
+    (e.g. `$``, `$'`, `$&`), so that case fails closed rather than
+    mis-decode. Disjoint from F1380 (CLOSED: the two-statement
+    `var D=C.map(...);var S=D.join('')` form) by grammar -- the filed
+    shape BREAKs on the open tree. Anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".replace(" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1566"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1213f1219_parse_map_join(text, _js_skip_ws(text, j),
+                                          cname, state, what)
+        j = _js_expect(text, j, ";")
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " replace base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "replace")
+        if m is None:
+            raise _JSExprFail(what + " not replace")
+        j = _js_expect(text, m, "(")
+        aval, j = _js_f156x_parse_str_value(text, j, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        bval, j = _js_f156x_parse_str_value(text, j, what)
+        if aval != bval:
+            raise _JSExprFail(what + " replace args differ")
+        # Node-exact (v24.20.0): JS interprets $-patterns ($`, $', $&,
+        # $n, $$) in the replacement string even with a string search
+        # pattern, so S.replace(A,A) is NOT the identity when A
+        # contains $. Fail closed rather than mis-decode.
+        if "$" in aval:
+            raise _JSExprFail(what + " replace dollar substitution")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " replace")
+        return _js_f1397f1412_parse_result_tail(text, j, dstr,
+                                                uname, state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1567_ident_count(text, ident, lo, hi):
+    """Word-boundary occurrence count of *ident* in text[lo:hi]."""
+    n = len(text)
+    count = 0
+    idx = lo
+    while True:
+        idx = text.find(ident, idx, hi)
+        if idx == -1:
+            break
+        before_ok = idx == 0 or not (text[idx - 1].isalnum() or
+                                     text[idx - 1] in "_$")
+        after_idx = idx + len(ident)
+        after_ok = after_idx >= n or not (
+            text[after_idx].isalnum() or text[after_idx] in "_$")
+        if before_ok and after_ok:
+            count += 1
+        idx += 1
+    return count
+
+
+def _js_f1567_parse_int_lit(text, j):
+    """Parse an ASCII integer literal; return (value, end) or None."""
+    e = _js_f1540_scan_number(text, j)
+    if e is None:
+        return None
+    t = text[j:e].strip()
+    if t.startswith("-"):
+        t = t[1:]
+    if not t.isdigit():
+        return None
+    # Sign stripped for the isdigit check only; int() parses the original
+    # (ASCII guaranteed by _js_f1540_scan_number), preserving the value.
+    return int(text[j:e]), e
+
+
+def _js_f1567_strip_dead_for(text):
+    """Strip dead, provably-effect-free `for` statements (whole-text).
+
+    Admits `for(var|let K=INIT;COND;INCR){BODY}` where:
+    - INIT is an integer literal, COND is `K<|<=|>|>=LIT` (either
+      operand order), INCR is `K++`, `K--`, `++K`, `--K`,
+      `K+=LIT`, `K-=LIT` (integer, nonzero step), and the
+      step direction provably terminates the loop (increasing step
+      requires `<`/`<=`; decreasing requires `>`/`>=`) --
+      otherwise the loop might not terminate and stripping it
+      would change what the remaining statements assemble;
+    - K occurs nowhere outside the `for` statement itself (dead
+      loop variable);
+    - BODY contains only `var|let|const IDENT=<pure>;` statements
+      (empty statements allowed) where each IDENT occurs exactly
+      once in the whole text (dead binding) and each RHS is
+      side-effect-free per `_js_f1540_parse_pure_rhs` (the loop
+      variable counts as declared).
+
+    Node-exact (v24.20.0): a bounded numeric loop that reads and
+    writes nothing outside itself cannot change the credential
+    assembled by the remaining statements, so the stripped text is
+    a detection-faithful variant. This generalizes the F1540
+    dead-statement-strip class from pure declarations to
+    effect-free compound statements: a dead
+    `for(var k=0;k<1;k++){var Z=k;}` between the staging
+    statements broke every whole-text statement decoder (F1540
+    only stripped declarations). Strips ALL such statements in
+    one pass. Returns the stripped text, or None. Never evals.
+    """
+    n = len(text)
+    spans = []
+    idx = 0
+    while True:
+        p = text.find("for", idx)
+        while p != -1:
+            before_ok = p == 0 or not (text[p - 1].isalnum() or
+                                       text[p - 1] in "_$")
+            a3 = p + 3
+            after_ok = a3 >= n or not (text[a3].isalnum() or
+                                       text[a3] in "_$")
+            if before_ok and after_ok:
+                break
+            p = text.find("for", p + 1)
+        if p == -1:
+            break
+        stmt_start = p
+        j = _js_skip_ws(text, p + 3)
+        if j >= n or text[j] != "(":
+            idx = p + 3
+            continue
+        j = _js_skip_ws(text, j + 1)
+        # init: var|let K=INT (const would throw on ++; not dead)
+        kw, k2 = _js_match_decl_kw(text, j)
+        if kw is None or kw == "const":
+            idx = p + 3
+            continue
+        r = _js_f1540_scan_ident(text, _js_skip_ws(text, k2))
+        if r is None:
+            idx = p + 3
+            continue
+        loopvar, j = r
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != "=":
+            idx = p + 3
+            continue
+        r = _js_f1567_parse_int_lit(text, j + 1)
+        if r is None:
+            idx = p + 3
+            continue
+        _, j = r
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            idx = p + 3
+            continue
+        j = _js_skip_ws(text, j + 1)
+        # cond: K OP LIT | LIT OP K
+        cond = None
+        r = _js_f1540_scan_ident(text, j)
+        if r is not None and r[0] == loopvar:
+            jj = _js_skip_ws(text, r[1])
+            op = None
+            for cand in ("<=", ">=", "<", ">"):
+                if text.startswith(cand, jj):
+                    op = cand
+                    jj = _js_skip_ws(text, jj + len(cand))
+                    break
+            if op is None:
+                idx = p + 3
+                continue
+            r2 = _js_f1567_parse_int_lit(text, jj)
+            if r2 is None:
+                idx = p + 3
+                continue
+            cond = (op, r2[0])
+            j = r2[1]
+        else:
+            r = _js_f1567_parse_int_lit(text, j)
+            if r is None:
+                idx = p + 3
+                continue
+            lit, jj = r
+            jj = _js_skip_ws(text, jj)
+            op = None
+            for cand in ("<=", ">=", "<", ">"):
+                if text.startswith(cand, jj):
+                    op = cand
+                    jj = _js_skip_ws(text, jj + len(cand))
+                    break
+            if op is None:
+                idx = p + 3
+                continue
+            r2 = _js_f1540_scan_ident(text, jj)
+            if r2 is None or r2[0] != loopvar:
+                idx = p + 3
+                continue
+            flip = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}
+            cond = (flip[op], lit)
+            j = r2[1]
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ";":
+            idx = p + 3
+            continue
+        j = _js_skip_ws(text, j + 1)
+        # incr: K++ | K-- | ++K | --K | K+=LIT | K-=LIT
+        step = None
+        if text.startswith("++", j):
+            r = _js_f1540_scan_ident(text, _js_skip_ws(text, j + 2))
+            if r is None or r[0] != loopvar:
+                idx = p + 3
+                continue
+            step = 1
+            j = r[1]
+        elif text.startswith("--", j):
+            r = _js_f1540_scan_ident(text, _js_skip_ws(text, j + 2))
+            if r is None or r[0] != loopvar:
+                idx = p + 3
+                continue
+            step = -1
+            j = r[1]
+        else:
+            r = _js_f1540_scan_ident(text, j)
+            if r is None or r[0] != loopvar:
+                idx = p + 3
+                continue
+            j = _js_skip_ws(text, r[1])
+            if text.startswith("++", j):
+                step = 1
+                j += 2
+            elif text.startswith("--", j):
+                step = -1
+                j += 2
+            elif text.startswith("+=", j):
+                r2 = _js_f1567_parse_int_lit(text, j + 2)
+                if r2 is None or r2[0] == 0:
+                    idx = p + 3
+                    continue
+                step = r2[0]
+                j = r2[1]
+            elif text.startswith("-=", j):
+                r2 = _js_f1567_parse_int_lit(text, j + 2)
+                if r2 is None or r2[0] == 0:
+                    idx = p + 3
+                    continue
+                step = -r2[0]
+                j = r2[1]
+            else:
+                idx = p + 3
+                continue
+        # Termination direction: increasing step needs </<=,
+        # decreasing needs > / >= -- otherwise possibly infinite.
+        op, _ = cond
+        if step > 0 and op not in ("<", "<="):
+            idx = p + 3
+            continue
+        if step < 0 and op not in (">", ">="):
+            idx = p + 3
+            continue
+        j = _js_skip_ws(text, j)
+        if j >= n or text[j] != ")":
+            idx = p + 3
+            continue
+        j = _js_skip_ws(text, j + 1)
+        if j >= n or text[j] != "{":
+            idx = p + 3
+            continue
+        # Balance-brace scan, skipping string and regex literals.
+        depth = 0
+        k3 = j
+        ok = True
+        while k3 < n:
+            c = text[k3]
+            if c in "'\"":
+                e = _js_f1540_scan_string(text, k3)
+                if e is None:
+                    ok = False
+                    break
+                k3 = e
+                continue
+            if c == "/":
+                e = _js_f1540_scan_regex(text, k3)
+                if e is not None:
+                    k3 = e
+                    continue
+                k3 += 1
+                continue
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            k3 += 1
+        if not ok or k3 >= n or depth != 0:
+            idx = p + 3
+            continue
+        stmt_end = k3 + 1
+        # Loop variable must be dead outside the for statement.
+        total = _js_f1567_ident_count(text, loopvar, 0, n)
+        inside = _js_f1567_ident_count(text, loopvar, stmt_start,
+                                       stmt_end)
+        if total != inside:
+            idx = p + 3
+            continue
+        # BODY: only dead pure declarations / empty statements.
+        inner = text[j + 1:k3]
+        declared = {loopvar}
+        q = 0
+        m2 = len(inner)
+        body_ok = True
+        while body_ok:
+            q = _js_skip_ws(inner, q)
+            if q >= m2:
+                break
+            if inner[q] == ";":
+                q += 1
+                continue
+            dkw, q2 = _js_match_decl_kw(inner, q)
+            if dkw is None:
+                body_ok = False
+                break
+            r = _js_f1540_scan_ident(inner, _js_skip_ws(inner, q2))
+            if r is None:
+                body_ok = False
+                break
+            bname, q = r
+            if not _js_f1540_ident_occurs_once(text, bname):
+                body_ok = False
+                break
+            q = _js_skip_ws(inner, q)
+            if q >= m2 or inner[q] != "=":
+                body_ok = False
+                break
+            e = _js_f1540_parse_pure_rhs(inner, q + 1, declared)
+            if e is None:
+                body_ok = False
+                break
+            e = _js_skip_ws(inner, e)
+            if e >= m2 or inner[e] != ";":
+                body_ok = False
+                break
+            declared.add(bname)
+            q = e + 1
+        if not body_ok:
+            idx = p + 3
+            continue
+        spans.append((stmt_start, stmt_end))
+        idx = stmt_end
+    if not spans:
+        return None
+    result = text
+    for s, e in reversed(spans):
+        result = result[:s] + result[e:]
+    result = result.strip(" \t\n\r")
+    if not result or result == text:
+        return None
+    return result
+
+
+def _js_f1568_stmt_decode(text):
+    """Decode F1568 filter includes(c,K>=1) staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const E=C.filter(function(c,i){return C.includes(c,K);});`
+    `var|let|const S=String.fromCharCode.apply(null,E);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text, where K is an integer literal >= 1.
+
+    Node-exact (v24.20.0): `C.includes(c,K)` is true exactly for
+    elements whose value occurs at some index >= K, so
+    E=[C[i] for i in range(len(C)) if C[i] in C[K:]] -- computed
+    exactly, no fail-closed bound needed (SameValueZero on
+    integers coincides with ==). Disjoint from F1524 (CLOSED:
+    includes with fromIndex 0 -- always true), F1556 (OPEN:
+    String.prototype.includes with NaN fromIndex), and F1517
+    (CLOSED: includes self-membership, no fromIndex) by grammar
+    -- the filed shape BREAKs on the open tree. Anything else
+    fails closed: a miss, never a mis-decode. Returns the decoded
+    string, or None. Never evals.
+    """
+    if ".filter(" not in text or ".includes(" not in text or \
+            "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1568"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        bound = {cname, "RESULT", "String"}
+        _, ename, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(ename, bound, {"String"},
+                                        what)
+        bound.add(ename)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " filter base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "filter")
+        if m is None:
+            raise _JSExprFail(what + " not filter")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        p, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(p, bound, {"String"}, what)
+        bound.add(p)
+        j = _js_expect(text, j, ",")
+        q, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(q, bound, {"String"}, what)
+        bound.add(q)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        j = _js_skip_ws(text, m)
+        nm, j = _js_parse_ident(text, j)
+        if nm != cname:
+            raise _JSExprFail(what + " includes base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "includes")
+        if m is None:
+            raise _JSExprFail(what + " not includes")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != p:
+            raise _JSExprFail(what + " includes arg mismatch")
+        j = _js_expect(text, j, ",")
+        v, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if v < 1:
+            raise _JSExprFail(what + " fromIndex not >= 1")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " filter")
+        tail = arr[v:]
+        kept = [x for x in arr if x in tail]
+        dstr = _js_f996f997_fcc_chr(kept, what)
+        sname, j = _js_f1397f1412_parse_apply_s(text, j, ename,
+                                                bound, state, what)
+        return _js_f1397f1412_parse_result_tail(text, j, dstr,
+                                                sname, state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1569_stmt_decode(text):
+    """Decode F1569 flatMap 4-param arrow null-thisArg staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const E=C.flatMap((c,i,a,t,...)=>[c],null);`
+      (arrow-form callback, 4+ params, expression body `[c]`,
+      `null` thisArg -- required),
+    `var|let|const S=String.fromCharCode.apply(null,E);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the arrow returns the singleton `[c]`
+    for each element regardless of the extra unused params;
+    flatMap flattens one level, so E is a copy of C; the `null`
+    thisArg is never read by the callback. Disjoint from F1518
+    (CLOSED: 4-param *function*-form null thisArg, 5-param arrow),
+    F1504 (CLOSED wave-417 lane 1: 4-param function/arrow with {}
+    thisArg, 5-param function), and F1546 (OPEN: 1-param callback with [] thisArg,
+    arrow with "x" thisArg) by grammar -- the filed shape BREAKs
+    on the open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if ".flatMap(" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1569"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        _, ename, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(ename, bound, {"String"},
+                                        what)
+        bound.add(ename)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " flatMap base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "flatMap")
+        if m is None:
+            raise _JSExprFail(what + " not flatMap")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        m = _js_match_kw(text, j, "function")
+        if m is not None:
+            raise _JSExprFail(what + " function-form is F1518")
+        j = _js_expect(text, j, "(")
+        p1, j = _js_f1504_parse_cb_params(text, j, bound, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " not arrow")
+        j = _js_skip_ws(text, j + 2)
+        j = _js_expect(text, j, "[")
+        q, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if q != p1:
+            raise _JSExprFail(what + " cb elem mismatch")
+        j = _js_expect(text, j, "]")
+        # thisArg: ONLY `,null` -- `,{}` is F1504, `,[]`/`,"x"` F1546.
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "null")
+        if m is None:
+            raise _JSExprFail(what + " not null thisArg")
+        j = _js_expect(text, m, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " flatMap")
+        sname, j = _js_f1397f1412_parse_apply_s(text, j, ename,
+                                                bound, state, what)
+        return _js_f1397f1412_parse_result_tail(text, j, dstr,
+                                                sname, state, what)
+    except _JSExprFail:
+        return None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -180373,6 +181213,21 @@ def _decode_layer(text):
         _add(_stripped)
         if len(variants) >= _MAX_CANDIDATES:
             return variants
+
+    # F1567 (wave-419 lane 4): strip dead provably-effect-free `for`
+    # statements. Generalizes the F1540 dead-statement-strip class
+    # from pure declarations to bounded numeric loops whose body
+    # binds only dead idents -- a `for(var k=0;k<1;k++){var Z=k;}`
+    # between the staging statements broke every whole-text
+    # statement decoder (F1540 only stripped declarations).
+    # Node-exact and fail-closed per _js_f1567_strip_dead_for.
+    # Additive at the end so the pre-existing variant order is
+    # preserved exactly (F441).
+    _stripped = _js_f1567_strip_dead_for(text)
+    if _stripped is not None:
+        _add(_stripped)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
     # F1518-F1524 (wave-418 lane 1): flatMap null-thisArg, padStart/padEnd
     # fixed-length variants, sort arrow boolean-comparator, join/split
     # non-comma separators, slice/splice computed negatives, String/Array
@@ -180505,6 +181360,26 @@ def _decode_layer(text):
     for _stmtdec in (_js_f1558_stmt_decode, _js_f1559_stmt_decode,
                      _js_f1560_stmt_decode, _js_f1561_stmt_decode,
                      _js_f1562_stmt_decode, _js_f1563_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F1564-F1566/F1568/F1569 (wave-419 lane 4): Map.set loop
+    # staging, trimStart/trimEnd chained readout, replace
+    # string-arg chained readout, filter includes(c,K>=1) staging,
+    # and flatMap 4-param arrow null-thisArg decoders. Each parses
+    # a strict whole-text grammar; every filed shape BREAKs on the
+    # open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1446/F1536 (Map forms), F1509-F1511 (individual trims),
+    # F1380 (two-statement replace), F1524 (fromIndex 0), F1517
+    # (self-membership), F1518 (function-form null), F1504
+    # ({} thisArg), F1546 ([]/"x" thisArg) by grammar (documented
+    # per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1564_stmt_decode, _js_f1565_stmt_decode,
+                     _js_f1566_stmt_decode, _js_f1568_stmt_decode,
+                     _js_f1569_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
