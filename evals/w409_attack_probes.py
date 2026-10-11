@@ -56,11 +56,14 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-409 attack footer (F1260-F1288 OPEN (29); next free F1289)."""
+    """Control: wave-410 footer (F1260-F1288 CLOSED (29); F1315 CLOSED (1); F1289-F1314 OPEN (26); F1316-F1322 OPEN (7); next free F1323)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1260-F1288 filed OPEN (29" in text
-          and "next free F1289" in text)
+    ok = ("F1260-F1288 CLOSED (29)" in text
+          and "F1315 CLOSED (1)" in text
+          and "F1289-F1314 OPEN (26)" in text
+          and "F1316-F1322 OPEN (7)" in text
+          and "next free F1323" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -101,13 +104,42 @@ def _open_prov_pin(prefix, num):
     return _fn
 
 
-# New round-77 decoder pins (F1260-F1282) -- still OPEN.
-for _n in range(1260, 1283):
-    _open_pin("w409", _n)
+def _closed_pin(prefix, num):
+    """All red-first shapes for a CLOSED decoder finding must now BLOCK."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _misses(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
 
-# New round-77 provenance pins (F1283-F1288) -- still OPEN.
+
+def _closed_prov_pin(prefix, num):
+    """All red-first shapes for a CLOSED provenance finding must now FLAG."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _quiet(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
+
+
+
+# Round-77 decoder pins (F1260-F1282) -- CLOSED by wave-410 lanes 1-3.
+for _n in range(1260, 1283):
+    _closed_pin("w409", _n)
+
+# Round-77 provenance pins (F1283-F1288) -- CLOSED by wave-410 lane 4.
 for _n in range(1283, 1289):
-    _open_prov_pin("w409", _n)
+    _closed_prov_pin("w409", _n)
 
 # Round-76 pins (F1229-F1259) now CLOSED -- covered by w408_attack_probes.
 

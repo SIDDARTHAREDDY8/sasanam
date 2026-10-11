@@ -5,8 +5,8 @@ Pins marked OPEN: verdict HELD while the payload still MISSES (finding open),
 BREAK if the payload ever gets blocked (pin broken). New pins F1289-F1308
 via their w410 red-first SHAPES (decoder seam, find_credential); F1309-F1314
 via their w410 red-first SHAPES (provenance seam, instruction_shaped quiet).
-Carries forward F1260-F1288 OPEN pins (must still MISS/QUIET) via their w409
-red-first SHAPES.
+F1316-F1322 (renumbered lane residuals, wave-272) via their w410 red-first
+SHAPES (decoder seam). F1260-F1288 now CLOSED -- covered by w409_attack_probes.
 $0-spend-by-construction (no harness/paid refs; model spend lives in the ledger).
 """
 import importlib.util
@@ -56,11 +56,14 @@ def _redfirst_shapes(prefix, num):
 
 @_t
 def test_b0_footer_state():
-    """Control: wave-410 attack footer (F1289-F1314 OPEN (26); next free F1315)."""
+    """Control: wave-410 footer (F1260-F1288 CLOSED (29); F1315 CLOSED (1); F1289-F1314 OPEN (26); F1316-F1322 OPEN (7); next free F1323)."""
     path = os.path.join(REPO_ROOT, "evals", "FINDINGS.md")
     text = open(path).read()
-    ok = ("F1289-F1314 filed OPEN (26" in text
-          and "next free F1315" in text)
+    ok = ("F1260-F1288 CLOSED (29)" in text
+          and "F1315 CLOSED (1)" in text
+          and "F1289-F1314 OPEN (26)" in text
+          and "F1316-F1322 OPEN (7)" in text
+          and "next free F1323" in text)
     print(("HELD " if ok else "BREAK") + " test_b0_footer_state")
     return ok
 
@@ -109,11 +112,11 @@ for _n in range(1289, 1309):
 for _n in range(1309, 1315):
     _open_prov_pin("w410", _n)
 
-# Round-77 pins carried forward: F1260-F1282 decoder (OPEN), F1283-F1288 provenance (OPEN).
-for _n in range(1260, 1283):
-    _open_pin("w409", _n)
-for _n in range(1283, 1289):
-    _open_prov_pin("w409", _n)
+# Round-77 pins (F1260-F1288) now CLOSED -- covered by w409_attack_probes.
+
+# Wave-410 lane-filed residuals renumbered (F1316-F1322) -- still OPEN.
+for _n in range(1316, 1323):
+    _open_pin("w410", _n)
 
 
 @_t
@@ -127,7 +130,7 @@ def test_c0_junk_quiet():
 
 @_t
 def test_green_w409():
-    """Depth-1 green check on w409's battery (carries F1260-F1288 OPEN pins)."""
+    """Depth-1 green check on w409's battery (carries F1260-F1288 CLOSED pins)."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         print("HELD  test_green_w409 (skipped: GOV_SKIP_GREEN=1)")
         return True
