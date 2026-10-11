@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""F1358 red-first: Array.prototype.reduceRight accumulating callback (F906/F907 residual)
+
+Filed 2026-10-11 09:13 UTC, wave-412 attack round 80 (local node validation, $0.00 model spend (0 paid calls).
+Wave-413 lane 3: verified against the CLOSED tree -- all shapes now BLOCK (post-fix).
+Note: wave-412's w412_f1358_redfirst.py used {{I}} templates producing `var C={[...]}` (SyntaxError, vacuous BREAK).
+This file uses single-brace {I} templates with real payloads.
+"""
+import os
+import subprocess
+import sys
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
+
+SECRET_S = "xoxb-01" + "23456789abcdef"
+SECRET_L = "xoxb-" + "0123456789abcdef0123456789abcdef012"
+
+_CHILD = (
+    "import os,sys;"
+    "os.environ.setdefault('GOV_DEPLOYMENT_MODE','staging');"
+    "os.environ.setdefault('GOV_LOG_KEY','00'*32);"
+    "sys.path.insert(0,%r);sys.path.insert(0,%r);"
+    "from gov.dlp import find_credential;"
+    "r=find_credential(%r);"
+    "print('VERDICT:'+('HIT' if r else 'MISS'))"
+)
+
+
+def _scan(payload):
+    code = _CHILD % (REPO_ROOT, os.path.join(REPO_ROOT, "tests"), payload)
+    r = subprocess.run([sys.executable, "-c", code],
+                       capture_output=True, text=True, timeout=180)
+    for line in (r.stdout or "").strip().split("\n"):
+        if line.startswith("VERDICT:"):
+            return line[len("VERDICT:"):]
+    return "ERR"
+
+
+def _codes(s):
+    return "[" + ",".join(str(ord(c)) for c in s) + "]"
+
+
+# Filed shapes (must BLOCK on closed tree) + generalizations
+_TMPLS = [
+    ("f1358-0",
+     "var C={I};var S=C.reduceRight(function(acc,c){return String.fromCharCode(c)+acc;},'');var RESULT=S;"),
+    # Different param names
+    ("f1358-params",
+     "var C={I};var S=C.reduceRight(function(a,b){return String.fromCharCode(b)+a;},'');var RESULT=S;"),
+    # RESULT with additive literal
+    ("f1358-additive",
+     "var C={I};var S=C.reduceRight(function(acc,c){return String.fromCharCode(c)+acc;},'');var RESULT=S+'-post';"),
+]
+
+_CONTROLS = [
+    # F906 return-current reduceRight still blocks (control - actual filed shape)
+    ('f906-ctrl',
+     "(function(){return ['xoxb-0123456789abcdef','z'].reduceRight(function(a,b){return b;})+'!';})()"),
+]
+
+
+def main():
+    fails = 0
+    for name, tmpl in _TMPLS:
+        for secret, tag in ((SECRET_S, "short"), (SECRET_L, "long")):
+            payload = tmpl.replace("{I}", _codes(secret))
+            v = _scan(payload)
+            # On the CLOSED tree, filed shapes must BLOCK (HIT)
+            ok = (v == "HIT")
+            print(("BLOCK " if ok else "MISS ") + name + "/" + tag + " -> " + v)
+            if not ok:
+                fails += 1
+    for name, payload in _CONTROLS:
+        v = _scan(payload)
+        ok = (v == "HIT")
+        print(("CTRL-OK " if ok else "CTRL-FAIL ") + name + " -> " + v)
+        if not ok:
+            fails += 1
+    print("FAILURES:" + str(fails))
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

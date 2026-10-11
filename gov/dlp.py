@@ -163772,6 +163772,179 @@ def _js_f1343_stmt_decode(text):
         return None
 
 
+# ---------------------------------------------------------------------------
+# F1357: chained join/split/join (F1199 residual)
+# ---------------------------------------------------------------------------
+
+def _js_f1357_stmt_decode(text):
+    """Decode F1357 chained join/split/join (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(c){return String.fromCharCode(c);});`
+    (or the `c=>String.fromCharCode(c)` arrow twin)
+    `var|let|const S=D.join('SEP').split('SEP').join('');`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): D holds the credential chars (single UTF-16
+    code units). S=D.join(SEP).split(SEP).join('') reassembles exactly
+    the chars iff no character of SEP occurs in the credential -- then
+    every SEP occurrence in the joined string is an inserted join
+    (a single char cannot contain SEP, and an occurrence cannot
+    straddle a credential char that holds no SEP character), otherwise
+    fail closed. The empty separator is the identity. Disjoint from
+    F1199 (which requires the two-statement J then S form) by grammar
+    -- the filed shape BREAKs on the open tree. Anything else fails
+    closed: a miss, never a mis-decode. Returns the decoded string,
+    or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if ".join(" not in _compact or ".split(" not in _compact:
+        return None
+    if "fromCharCode" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1357"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if dname in ("RESULT", cname):
+            raise _JSExprFail(what + " bad arr name")
+        j = _js_f1182f1186_parse_map_fcc(text, _js_skip_ws(text, j), cname,
+                                         what)
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname, dname):
+            raise _JSExprFail(what + " bad acc name")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " arr mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        # Chained: .split('SEP').join('') directly on the join result
+        # (F1199 uses two statements; this is the one-statement residual).
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "split")
+        if m is None:
+            raise _JSExprFail(what + " not split")
+        j = _js_expect(text, m, "(")
+        sep2, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep2 != sep:
+            raise _JSExprFail(what + " sep mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join2")
+        j = _js_expect(text, m, "(")
+        lit, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if lit != "":
+            raise _JSExprFail(what + " join sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        if any(ch in dstr for ch in sep):
+            raise _JSExprFail(what + " sep in credential")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname, state,
+                                          what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# F1358: reduceRight accumulating callback (F906/F907 residual)
+# ---------------------------------------------------------------------------
+
+def _js_f1358_stmt_decode(text):
+    """Decode F1358 reduceRight accumulating callback (whole-text, _decode_layer hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S=C.reduceRight(function(acc,c){return String.fromCharCode(c)+acc;},'');`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): reduceRight iterates from right to left.
+    Starting with acc='', each step computes String.fromCharCode(c)+acc,
+    prepending the current char to the accumulator. After processing
+    all elements right-to-left, acc holds the chars in original order
+    -- exactly the credential. The INIT must be '' (fail closed
+    otherwise); a non-empty INIT would not be the identity. Disjoint
+    from F906/F907 (which require return-current callbacks) by the
+    callback body grammar -- the filed shape BREAKs on the open tree.
+    Anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if ".reduceRight(" not in _compact:
+        return None
+    if "fromCharCode" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1358"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname in ("RESULT", cname):
+            raise _JSExprFail(what + " bad acc name")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " arr mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "reduceRight")
+        if m is None:
+            raise _JSExprFail(what + " not reduceRight")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        m2 = _js_match_kw(text, j, "function")
+        if m2 is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m2, "(")
+        p0, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if p1 == p0:
+            raise _JSExprFail(what + " duplicate params")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m3 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m3 is None:
+            raise _JSExprFail(what + " no return")
+        j = _js_f1090f1091f1097_parse_fcc1(text, _js_skip_ws(text, m3),
+                                           p1, what)
+        j = _js_expect(text, _js_skip_ws(text, j), "+")
+        nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm2 != p0:
+            raise _JSExprFail(what + " acc mismatch")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if init != "":
+            raise _JSExprFail(what + " init not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        val, j = _js_f104x_additive_result(text, j, dstr, sname, state,
+                                          what)
+        _js_f96x_expect_semi_end(text, j)
+        return val
+    except _JSExprFail:
+        return None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -165255,6 +165428,20 @@ def _decode_layer(text):
     for _stmtdec in (_js_f1344_stmt_decode, _js_f1345_stmt_decode,
                      _js_f1346_stmt_decode, _js_f1347_stmt_decode,
                      _js_f1348_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1357-F1358 (wave-413 lane 3): chained join/split/join (F1199
+    # residual -- one-statement chain) and reduceRight accumulating
+    # callback (F906/F907 residual). Each parses a strict whole-text
+    # grammar; every filed shape BREAKs on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order (F441)
+    # is preserved. Disjoint from F1199/F906/F907 by grammar
+    # (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1357_stmt_decode, _js_f1358_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
