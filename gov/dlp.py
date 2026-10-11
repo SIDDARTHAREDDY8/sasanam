@@ -172561,6 +172561,398 @@ def _js_f1508_stmt_decode(text):
         return None
 
 
+# ---- F1509-F1511 shared: trim-staging map-decl parse ----
+
+_JS_TRIM_WS = frozenset(
+    [0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20, 0xA0, 0x1680,
+     0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF]
+    + list(range(0x2000, 0x200B))
+)
+"""Single UTF-16 code units affected by String.prototype.trim/trimStart/trimEnd.
+
+Node-exact (v24.20.0, enumerated 0x0000-0xFFFF): exactly these 25 code
+points are removed by trim; every other code unit is a trim fixed point.
+For a single-character string trim/trimStart/trimEnd are identical, so
+`String.fromCharCode(cp).trim()` is the identity iff the ToUint16-masked
+code is outside this set. A masked code inside the set would decode to ""
+at that position -- fail closed (a miss, never a mis-decode).
+"""
+
+
+def _js_f1509f1511_parse_trim_map_decl(text, j, cname, bound, state,
+                                       what, kw):
+    """Parse `var|let|const D=C.map(function(c){return String.fromCharCode(c).KW();});`.
+
+    KW is one of trim/trimStart/trimEnd (ident-boundary matched, so the
+    three are disjoint). Returns (dname, next_index). Never evals.
+    """
+    _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    _js_f1028f1029_check_fresh_name(dname, bound, {"String"}, what)
+    bound.add(dname)
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " map base mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+    if m is None:
+        raise _JSExprFail(what + " not map")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+    if m is None:
+        raise _JSExprFail(what + " not function")
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    p1, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if p1 != "c":
+        raise _JSExprFail(what + " bad elem param")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), "{")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail(what + " no return")
+    j = _js_f1090f1091f1097_parse_fcc1(text, m, "c", what)
+    j = _js_expect(text, _js_skip_ws(text, j), ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), kw)
+    if m is None:
+        raise _JSExprFail(what + " not " + kw)
+    j = _js_expect(text, _js_skip_ws(text, m), "(")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    j = _js_expect(text, _js_skip_ws(text, j), "}")
+    j = _js_expect(text, _js_skip_ws(text, j), ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    _js_f96x_charge(state, what + " map")
+    return dname, j
+
+
+def _js_f1509_stmt_decode(text):
+    """Decode F1509 trim map staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(c){return String.fromCharCode(c).trim();});`
+    `var|let|const S=D.join('');`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): each element of D is
+    `String.fromCharCode(c).trim()`; for a single UTF-16 code unit trim
+    is the identity iff the code unit is outside _JS_TRIM_WS. The hook
+    fails closed when any ToUint16-masked code is in that set (that
+    position would decode to "", so dstr would mis-decode); otherwise D
+    joins to the credential exactly (F967 discipline via
+    _js_f996f997_fcc_chr). Disjoint from F1090 (map+join without trim --
+    the callback grammar differs) and from F1510/F1511 (trimStart/
+    trimEnd -- ident-boundary keyword match) by grammar -- the filed
+    shape BREAKs on the open tree. Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None. Never
+    evals.
+    """
+    if ".trim(" not in text or ".map(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1509"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        for _cp in arr:
+            if (_cp & 0xFFFF) in _JS_TRIM_WS:
+                raise _JSExprFail(what + " trimmable code")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        dname, j = _js_f1509f1511_parse_trim_map_decl(
+            text, j, cname, bound, state, what, "trim")
+        sname, j = _js_f1302_parse_join_decl(text, j, dname, bound,
+                                             what)
+        return _js_f1397f1412_parse_result_tail(text, j, dstr, sname,
+                                                state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1510_stmt_decode(text):
+    """Decode F1510 trimStart map staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(c){return String.fromCharCode(c).trimStart();});`
+    `var|let|const S=D.join('');`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): identical to F1509 -- for a single UTF-16
+    code unit trimStart is the identity iff the code unit is outside
+    _JS_TRIM_WS (same 25 code points; trim/trimStart/trimEnd coincide
+    on single-character strings). The hook fails closed on any
+    ToUint16-masked code in that set; otherwise the decode is dstr
+    (F967 discipline via _js_f996f997_fcc_chr). Disjoint from F1509/
+    F1511 by the ident-boundary keyword match -- the filed shape
+    BREAKs on the open tree. Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None. Never
+    evals.
+    """
+    if ".trimStart(" not in text or ".map(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1510"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        for _cp in arr:
+            if (_cp & 0xFFFF) in _JS_TRIM_WS:
+                raise _JSExprFail(what + " trimmable code")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        dname, j = _js_f1509f1511_parse_trim_map_decl(
+            text, j, cname, bound, state, what, "trimStart")
+        sname, j = _js_f1302_parse_join_decl(text, j, dname, bound,
+                                             what)
+        return _js_f1397f1412_parse_result_tail(text, j, dstr, sname,
+                                                state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1511_stmt_decode(text):
+    """Decode F1511 trimEnd map staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(c){return String.fromCharCode(c).trimEnd();});`
+    `var|let|const S=D.join('');`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): identical to F1509/F1510 -- for a single
+    UTF-16 code unit trimEnd is the identity iff the code unit is
+    outside _JS_TRIM_WS. The hook fails closed on any ToUint16-masked
+    code in that set; otherwise the decode is dstr (F967 discipline
+    via _js_f996f997_fcc_chr). Disjoint from F1509/F1510 by the
+    ident-boundary keyword match -- the filed shape BREAKs on the open
+    tree. Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ".trimEnd(" not in text or ".map(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1511"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        for _cp in arr:
+            if (_cp & 0xFFFF) in _JS_TRIM_WS:
+                raise _JSExprFail(what + " trimmable code")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        dname, j = _js_f1509f1511_parse_trim_map_decl(
+            text, j, cname, bound, state, what, "trimEnd")
+        sname, j = _js_f1302_parse_join_decl(text, j, dname, bound,
+                                             what)
+        return _js_f1397f1412_parse_result_tail(text, j, dstr, sname,
+                                                state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1512_stmt_decode(text):
+    """Decode F1512 map-then-join comma readout (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(c){return String.fromCharCode(c);}).join(',');`
+    `var|let|const S=D.split(',').join('');`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): D is the credential chars comma-joined; S
+    splits D on ',' and rejoins with ''. Each element is a single
+    UTF-16 code unit, so the split recovers exactly the per-char
+    strings iff no code unit is ',' itself -- the hook fails closed
+    when any ToUint16-masked code is 44 (that position would
+    mis-decode); otherwise S is the credential exactly (F967
+    discipline via _js_f996f997_fcc_chr). Disjoint from F1357 (the
+    two-statement D=map / S=join.split.join form -- the D-statement
+    grammar differs) and F1408 (join/split apply readout, no map) by
+    grammar -- the filed shape BREAKs on the open tree. Anything else
+    fails closed: a miss, never a mis-decode. Returns the decoded
+    string, or None. Never evals.
+    """
+    if ".join(" not in text or ".split(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1512"
+    try:
+        j = _js_skip_ws(text, 0)
+        _, cname, j = _js_f96x_decl(text, j)
+        if cname == "RESULT":
+            raise _JSExprFail(what + " bad arr name")
+        arr, j = _js_f1046_parse_int_array(text, _js_skip_ws(text, j),
+                                           state)
+        if not arr:
+            raise _JSExprFail(what + " empty arr")
+        j = _js_expect(text, j, ";")
+        for _cp in arr:
+            if (_cp & 0xFFFF) == 44:
+                raise _JSExprFail(what + " comma code")
+        dstr = _js_f996f997_fcc_chr(arr, what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " map base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+        if m is None:
+            raise _JSExprFail(what + " not map")
+        j = _js_f1090_parse_map_cb(text, _js_expect(text, m, "("),
+                                   what, False)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != ",":
+            raise _JSExprFail(what + " join sep not comma")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " mapjoin")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " split base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "split")
+        if m is None:
+            raise _JSExprFail(what + " not split")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        sep2, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep2 != ",":
+            raise _JSExprFail(what + " split sep not comma")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join2")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        sep3, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep3 != "":
+            raise _JSExprFail(what + " join2 sep not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " splitreadout")
+        return _js_f1397f1412_parse_result_tail(text, j, dstr, sname,
+                                                state, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1513_stmt_decode(text):
+    """Decode F1513 splice single-element negative drain staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.splice(-1,1);`
+    `var|let|const E=C.concat(D);`
+    `var|let|const S=String.fromCharCode.apply(null,E);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `C.splice(-1,1)` computes start as
+    `max(len-1, 0)` and removes exactly one element -- the last -- so
+    D is `[last]` and C becomes the codes minus the last;
+    `E=C.concat(D)` reassembles the codes in the original order, so
+    the apply readout assembles the credential identically to reading
+    C directly (F967 discipline via _js_f996f997_fcc_chr). Only the
+    exact `splice(-1,1)` two-arg form is admitted; any other start or
+    deleteCount fails closed: a miss, never a mis-decode. Disjoint
+    from F1443 (splice(-C.length) full drain -- different arg grammar)
+    and F1365 (splice(0) non-negative forms) by grammar -- the filed
+    shape BREAKs on the open tree. Returns the decoded string, or
+    None. Never evals.
+    """
+    if ".splice(" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1513"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " splice base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "splice")
+        if m is None:
+            raise _JSExprFail(what + " not splice")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "-":
+            raise _JSExprFail(what + " not negative start")
+        _one, j = _js_parse_fcc_number(text, _js_skip_ws(text, j + 1))
+        if _one != 1:
+            raise _JSExprFail(what + " start not -1")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        _dc, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if _dc != 1:
+            raise _JSExprFail(what + " deleteCount not 1")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " splice")
+        _, ename, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(ename, bound, {"String"},
+                                        what)
+        bound.add(ename)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " concat base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "concat")
+        if m is None:
+            raise _JSExprFail(what + " not concat")
+        j = _js_expect(text, _js_skip_ws(text, m), "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " concat arg mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " concat")
+        sname, j = _js_f1397f1412_parse_apply_s(text, j, ename, bound,
+                                                state, what)
+        return _js_f1397f1412_parse_result_tail(text, j, dstr, sname,
+                                                state, what)
+    except _JSExprFail:
+        return None
+
+
 def _js_f1464_stmt_decode(text):
     """Decode F1464 for-loop direct-index push staging (whole-text hook).
 
@@ -174377,7 +174769,6 @@ def _decode_layer(text):
             _add(_sdec)
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
-
     # F1504/F1505/F1506/F1507/F1508: wave-417 lane 1 -- flatMap 4+-param
     # callback twins, padStart/padEnd dynamic-length no-ops, padStart(5)
     # fixed-length no-op, and sort boolean-comparator no-op decoders.
@@ -174395,6 +174786,26 @@ def _decode_layer(text):
             _add(_sdec)
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
+
+    # F1509-F1513 (wave-417 lane 2): trim/trimStart/trimEnd map staging,
+    # map-then-join comma readout, and splice single-element negative
+    # drain decoders. Each parses a strict whole-text grammar; every
+    # filed shape BREAKs on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint from F1090 (map+join without trim),
+    # F1357 (two-statement D=map / S=join.split.join form), F1408
+    # (join/split apply readout, no map), F1443 (splice(-C.length) full
+    # drain), F1365 (splice(0) non-negative forms) by grammar
+    # (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1509_stmt_decode, _js_f1510_stmt_decode,
+                     _js_f1511_stmt_decode, _js_f1512_stmt_decode,
+                     _js_f1513_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
 
     # F953/F954/F955/F956: top-level statement-sequence decode --
     # `var` declaration runs with switch/for/for-in accumulation
