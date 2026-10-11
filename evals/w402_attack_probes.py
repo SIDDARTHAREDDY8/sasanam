@@ -100,7 +100,7 @@ for _n in (1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1120):
 
 
 @_t
-def test_partial_w402_f1119():
+def test_full_w402_f1119():
     """F1119 is now FULLY closed: the for-of and for-await (no trailing)
     shapes block, and the trailing-statement variants (F1141, closed
     wave-404 lane 4) also block.
@@ -112,7 +112,7 @@ def test_partial_w402_f1119():
     # must now also block
     missed_trailing = [name for name, payload in shapes[2:] if _misses(payload)]
     ok = (not missed_head) and (not missed_trailing)
-    print(("HELD " if ok else "BREAK") + " test_partial_w402_f1119 "
+    print(("HELD " if ok else "BREAK") + " test_full_w402_f1119 "
           "(head-miss=%s, trailing-miss=%s)" % (missed_head, missed_trailing))
     return ok
 

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Round-72 attack battery: 14 new pins (expected miss/quiet) + carried F1123-F1141.
+"""Round-72 attack battery: 16 new pins (expected miss/quiet).
 
 Pins marked OPEN: verdict HELD while the payload still MISSES (finding open),
 BREAK if the payload ever gets blocked (pin broken). New pins F1142-F1150 and
 F1153-F1155 via their w404 red-first SHAPES (decoder seam, find_credential);
 F1151-F1152 via their w404 red-first SHAPES (provenance seam,
-instruction_shaped QUIET). F1123-F1141 carried via their w403 red-first SHAPES
-(all still OPEN on this tree). $0-spend-by-construction (no harness/paid refs;
+instruction_shaped QUIET). F1156-F1157 (merge-audit residuals) via their w404
+red-first SHAPES. F1123-F1141 are now CLOSED on the merged tree (wave-404
+lanes 1-4); their pins live in w403_attack_probes.py (F1123-F1140) and
+w402_attack_probes.py (F1141). $0-spend-by-construction (no harness/paid refs;
 model spend lives in the ledger).
 """
 import importlib.util
