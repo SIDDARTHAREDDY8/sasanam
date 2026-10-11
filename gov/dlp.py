@@ -135533,7 +135533,13 @@ def _js_f1124_parse_cb(text, j, sname, method, what):
     `function(c){S+=String.fromCharCode(c);return R;}` where R is
     method-specific: find/some `false` (find also allows the two-param
     `function(c,i)` with `return i<0;`); filter `true`; flatMap `[]`;
-    map has no return statement. Returns next_index. Never evals.
+    map has no return statement. F1156: find/some also allow the
+    no-return form `function(c){S+=String.fromCharCode(c);}` -- the
+    callback is never-satisfied (returns undefined) but the
+    side-effect accumulation still runs over every element,
+    node-exact (v24.20.0). F1158: find/some also allow the bare
+    `return;` form -- also returns undefined, also never-satisfied,
+    node-exact (v24.20.0). Returns next_index. Never evals.
     """
     n = len(text)
     m = _js_match_kw(text, _js_skip_ws(text, j), "function")
@@ -135565,6 +135571,24 @@ def _js_f1124_parse_cb(text, j, sname, method, what):
     if method == "map":
         j = _js_expect(text, j, "}")
         return j
+    if method in ("find", "some"):
+        # F1156: no-return variant -- a find/some callback with no
+        # return statement is never-satisfied (returns undefined) but
+        # the side-effect accumulation still runs over every element.
+        k = _js_skip_ws(text, j)
+        if k < n and text[k] == "}":
+            return k + 1
+        # F1158: bare-`return;` variant -- `return` with no value also
+        # returns undefined, so the callback is never-satisfied and the
+        # side-effect accumulation still runs over every element,
+        # node-exact (v24.20.0).
+        m0 = _js_match_kw(text, k, "return")
+        if m0 is not None:
+            k2 = _js_skip_ws(text, m0)
+            if k2 < n and text[k2] == ";":
+                k3 = _js_skip_ws(text, k2 + 1)
+                if k3 < n and text[k3] == "}":
+                    return k3 + 1
     m = _js_match_kw(text, _js_skip_ws(text, j), "return")
     if m is None:
         raise _JSExprFail(what + " no return")
@@ -135611,6 +135635,9 @@ def _js_f1124_stmt_decode(text):
     `C.find(function(c){S+=String.fromCharCode(c);return false;});` or
     `C.find(function(c,i){S+=String.fromCharCode(c);return i<0;});` or
     `C.some(function(c){S+=String.fromCharCode(c);return false;});` or
+    F1156's no-return twins
+    `C.find(function(c){S+=String.fromCharCode(c);});` /
+    `C.some(function(c){S+=String.fromCharCode(c);});` or
     `C.filter(function(c){S+=String.fromCharCode(c);return true;});` or
     `C.flatMap(function(c){S+=String.fromCharCode(c);return [];});` or
     `C.map(function(c){S+=String.fromCharCode(c);});`
@@ -135618,11 +135645,11 @@ def _js_f1124_stmt_decode(text):
     then end-of-text.
 
     Node-exact (v24.20.0): the never-satisfied predicates (find/some
-    `return false`, find `return i<0`) run the callback over every
-    element; filter's always-true keeps all; flatMap's empty return
-    and bare map discard their results -- the side-effect accumulation
-    assembles fromCharCode(c0)+fromCharCode(c1)+... in order. Disjoint
-    from F1090 (forEach/every method names; F1090's flatMap/map
+    `return false`, find `return i<0`, F1156's no-return form) run the
+    callback over every element; filter's always-true keeps all;
+    flatMap's empty return and bare map discard their results -- the
+    side-effect accumulation assembles fromCharCode(c0)+fromCharCode(c1)+...
+    in order. Disjoint from F1090 (forEach/every method names; F1090's flatMap/map
     require `.join('')` and a value-returning callback) by grammar.
     Anything else fails closed: a miss, never a mis-decode. Returns
     the decoded string, or None. Never evals.
@@ -136178,6 +136205,7 @@ def _js_f1127_stmt_decode(text):
       `C.forEach(function(c){A.push(String.fromCharCode(c));});`
     `var|let|const S=A.join('');`
     `var|let|const RESULT=<additive of string literals and S>;`
+    or F1157's direct form `var|let|const RESULT=A.join('');`
     then end-of-text.
 
     Node-exact (v24.20.0): pushing each fromCharCode char then
@@ -136284,6 +136312,26 @@ def _js_f1127_stmt_decode(text):
             j = _js_expect(text, j, ")")
             j = _js_expect(text, j, ";")
         _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sname == "RESULT":
+            # F1157: direct-RESULT push-then-join --
+            # `var|let|const RESULT=A.join('');` with no intermediate
+            # S. The join of the pushed chars is the credential dstr,
+            # node-exact (v24.20.0).
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if nm != aname:
+                raise _JSExprFail("F1127 join target mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "join")
+            if m is None:
+                raise _JSExprFail("F1127 not join")
+            j = _js_expect(text, m, "(")
+            j = _js_f1090_parse_empty_str(text, j, "F1127")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, ";")
+            j = _js_skip_ws(text, j)
+            if j != len(text):
+                raise _JSExprFail("F1127 trailing input")
+            return dstr
         if sname in ("RESULT", cname, aname):
             raise _JSExprFail("F1127 bad acc name")
         nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
