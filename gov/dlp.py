@@ -172953,6 +172953,436 @@ def _js_f1513_stmt_decode(text):
         return None
 
 
+def _js_f1514_stmt_decode(text):
+    """Decode F1514 String.valueOf map wrapper (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.map(function(c){return String.fromCharCode(c).valueOf();});`
+    `var|let|const S=D.join('');`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `String.fromCharCode(c)` applies ToUint16
+    (the F967 discipline already in `dstr`); `.valueOf()` on a string
+    primitive returns the string itself (identity -- no observable
+    side effects on a primitive); `join('')` concatenates the one-char
+    strings back into the credential. Disjoint from F1398 (the
+    `.concat('')` wrapper -- different method) by grammar -- the filed
+    shape BREAKs on the open tree. Anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".valueOf(" not in text or ".map(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1514"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_skip_ws(text, j)
+        nm, j = _js_parse_ident(text, j)
+        if nm != cname:
+            raise _JSExprFail(what + " map base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "map")
+        if m is None:
+            raise _JSExprFail(what + " not map")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        p, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(p, bound, {"String"}, what)
+        bound.add(p)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        j = _js_skip_ws(text, m)
+        m = _js_match_kw(text, j, "String")
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "fromCharCode")
+        if m is None:
+            raise _JSExprFail(what + " not fromCharCode")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        nm, j = _js_parse_ident(text, j)
+        if nm != p:
+            raise _JSExprFail(what + " fcc arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "valueOf")
+        if m is None:
+            raise _JSExprFail(what + " not valueOf")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_skip_ws(text, j)
+        nm, j = _js_parse_ident(text, j)
+        if nm != dname:
+            raise _JSExprFail(what + " join base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, m, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " join sep not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        return _js_f1397f1412_parse_result_tail(text, j, dstr, sname,
+                                                state, what)
+    except _JSExprFail:
+        return None
+
+def _js_f1515_stmt_decode(text):
+    """Decode F1515 Array.toString comma readout (whole-text hook).
+
+    Shape (a):
+    `var|let|const C=[INT,...];`
+    `var|let|const S=C.toString();`
+    `var|let|const RESULT=S.split(',').map(Number).map(function(n){return String.fromCharCode(n);}).join('');`
+    then end-of-text.
+
+    Shape (b):
+    `var|let|const C=[INT,...];`
+    `var|let|const J=C.toString();`
+    `var|let|const D=J.split(',').map(Number);`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=<additive of string literals and S>;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `Array.prototype.toString` on an int array
+    is the comma-joined decimal form; `split(',')` inverts it exactly;
+    `.map(Number)` restores the int array (node-exact for the filed
+    decimal forms -- no hex/octal/whitespace). The split operates on
+    the decimal *code strings*, so a comma in the credential (code 44
+    renders as the two-character string "44", distinct from the ","
+    separator) roundtrips faithfully; no comma exclusion is needed.
+    The fromCharCode readout assembles the credential. Disjoint from
+    F1277 (which stages via map+join/toString then split+join, never a
+    fromCharCode readout) and F1459 (entries readout) by grammar --
+    the filed shapes BREAK on the open tree. Anything else fails
+    closed: a miss, never a mis-decode. Returns the decoded string,
+    or None. Never evals.
+    """
+    if ".toString(" not in text or ".split(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1515"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "Number"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound,
+                                        {"String", "Number"}, what)
+        bound.add(tname)
+        j = _js_skip_ws(text, j)
+        nm, j = _js_parse_ident(text, j)
+        if nm != cname:
+            raise _JSExprFail(what + " toString base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "toString")
+        if m is None:
+            raise _JSExprFail(what + " not toString")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _, pname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if pname == "RESULT":
+            # Shape (a): RESULT=TNAME.split(',').map(Number)
+            # .map(function(n){return String.fromCharCode(n);}).join('');
+            j = _js_skip_ws(text, j)
+            nm, j = _js_parse_ident(text, j)
+            if nm != tname:
+                raise _JSExprFail(what + " split base mismatch")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "split")
+            if m is None:
+                raise _JSExprFail(what + " not split")
+            j = _js_expect(text, m, "(")
+            s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+            if s != ",":
+                raise _JSExprFail(what + " split sep not comma")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+            m = _js_match_kw(text, j, "map")
+            if m is None:
+                raise _JSExprFail(what + " not map")
+            j = _js_expect(text, m, "(")
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if nm != "Number":
+                raise _JSExprFail(what + " map arg not Number")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+            m = _js_match_kw(text, j, "map")
+            if m is None:
+                raise _JSExprFail(what + " not map2")
+            j = _js_expect(text, m, "(")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+            if m is None:
+                raise _JSExprFail(what + " not function")
+            j = _js_expect(text, m, "(")
+            p, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            _js_f1028f1029_check_fresh_name(p, bound,
+                                            {"String", "Number"}, what)
+            bound.add(p)
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), "{")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+            if m is None:
+                raise _JSExprFail(what + " no return")
+            j = _js_skip_ws(text, m)
+            m = _js_match_kw(text, j, "String")
+            if m is None:
+                raise _JSExprFail(what + " not String")
+            j = _js_expect(text, m, ".")
+            m = _js_match_kw(text, j, "fromCharCode")
+            if m is None:
+                raise _JSExprFail(what + " not fromCharCode")
+            j = _js_expect(text, m, "(")
+            j = _js_skip_ws(text, j)
+            nm, j = _js_parse_ident(text, j)
+            if nm != p:
+                raise _JSExprFail(what + " fcc arg mismatch")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, ";")
+            j = _js_expect(text, _js_skip_ws(text, j), "}")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            j = _js_expect(text, _js_skip_ws(text, j), ".")
+            m = _js_match_kw(text, j, "join")
+            if m is None:
+                raise _JSExprFail(what + " not join")
+            j = _js_expect(text, m, "(")
+            s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+            if s != "":
+                raise _JSExprFail(what + " join sep not empty")
+            j = _js_expect(text, _js_skip_ws(text, j), ")")
+            _js_f96x_expect_semi_end(text, j)
+            return dstr
+        # Shape (b): var DNAME=TNAME.split(',').map(Number);
+        _js_f1028f1029_check_fresh_name(pname, bound,
+                                        {"String", "Number"}, what)
+        bound.add(pname)
+        dname = pname
+        j = _js_skip_ws(text, j)
+        nm, j = _js_parse_ident(text, j)
+        if nm != tname:
+            raise _JSExprFail(what + " split base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "split")
+        if m is None:
+            raise _JSExprFail(what + " not split")
+        j = _js_expect(text, m, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != ",":
+            raise _JSExprFail(what + " split sep not comma")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        m = _js_match_kw(text, j, "map")
+        if m is None:
+            raise _JSExprFail(what + " not map")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "Number":
+            raise _JSExprFail(what + " map arg not Number")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        sname, j = _js_f1397f1412_parse_apply_s(text, j, dname, bound,
+                                                state, what)
+        return _js_f1397f1412_parse_result_tail(text, j, dstr, sname,
+                                                state, what)
+    except _JSExprFail:
+        return None
+
+def _js_f1516_strip_dead_tagged(text):
+    """Strip dead String.raw tagged-template statements (whole-text).
+
+    `var|let|const IDENT=String.raw`<lit>`;` where each template is
+    literal-only (no `${`, no backslashes, no backticks) and each IDENT
+    is never referenced elsewhere in the text. Node-exact (v24.20.0):
+    `String.raw` called as a tag with no substitutions returns the raw
+    literal string; dead bindings cannot affect credential assembly,
+    so removing the statements is semantics-preserving for detection.
+    `String` must not be shadowed by a local declaration. Strips ALL
+    such statements in one pass (an attacker can prepend several).
+    Returns the stripped text, or None. Never evals.
+    """
+    tag = "String.raw`"
+    n = len(text)
+    # `String` must not be shadowed: no declaration of `String` as a
+    # var/let/const/function name, function parameter, or catch binding.
+    # Conservative: if `String` is declared anywhere, refuse.
+    shadowed = False
+    # Check var/let/const/function declarations.
+    for skw in ("var ", "let ", "const ", "function "):
+        idx = 0
+        while True:
+            idx = text.find(skw, idx)
+            if idx == -1:
+                break
+            after = idx + len(skw)
+            while after < n and text[after] in " \t\n\r":
+                after += 1
+            if text.startswith("String", after):
+                e2 = after + 6
+                if e2 >= n or not (text[e2].isalnum() or
+                                   text[e2] in "_$"):
+                    b2 = idx - 1
+                    if b2 < 0 or not (text[b2].isalnum() or
+                                      text[b2] in "_$"):
+                        shadowed = True
+                        break
+            idx += 1
+        if shadowed:
+            break
+    # Check function parameters: `(String`, `,String`, `, String`, etc.
+    # and catch bindings: `catch (String`, `catch(String`.
+    if not shadowed:
+        idx = 0
+        while True:
+            idx = text.find("String", idx)
+            if idx == -1:
+                break
+            # Is this a `String.raw` reference (allowed) or a binding?
+            # Check if preceded by `(` or `,` (param) or `catch` context.
+            # Conservative: if `String` appears as a standalone word
+            # that is NOT followed by `.raw` or `.fromCharCode`, it
+            # might be a binding -- refuse.
+            after = idx + 6
+            after_ok = after < n and text[after] == "."
+            if not after_ok:
+                # Standalone `String` not followed by `.` -- could be
+                # a param/binding. Check if it's in a param list.
+                # Simple heuristic: look backwards for `(` or `,`.
+                b = idx - 1
+                while b >= 0 and text[b] in " \t\n\r":
+                    b -= 1
+                if b >= 0 and text[b] in "(,":
+                    shadowed = True
+                    break
+            idx += 1
+    if shadowed:
+        return None
+    # Find and strip all dead tagged-template statements.
+    # We collect the spans first, then remove them.
+    spans = []
+    start = 0
+    while True:
+        i = text.find(tag, start)
+        if i == -1:
+            break
+        bt = i + len(tag)
+        k = bt
+        ok = True
+        while k < n and text[k] != "`":
+            if text[k] == "\\":
+                ok = False
+                break
+            if text[k] == "$" and k + 1 < n and text[k + 1] == "{":
+                ok = False
+                break
+            k += 1
+        if not ok or k >= n:
+            start = i + 1
+            continue
+        m = k + 1
+        while m < n and text[m] in " \t\n\r":
+            m += 1
+        if m >= n or text[m] != ";":
+            start = i + 1
+            continue
+        stmt_end = m + 1
+        p = i - 1
+        while p >= 0 and text[p] in " \t\n\r":
+            p -= 1
+        if p < 0 or text[p] != "=":
+            start = i + 1
+            continue
+        p -= 1
+        while p >= 0 and text[p] in " \t\n\r":
+            p -= 1
+        e = p + 1
+        while p >= 0 and (text[p].isalnum() or text[p] in "_$"):
+            p -= 1
+        ident = text[p + 1:e]
+        if not ident or not (ident[0].isalpha() or ident[0] in "_$"):
+            start = i + 1
+            continue
+        q = p
+        while q >= 0 and text[q] in " \t\n\r":
+            q -= 1
+        kw_ok = False
+        stmt_start = 0
+        for kw in ("var", "let", "const"):
+            if q - len(kw) + 1 >= 0 and \
+                    text[q - len(kw) + 1:q + 1] == kw:
+                b = q - len(kw)
+                if b < 0 or not (text[b].isalnum() or
+                                 text[b] in "_$"):
+                    kw_ok = True
+                    stmt_start = b + 1
+                    break
+        if not kw_ok:
+            start = i + 1
+            continue
+        gap = text[q + 1:p + 1]
+        if gap.strip(" \t\n\r") != "":
+            start = i + 1
+            continue
+        # IDENT must be dead: appears exactly once (in this statement).
+        count = 0
+        idx = 0
+        while True:
+            idx = text.find(ident, idx)
+            if idx == -1:
+                break
+            before_ok = idx == 0 or not (text[idx - 1].isalnum() or
+                                         text[idx - 1] in "_$")
+            after_idx = idx + len(ident)
+            after_ok = after_idx >= n or not (
+                text[after_idx].isalnum() or text[after_idx] in "_$")
+            if before_ok and after_ok:
+                count += 1
+                if count > 1:
+                    break
+            idx += 1
+        if count != 1:
+            start = i + 1
+            continue
+        spans.append((stmt_start, stmt_end))
+        start = stmt_end
+    if not spans:
+        return None
+    # Remove the spans (from last to first to preserve indices).
+    result = text
+    for s, e in reversed(spans):
+        result = result[:s] + result[e:]
+    result = result.strip(" \t\n\r")
+    if not result or result == text:
+        return None
+    return result
+
 def _js_f1464_stmt_decode(text):
     """Decode F1464 for-loop direct-index push staging (whole-text hook).
 
@@ -174805,6 +175235,36 @@ def _decode_layer(text):
             _add(_sdec)
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
+
+    # F1514-F1515 (wave-417 lane 3): String.valueOf map wrapper and
+    # Array.toString comma-readout decoders. Each parses a strict
+    # whole-text grammar; every filed shape BREAKs on the open tree,
+    # so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Disjoint from F1398 (the
+    # .concat('') wrapper -- different method), F1277 (toString then
+    # split+join, never a fromCharCode readout), F1459 (entries
+    # readout) by grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1514_stmt_decode, _js_f1515_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1516 (wave-417 lane 3): strip one dead String.raw tagged-template
+    # statement. The whole-text statement decoders fail on backtick
+    # tagged templates, so a dead `var T=String.raw`x`;` at any position
+    # evades them. Stripping the dead statement yields a variant the
+    # layer-2 pass decodes; only genuinely-decodable remainder text
+    # becomes a credential hit. Node-exact and fail-closed per
+    # _js_f1516_strip_dead_tagged. Additive at the end so the
+    # pre-existing variant order is preserved exactly (F441).
+    _stripped = _js_f1516_strip_dead_tagged(text)
+    if _stripped is not None:
+        _add(_stripped)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
 
 
     # F953/F954/F955/F956: top-level statement-sequence decode --
