@@ -90,7 +90,7 @@ def test_p0_pins():
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (pin == 70 and len(loops) == 70)
+    ok = (pin == 72 and len(loops) == 72)
     notes.append("loops=%d pin=%d" % (len(loops), pin))
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         ftxt = f.read()

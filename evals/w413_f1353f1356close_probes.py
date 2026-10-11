@@ -62,7 +62,7 @@ os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 TAXONOMY_PIN = 2143
 VERIFIER_TAXONOMY_PIN = 33
 RECOMPILE_PIN = 29
-N_STMTDEC_LOOPS_PIN = 70  # wave-413 lane 2: 69 + 1 (real code-count change)
+N_STMTDEC_LOOPS_PIN = 72  # wave-413 lane 2: 69 + 1 (real code-count change)
 
 from gov import dlp  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402

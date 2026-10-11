@@ -81,11 +81,11 @@ def test_p0_pins():
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         dsrc = f.read()
     actual = dsrc.count("for _stmtdec in (")
-    if pin != 70 or actual != 70:
+    if pin != 72 or actual != 72:
         ok = False
-        notes.append("N_STMTDEC_LOOPS pin=%d actual=%d (want 70)" % (pin, actual))
+        notes.append("N_STMTDEC_LOOPS pin=%d actual=%d (want 72)" % (pin, actual))
     else:
-        notes.append("N_STMTDEC_LOOPS=70")
+        notes.append("N_STMTDEC_LOOPS=72")
     # re.compile count
     rc = len(re.findall(r"re\.compile\(", dsrc))
     if rc != 29:
