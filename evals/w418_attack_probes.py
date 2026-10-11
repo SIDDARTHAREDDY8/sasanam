@@ -68,7 +68,7 @@ _NEW_PINS = [
     ("F1564", ["var C={I};var M=new Map();for(var i=0;i<C.length;i++){M.set(i,C[i]);}var V=[...M.values()];var RESULT=V.map(function(c){return String.fromCharCode(c);}).join('');"]),
     ("F1565", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=(' '+S+' ').trimStart().trimEnd();"]),
     ("F1566", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var U=S.replace('x','x');var RESULT=U;"]),
-    ("F1567", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join(\\"]),
+    ("F1567", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');for(var k=0;k<1;k++){var Z=k;}var RESULT=S;"]),
     ("F1568", ["var C={I};var E=C.filter(function(c,i){return C.includes(c,1);});var S=String.fromCharCode.apply(null,E);var RESULT=S;"]),
     ("F1569", ["var C={I};var E=C.flatMap((c,i,a,t)=>[c],null);var S=String.fromCharCode.apply(null,E);var RESULT=S;"]),
 ]
