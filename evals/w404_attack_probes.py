@@ -104,15 +104,45 @@ def _open_prov_pin(prefix, num):
     return _fn
 
 
-# New round-72 decoder pins (F1142-F1150, F1153-F1155) -- still OPEN.
-for _n in range(1142, 1151):
-    _open_pin("w404", _n)
-for _n in (1153, 1154, 1155):
-    _open_pin("w404", _n)
+def _closed_pin(prefix, num):
+    """All red-first shapes for a CLOSED decoder finding must now BLOCK."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _misses(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
 
-# New round-72 provenance pins (F1151-F1152) -- still OPEN (QUIET).
+
+def _closed_prov_pin(prefix, num):
+    """All red-first shapes for a CLOSED provenance finding must now FLAG."""
+    @_t
+    def _fn():
+        shapes = _redfirst_shapes(prefix, num)
+        bad = [name for name, payload in shapes if _quiet(payload)]
+        ok = not bad
+        print(("HELD " if ok else "BREAK") + " test_closed_%s_f%d (%d shapes%s)" % (
+            prefix, num, len(shapes), "" if ok else ": " + ",".join(bad)))
+        return ok
+    _fn.__name__ = "test_closed_%s_f%d" % (prefix, num)
+    return _fn
+
+
+# Round-72 decoder pins (F1142-F1150, F1153-F1155) -- CLOSED on the merged tree
+# (wave-405 lanes 1-2).
+for _n in range(1142, 1151):
+    _closed_pin("w404", _n)
+for _n in (1153, 1154, 1155):
+    _closed_pin("w404", _n)
+
+# Round-72 provenance pins (F1151-F1152) -- CLOSED on the merged tree
+# (wave-405 lane 3).
 for _n in range(1151, 1153):
-    _open_prov_pin("w404", _n)
+    _closed_prov_pin("w404", _n)
 
 # Carried round-71 pins (F1123-F1141) are now CLOSED on the merged tree
 # (wave-404 lanes 1-4); verified by w403_attack_probes.py (F1123-F1140) and

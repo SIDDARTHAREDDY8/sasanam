@@ -12627,3 +12627,5 @@ Next free finding: **F1159**. **F988-F1158 CLOSED (157, wave-393 lanes 1-5 + wav
 
 # Wave-405 attack round 73: F1159-F1181 filed OPEN (23, first-filing 2026-10-11 00:30 UTC, $0 model spend); next free F1182
 Next free finding: **F1182**. **F988-F1141 CLOSED (154).** **F1142-F1157, F1159-F1181 OPEN (39, wave-404 attack round 72 + merge audit F1156-F1157 + wave-405 attack round 73).**
+# Wave-405: F1142-F1158 CLOSED (17); F1159-F1181 OPEN (23); next free F1182
+Next free finding: **F1182**. **F988-F1158 CLOSED (171, wave-393 lanes 1-5 + wave-394 lanes 1-5 + wave-395 lanes 1-4 + wave-396 lanes 1-4 + wave-397 lanes 1-4 + wave-398 lanes 1-3 + wave-399 lanes 1-3 + wave-400 lanes 1-3 + wave-401 lanes 1-5 + wave-402 lanes 1-4 + wave-403 lanes 1-4 + wave-404 lanes 1-4 + wave-405 lanes 1-4).** **F1159-F1181 OPEN (23, wave-405 attack round 73 renumbered F1158-F1180 -> F1159-F1181 (lane 4's F1158 filed 2026-10-11 00:28 UTC keeps the number over attack's F1158 filed 2026-10-11 00:30 UTC, wave-272), first-filing 2026-10-11 00:30 UTC, $0 model spend).**
