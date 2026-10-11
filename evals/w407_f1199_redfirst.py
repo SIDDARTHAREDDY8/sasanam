@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Red-first for F1199: flat(1) on doubly-nested arrays (F1187 residual).
+"""Red-first for F1199: join-split-roundtrip.
 
-The F1187 hook enforces depth == 2; swapping the literal to flat(1) on the
-same doubly-nested production assembles node-exactly (v24.20.0) while
-find_credential MISSES. One-character attacker tweak of a CLOSED finding.
-Filed 2026-10-11 (first-filing timestamp recorded in evals/FINDINGS.md entry).
-Prints BREAK on the lane tree (pre-closure).
+join/split roundtrip on the char array -- mapping codes to chars, joining with a custom separator (or Array toString's comma join), then splitting and re-joining, assembles node-exactly (v24.20.0) while find_credential MISSES. Distinct from F1134 (CLOSED), which covers the int-array roundtrip.
+Filed 2026-10-11 03:05 UTC, wave-407 attack round 75 (local node validation,
+$0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -53,15 +51,14 @@ def _payload(tmpl, secret):
 
 
 _TMPLS = [
-    ("flat1-doublenested-fn",
-     "var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(1));var RESULT=S;"),
-    ("flat1-doublenested-arrow",
-     "var C={I};var N=C.map(c=>[[c]]);var S=String.fromCharCode(...N.flat(1));var RESULT=S;"),
+    ("join-sep",
+     "var C={I};var A=C.map(function(c){return String.fromCharCode(c);});var J=A.join('|:|');var S=J.split('|:|').join('');var RESULT=S;"),
+    ("tostring",
+     "var C={I};var A=C.map(function(c){return String.fromCharCode(c);});var T=A.toString();var S=T.split(',').join('');var RESULT=S;"),
 ]
 
 _CONTROLS = [
-    # flat(2) twin blocks (F1187, CLOSED) -- must still HIT
-    ("ctrl-f1187-flat2", "var C={I};var N=C.map(function(c){return [[c]];});var S=String.fromCharCode(...N.flat(2));var RESULT=S;", True),
+    ("ctrl-f1090-mapjoin", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=S;", True),
     ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
 ]
 
@@ -82,18 +79,15 @@ def main():
         print(("FAIL " if bad else "BREAK ") + name, flush=True)
         if bad:
             fails.append(name)
-    for (name, _t, _e), (_n2, payload) in zip(_CONTROLS, CONTROLS):
+    for (name, _t, expect_block), (_cn, payload) in zip(_CONTROLS, CONTROLS):
         v = _scan(payload)
         hit = (v == "HIT")
-        ok = (hit == _e) and v != "ERR"
-        print(("ctrl-OK " if ok else "ctrl-FAIL ") + name, flush=True)
+        ok = (hit == expect_block) and v != "ERR"
+        print(("ctrl-ok " if ok else "CTRL-FAIL ") + name, flush=True)
         if not ok:
-            fails.append("control:" + name)
-    if fails:
-        print("RED-FIRST-FAIL: " + ",".join(fails))
-        return 1
-    print("RED-FIRST-OK: all %d shapes BREAK (scanner misses flat(1))" % len(SHAPES))
-    return 0
+            fails.append(name)
+    print("%d shapes, %d controls, %d FAIL" % (len(SHAPES), len(CONTROLS), len(fails)))
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":

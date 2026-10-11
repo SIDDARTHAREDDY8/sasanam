@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Red-first for F1200: F1189 form-B arrow callback (F1189 residual).
+"""Red-first for F1200: globalthis-member-staging.
 
-The F1189 hook's form B covers `yield* C.map(function(c){...})` but fails
-closed on arrow callbacks; `yield* C.map(c=>String.fromCharCode(c))` assembles
-node-exactly (v24.20.0, top-level await) while find_credential MISSES.
-Filed 2026-10-11 (first-filing timestamp recorded in evals/FINDINGS.md entry).
-Prints BREAK on the lane tree (pre-closure).
+globalThis member-expression staging -- reading String.fromCharCode off globalThis (dot or bracket form) into a variable, then calling it in an accumulation loop, assembles node-exactly (v24.20.0) while find_credential MISSES.
+Filed 2026-10-11 03:05 UTC, wave-407 attack round 75 (local node validation,
+$0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -53,13 +51,14 @@ def _payload(tmpl, secret):
 
 
 _TMPLS = [
-    ("yieldstar-arrow",
-     "var C={I};async function*g(){yield* C.map(c=>String.fromCharCode(c));}var S='';for await(var ch of g()){S+=ch;}var RESULT=S;"),
+    ("dot",
+     "var C={I};var G=globalThis;var F=G.String.fromCharCode;var S='';for(var i=0;i<C.length;i++){S+=F(C[i]);}var RESULT=S;"),
+    ("bracket",
+     "var C={I};var F=globalThis['String']['fromCharCode'];var S='';for(var i=0;i<C.length;i++){S+=F(C[i]);}var RESULT=S;"),
 ]
 
 _CONTROLS = [
-    # form-B fn-callback twin blocks (F1189, CLOSED) -- must still HIT
-    ("ctrl-f1189-yieldstar-fn", "var C={I};async function*g(){yield* C.map(function(c){return String.fromCharCode(c);});}var S='';for await(var ch of g()){S+=ch;}var RESULT=S;", True),
+    ("ctrl-direct-loop", "var C={I};var S='';for(var i=0;i<C.length;i++){S+=String.fromCharCode(C[i]);}var RESULT=S;", True),
     ("junk-quiet", "The quarterly financial summary shows revenue growth.", False),
 ]
 
@@ -80,18 +79,15 @@ def main():
         print(("FAIL " if bad else "BREAK ") + name, flush=True)
         if bad:
             fails.append(name)
-    for (name, _t, _e), (_n2, payload) in zip(_CONTROLS, CONTROLS):
+    for (name, _t, expect_block), (_cn, payload) in zip(_CONTROLS, CONTROLS):
         v = _scan(payload)
         hit = (v == "HIT")
-        ok = (hit == _e) and v != "ERR"
-        print(("ctrl-OK " if ok else "ctrl-FAIL ") + name, flush=True)
+        ok = (hit == expect_block) and v != "ERR"
+        print(("ctrl-ok " if ok else "CTRL-FAIL ") + name, flush=True)
         if not ok:
-            fails.append("control:" + name)
-    if fails:
-        print("RED-FIRST-FAIL: " + ",".join(fails))
-        return 1
-    print("RED-FIRST-OK: all %d shapes BREAK (scanner misses yield*-arrow)" % len(SHAPES))
-    return 0
+            fails.append(name)
+    print("%d shapes, %d controls, %d FAIL" % (len(SHAPES), len(CONTROLS), len(fails)))
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":
