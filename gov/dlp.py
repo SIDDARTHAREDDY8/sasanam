@@ -178617,6 +178617,26 @@ def _decode_layer(text):
         _add(_stripped)
         if len(variants) >= _MAX_CANDIDATES:
             return variants
+
+
+    # F1540 (wave-418 lane 4): strip dead pure-statement declarations.
+    # Whole-text statement decoders require exact statement sequences,
+    # so an intervening dead statement (e.g. `var E=S.search(/x/);`,
+    # `var E=1;`) evaded them. Stripping dead, side-effect-free
+    # statements yields a variant the layer-2 pass decodes; only
+    # genuinely-decodable remainder text becomes a credential hit.
+    # Node-exact and fail-closed per _js_f1540_strip_dead_stmt.
+    # Additive at the end so the pre-existing variant order is
+    # preserved exactly (F441).
+    _stripped = _js_f1540_strip_dead_stmt(text)
+    if _stripped is not None:
+        _add(_stripped)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
+    if _stripped is not None:
+        _add(_stripped)
+        if len(variants) >= _MAX_CANDIDATES:
+            return variants
     # F1518-F1524 (wave-418 lane 1): flatMap null-thisArg, padStart/padEnd
     # fixed-length variants, sort arrow boolean-comparator, join/split
     # non-comma separators, slice/splice computed negatives, String/Array

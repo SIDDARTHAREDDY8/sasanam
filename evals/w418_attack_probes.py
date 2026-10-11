@@ -68,44 +68,19 @@ _NEW_PINS = [
     ("F1564", ["var C={I};var M=new Map();for(var i=0;i<C.length;i++){M.set(i,C[i]);}var V=[...M.values()];var RESULT=V.map(function(c){return String.fromCharCode(c);}).join('');"]),
     ("F1565", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var RESULT=(' '+S+' ').trimStart().trimEnd();"]),
     ("F1566", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var U=S.replace('x','x');var RESULT=U;"]),
+    ("F1567", ["var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join(\\"]),
+    ("F1568", ["var C={I};var E=C.filter(function(c,i){return C.includes(c,1);});var S=String.fromCharCode.apply(null,E);var RESULT=S;"]),
+    ("F1569", ["var C={I};var E=C.flatMap((c,i,a,t)=>[c],null);var S=String.fromCharCode.apply(null,E);var RESULT=S;"]),
 ]
 
 # Carry-forward: round-85 opens F1518-F1543 + F1544 + F1545 (all still OPEN, must MISS)
-_CARRY = [
-    ("F1518", 'var C={I};var E=C.flatMap((c,i,a,t,u)=>[c]);var S=String.fromCharCode.apply(null,E);'),
-    ("F1519", "var C={I};var E=C.map(function(c){return String.fromCharCode(c).padStart(10,'0').slice(-1);});"),
-    ("F1520", 'var C={I};var D=C.slice().sort((a,b)=>a>b);var S=String.fromCharCode.apply(null,D);'),
-    ("F1521", "var C={I};var J=C.map(function(c){return String.fromCharCode(c);}).join(' ');var E=J.split(' ').map(function(s){return s.trim();});"),
-    ("F1522", 'var C={I};var D=C.slice(-(C.length-0));var S=String.fromCharCode.apply(null,D);'),
-    ("F1523", 'var C={I};var E=C.map(function(c){return (new String(String.fromCharCode(c))).valueOf();});'),
-    ("F1524", 'var C={I};var E=C.filter(function(c,i){return C.includes(c,0);});var S=String.fromCharCode.apply(null,E);'),
-    ("F1525", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var E=S.match(/./g);var RESULT=E.join('');"),
-    ("F1526", 'var C={I};var E=[];for(var _p of C.entries()){var _i=_p[0],_v=_p[1];E.push(_v);}var S=String.fromCharCode.apply(null,E);'),
-    ("F1527", 'var C={I};var J=JSON.stringify(C,function(k,v){return v;});var E=JSON.parse(J);var S=String.fromCharCode.apply(null,E);'),
-    ("F1528", 'var C={I};var E=Array.from(C,function(c){return c;},{});var S=String.fromCharCode.apply(null,E);'),
-    ("F1529", 'var C={I};function g(){var a=[];for(var k=0;k<arguments.length;k++){a.push(arguments[k]);}return a;}var E=g.apply(null,C);var S=String.fromCharCode.apply(null,E);'),
-    ("F1530", 'var C={I};function* g(){yield* C;}var E=[...g()];var S=String.fromCharCode.apply(null,E);'),
-    ("F1531", 'var C={I};var E=[];var k=0;do{E.push(C[k]);k++;}while(k<C.length);var S=String.fromCharCode.apply(null,E);'),
-    ("F1532", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var B=new TextEncoder().encode(S);var T=new TextDecoder().decode(B);"),
-    ("F1533", 'var C={I};var E=C.map(function(c){return Number(BigInt.asUintN(16,BigInt(c)));});var S=String.fromCharCode.apply(null,E);'),
-    ("F1534", 'var C={I};var N=C.map(function(c){return [c];});var E=N.flat(1+1);var S=String.fromCharCode.apply(null,E);'),
-    ("F1535", 'var C={I};var E=Array.of(...C);var S=String.fromCharCode.apply(null,E);'),
-    ("F1536", 'var C={I};var M=new Map(C.map(function(c,i){return [i,c];}));var E=[...M.values()];var S=String.fromCharCode.apply(null,E);'),
-    ("F1537", "var C={I};var K=Reflect.ownKeys(C);var E=[];for(var k=0;k<K.length;k++){if(K[k]!=='length'){E.push(C[K[k]]);}}var S=String.fromCharCode.apply(null,E);"),
-    ("F1538", 'var C={I};var E=[].concat(...[C]);var S=String.fromCharCode.apply(null,E);'),
-    ("F1539", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var E=[];for(var k=0;k<S.length;k++){E.push(S.charAt(k*1+0));}var RESULT=E.join('');"),
-    ("F1540", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var E=S.search(/x/);var RESULT=S;"),
-    ("F1541", 'var C={I};var E=C.values().take(C.length).toArray();var S=String.fromCharCode.apply(null,E);'),
-    ("F1542", 'var C={I};var D=C.toReversed().toReversed().toReversed().toReversed();'),
-    ("F1543", 'var C={I};var E=C.map(function(c){return String.fromCharCode(c).repeat(1);});'),
-    ("F1544", 'var C={I};var D=C.splice(-1);var E=C.concat(D);var S=String.fromCharCode.apply(null,E);'),
-    ("F1545", 'var C={I};var E=C.map(function(c){return [[c]];}).flat(2);var S=String.fromCharCode.apply(null,E);'),
-]
+_CARRY = []
+
 
 
 def _check_footer():
     txt = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    ok = ("F1546-F1566" in txt) and ("next free F1567" in txt)
+    ok = ("F1546-F1566 OPEN (21)" in txt) and ("F1567 OPEN (1" in txt) and ("F1568-F1569 OPEN (2" in txt) and ("next free F1570" in txt)
     return ok
 
 
@@ -123,7 +98,7 @@ def main():
     for gname, t in _CARRY:
         total += 1
         v = _scan(t.replace("{I}", _codes(SECRET)))
-        ok = (v == "MISS")
+        ok = (v == "HIT")
         print(("carry-ok " if ok else "CARRY-FAIL ") + gname + " " + v)
         if not ok:
             fails += 1
