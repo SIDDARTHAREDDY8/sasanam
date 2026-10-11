@@ -1454,6 +1454,77 @@ def _has_hidden_object_name(text):
     return False
 
 
+def _has_hidden_menuitem_label(text):
+    """True when prose hides in a `<menuitem label>` attribute (F1332).
+
+    F1332: the label attribute names the menu item for assistive
+    tech -- it is never rendered as page-body text, so prose there
+    is hidden from the human reader (the F1024 rationale). Honest
+    labels (file-menu) stay quiet via the prose-shape gate.
+    Disjoint from F1333's `<menu label>` (different element).
+    Never evals.
+    """
+    for m in re.finditer(r"<menuitem\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "label")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_menu_label(text):
+    """True when prose hides in a `<menu label>` attribute (F1333).
+
+    F1333: the label attribute names the menu for assistive tech --
+    it is never rendered as page-body text, so prose there is hidden
+    from the human reader (the F1024 rationale). Honest labels
+    (edit) stay quiet via the prose-shape gate. Disjoint from
+    F1332's `<menuitem label>` (different element). Never evals.
+    """
+    for m in re.finditer(r"<menu\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "label")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_td_abbr(text):
+    """True when prose hides in a `<td abbr>` attribute (F1334).
+
+    F1334: the abbr attribute is the cell abbreviation for
+    assistive tech -- it is never rendered as page-body text, so
+    prose there is hidden from the human reader (the F1024
+    rationale). Honest abbreviations (qty) stay quiet via the
+    prose-shape gate. Twin of F1285 (`<th abbr>`, CLOSED);
+    disjoint by element. Never evals.
+    """
+    for m in re.finditer(r"<td\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "abbr")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
+def _has_hidden_form_action(text):
+    """True when prose hides in a `<form action>` attribute (F1335).
+
+    F1335: the action attribute is the submission target -- it is
+    never rendered as page-body text, so prose there is hidden
+    from the human reader (the F1024 rationale). Honest targets
+    (/submit) stay quiet via the prose-shape gate. Distinct from
+    F1256 (`<form name>`, CLOSED; different attribute). Never
+    evals.
+    """
+    for m in re.finditer(r"<form\b[^>]*>", text, re.I):
+        tag = m.group(0)
+        val, has_val = _f1047_attr_value(tag, "action")
+        if has_val and _is_substantive_prose(val):
+            return True
+    return False
+
+
 def _has_hidden_hidden_option(text):
     """True when prose hides in `<option hidden>` (F1064).
 
@@ -2317,12 +2388,26 @@ def instruction_shaped(text):
     # object param (different elements/attributes); documented per
     # detector. Honest machine tokens stay quiet via the
     # prose-shape gate.
-    return (_has_hidden_button_name(norm)
+    if (_has_hidden_button_name(norm)
             or _has_hidden_input_name(norm)
             or _has_hidden_textarea_name(norm)
             or _has_hidden_a_download(norm)
             or _has_hidden_iframe_name(norm)
-            or _has_hidden_object_name(norm))
+            or _has_hidden_object_name(norm)):
+        return True
+    # F1332/F1333/F1334/F1335: the same construction for four
+    # further hidden-from-human carriers -- `<menuitem label>`,
+    # `<menu label>`, `<td abbr>`, and `<form action>`. None is
+    # rendered as page-body text, so prose there is hidden from
+    # the human reader (the F1024 rationale). Disjoint from
+    # F1332<->F1333 (different elements), F1285's `<th abbr>`,
+    # and F1256's `<form name>` (different elements/attributes);
+    # documented per detector. Honest machine tokens stay quiet
+    # via the prose-shape gate.
+    return (_has_hidden_menuitem_label(norm)
+            or _has_hidden_menu_label(norm)
+            or _has_hidden_td_abbr(norm)
+            or _has_hidden_form_action(norm))
 
 
 class ActionRequest(object):
