@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wave-410 lane 3 close battery: F1274-F1280 CLOSED (+ F1289).
+"""Wave-410 lane 3 close battery: F1274-F1280 CLOSED (+ F1315).
 
 F1274: TypedArray apply/while staging -- new Uint8Array(C) then
 String.fromCharCode.apply(null,U) or while(i<U.length){S+=fcc(U[i++])}.
@@ -34,7 +34,7 @@ F1280: hasOwn-guarded for-in staging -- for(k in O){if(hasOwn){...}}.
 Closed by _js_f1280_stmt_decode. Disjoint from F1044 (bare for-in)
 by the hasOwn guard and staged fill.
 
-F1289: hasOwnProperty method-call guard -- O.hasOwnProperty(k).
+F1315: hasOwnProperty method-call guard -- O.hasOwnProperty(k).
 Discovered during F1280 closure (filed 2026-10-11 07:10 UTC, next-free
 from wave-409 footer). Closed by the extended _js_f1280_parse_guard.
 
@@ -136,7 +136,7 @@ FILED = [
      "var C={I};var O={};C.forEach(function(c,i){O['k'+i]=c;});var S='';for(var k in O){if(Object.hasOwn(O,k)){S+=String.fromCharCode(O[k]);}}var RESULT=S;"),
     ("f1280-hasownproperty",
      "var C={I};var O={};C.forEach(function(c,i){O['k'+i]=c;});var S='';for(var k in O){if(Object.prototype.hasOwnProperty.call(O,k)){S+=String.fromCharCode(O[k]);}}var RESULT=S;"),
-    ("f1289-method",
+    ("f1315-method",
      "var C={I};var O={};C.forEach(function(c,i){O['k'+i]=c;});var S='';for(var k in O){if(O.hasOwnProperty(k)){S+=String.fromCharCode(O[k]);}}var RESULT=S;"),
 ]
 
@@ -172,7 +172,7 @@ GENERALIZATIONS = [
      "let C={I};let O={};C.forEach(function(c,i){O['k'+i]=c;});let S='';for(let k in O){if(Object.hasOwn(O,k)){S+=String.fromCharCode(O[k]);}}var RESULT=S;"),
     ("f1280-bare-k",
      "var C={I};var O={};C.forEach(function(c,i){O['k'+i]=c;});var S='';for(k in O){if(Object.hasOwn(O,k)){S+=String.fromCharCode(O[k]);}}var RESULT=S;"),
-    ("f1289-dq",
+    ("f1315-dq",
      "var C={I};var O={};C.forEach(function(c,i){O[\"k\"+i]=c;});var S=\"\";for(var k in O){if(O.hasOwnProperty(k)){S+=String.fromCharCode(O[k]);}}var RESULT=S;"),
 ]
 
@@ -221,7 +221,7 @@ _MY_HOOK = {
     "f1278": dlp._js_f1278_stmt_decode,
     "f1279": dlp._js_f1279_stmt_decode,
     "f1280": dlp._js_f1280_stmt_decode,
-    "f1289": dlp._js_f1280_stmt_decode,
+    "f1315": dlp._js_f1280_stmt_decode,
 }
 
 POLITE = ("the quarterly financial summary shows revenue growth across "
@@ -266,7 +266,7 @@ def test_p0_stmtdec_pin():
 
 @_t
 def test_p0_footer_state():
-    """Lane tree: F1274-F1280 + F1289 stamped CLOSED (this lane)."""
+    """Lane tree: F1274-F1280 + F1315 stamped CLOSED (this lane)."""
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         text = f.read()
     bad = []
@@ -477,7 +477,7 @@ def test_perf_200_sites():
 @_t
 def test_green_w409():
     """Depth-1 green check on w409's attack battery. On the lane tree,
-    F1274-F1280+F1289 are CLOSED (their open pins must BREAK); the rest
+    F1274-F1280+F1315 are CLOSED (their open pins must BREAK); the rest
     stay HELD. Honor GOV_SKIP_GREEN."""
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         print("HELD  test_green_w409 (skipped: GOV_SKIP_GREEN=1)")
@@ -493,11 +493,11 @@ def test_green_w409():
                            timeout=900, cwd=os.path.join(REPO_ROOT, "evals"))
         broke = [l for l in (r.stdout or "").split("\n") if l.startswith("BREAK")]
         # Expect exactly the 8 closed findings' pins to break (7 filed +
-        # F1289); anything else breaking is a regression.
+        # F1315); anything else breaking is a regression.
         broke_f = sorted(set(
             re.search(r"f(\d+)", l).group(1) for l in broke
             if re.search(r"f(\d+)", l)))
-        # F1274-F1280 now CLOSED -> their OPEN pins BREAK. F1289 is not
+        # F1274-F1280 now CLOSED -> their OPEN pins BREAK. F1315 is not
         # in the attack battery (lane-filed). F1260-F1273, F1281-F1288
         # stay OPEN -> HELD.
         expect = sorted(["1274", "1275", "1276", "1277", "1278", "1279",
