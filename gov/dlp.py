@@ -152223,6 +152223,541 @@ def _js_f1254_stmt_decode(text):
         return val
     except _JSExprFail:
         return None
+def _js_f1281f1282_parse_c_decl(text, j, state, what):
+    """Parse `var|let|const C=[INT,...];` at text[j].
+
+    Returns (cname, dstr, next_index); dstr is the ToUint16
+    fromCharCode decode of the int array (F996/F997 discipline,
+    _MAX_DECODE_BYTES-bounded). Never evals.
+    """
+    _, cname, j = _js_f96x_decl(text, j)
+    if cname in ("RESULT", "String"):
+        raise _JSExprFail(what + " bad arr name")
+    codes, j = _js_f1046_parse_int_array(text, j, state)
+    if not codes:
+        raise _JSExprFail(what + " empty array")
+    j = _js_expect(text, j, ";")
+    return cname, _js_f996f997_fcc_chr(codes, what), j
+
+
+def _js_f1281_parse_array_destructure(text, j, cname, what):
+    """Parse `[n1,...,nk,...R]=C;` at text[j] (after decl keyword).
+
+    k>=1. Returns (names, rest, next_index). All bound names are
+    distinct and distinct from cname/RESULT/String (a duplicate
+    would rebind in node and change the decoded string -- fail
+    closed). Never evals.
+    """
+    j = _js_expect(text, j, "[")
+    names = []
+    while True:
+        j = _js_skip_ws(text, j)
+        if text.startswith("...", j):
+            break
+        nm, j = _js_parse_ident(text, j)
+        names.append(nm)
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == ",":
+            j += 1
+            continue
+        break
+    if not names:
+        raise _JSExprFail(what + " no leading names")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("...", j):
+        raise _JSExprFail(what + " no rest element")
+    rest, j = _js_parse_ident(text, j + 3)
+    j = _js_expect(text, j, "]")
+    j = _js_expect(text, j, "=")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " destructure base mismatch")
+    j = _js_expect(text, j, ";")
+    seen = set()
+    for nm in names + [rest]:
+        if nm in seen or nm in (cname, "RESULT", "String"):
+            raise _JSExprFail(what + " destructure name clash")
+        seen.add(nm)
+    return names, rest, j
+
+
+def _js_f1281_parse_object_destructure(text, j, cname, what):
+    """Parse `{0:x,1:y,length:l}=C;` at text[j] (after decl keyword).
+
+    Returns (xname, yname, next_index). The index keys are exactly
+    0 and 1 (the filed grammar); a `length` binding is required.
+    All bound names are distinct and distinct from cname/RESULT/
+    String. Never evals.
+    """
+    j = _js_expect(text, j, "{")
+    j = _js_expect(text, j, "0")
+    j = _js_expect(text, j, ":")
+    xname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, ",")
+    j = _js_expect(text, j, "1")
+    j = _js_expect(text, j, ":")
+    yname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, ",")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+    if m is None:
+        raise _JSExprFail(what + " not length")
+    j = _js_expect(text, m, ":")
+    lname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, "=")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " destructure base mismatch")
+    j = _js_expect(text, j, ";")
+    if len({xname, yname, lname, cname, "RESULT", "String"}) < 6:
+        raise _JSExprFail(what + " destructure name clash")
+    return xname, yname, j
+
+
+def _js_f1281_parse_fcc_spread_call(text, j, bound, names, rest, what):
+    """Parse `var|let|const S=String.fromCharCode(n1,...,nk,...R);`.
+
+    The arguments must be exactly the destructured names in order,
+    then the rest spread. Returns (sname, next_index). Never evals.
+    """
+    _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if sname in bound:
+        raise _JSExprFail(what + " bad acc name")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail(what + " not String")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    for nm in names:
+        got, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if got != nm:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ",")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("...", j):
+        raise _JSExprFail(what + " not spread")
+    got, j = _js_parse_ident(text, j + 3)
+    if got != rest:
+        raise _JSExprFail(what + " rest mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    return sname, j
+
+
+def _js_f1281_parse_fcc_slice_call(text, j, bound, xname, yname, cname,
+                                   what):
+    """Parse `var|let|const S=String.fromCharCode(x,y,...C.slice(2));`.
+
+    Returns (sname, next_index). Never evals.
+    """
+    _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if sname in bound:
+        raise _JSExprFail(what + " bad acc name")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail(what + " not String")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != xname:
+        raise _JSExprFail(what + " arg x mismatch")
+    j = _js_expect(text, j, ",")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != yname:
+        raise _JSExprFail(what + " arg y mismatch")
+    j = _js_expect(text, j, ",")
+    j = _js_skip_ws(text, j)
+    if not text.startswith("...", j):
+        raise _JSExprFail(what + " not spread")
+    nm, j = _js_parse_ident(text, j + 3)
+    if nm != cname:
+        raise _JSExprFail(what + " slice base mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "slice")
+    if m is None:
+        raise _JSExprFail(what + " not slice")
+    j = _js_expect(text, m, "(")
+    j = _js_expect(text, j, "2")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    return sname, j
+
+
+def _js_f1281_stmt_decode(text):
+    """Decode F1281 destructuring-spread staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const [n1,...,nk,...R]=C;` (k>=1, names distinct)
+    `var|let|const S=String.fromCharCode(n1,...,nk,...R);`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+    OR
+    `var|let|const C=[INT,...];`
+    `var|let|const {0:x,1:y,length:l}=C;`
+    `var|let|const S=String.fromCharCode(x,y,...C.slice(2));`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): array destructuring binds n_i to C[i-1]
+    and R to C.slice(k); spreading the names in order then ...R
+    covers exactly C. Object destructuring binds x=C[0], y=C[1];
+    ...C.slice(2) covers the rest. Both require len(C) >= the
+    number of leading names (fewer elements would bind undefined,
+    and fromCharCode(undefined) is "\\x00" -- fail closed).
+    Disjoint from F1208 (which requires the `[...C]` copy-literal
+    form, not destructured bindings) and from the direct `...C`
+    spread (the control blocks). Returns the decoded string, or
+    None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "fromCharCode(" not in _compact or "..." not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1281f1282_parse_c_decl(text, j, state,
+                                                    "F1281")
+        bound = {cname, "RESULT", "String"}
+        kw, j = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail("F1281 not a declaration")
+        j = _js_skip_ws(text, j)
+        if j < len(text) and text[j] == "[":
+            names, rest, j = _js_f1281_parse_array_destructure(
+                text, j, cname, "F1281")
+            if len(dstr) < len(names):
+                raise _JSExprFail("F1281 too few elements")
+            bound.update(names)
+            bound.add(rest)
+            sname, j = _js_f1281_parse_fcc_spread_call(
+                text, j, bound, names, rest, "F1281")
+        elif j < len(text) and text[j] == "{":
+            xname, yname, j = _js_f1281_parse_object_destructure(
+                text, j, cname, "F1281")
+            if len(dstr) < 2:
+                raise _JSExprFail("F1281 too few elements")
+            bound.update((xname, yname))
+            sname, j = _js_f1281_parse_fcc_slice_call(
+                text, j, bound, xname, yname, cname, "F1281")
+        else:
+            raise _JSExprFail("F1281 not destructuring")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1281 not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail("F1281 RESULT not acc")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1282_parse_define_property(text, j, oname, sname, what):
+    """Parse `Object.defineProperty(O,'P',{get:function(){return S;},set:function(v){S=v;}});`.
+
+    The getter must return exactly the accumulator S and the setter
+    must assign its parameter to S (anything else changes the
+    accumulation semantics -- fail closed). Returns (prop,
+    next_index). Never evals.
+    """
+    m = _js_match_kw(text, _js_skip_ws(text, j), "Object")
+    if m is None:
+        raise _JSExprFail(what + " not Object")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "defineProperty")
+    if m is None:
+        raise _JSExprFail(what + " not defineProperty")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != oname:
+        raise _JSExprFail(what + " defineProperty obj mismatch")
+    j = _js_expect(text, j, ",")
+    prop, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    if (not prop or prop[0] not in _JS_IDENT_START
+            or any(c not in _JS_IDENT_CONT for c in prop[1:])):
+        raise _JSExprFail(what + " prop not ident")
+    if prop in (oname, sname, "RESULT", "String", "Object"):
+        raise _JSExprFail(what + " prop name clash")
+    j = _js_expect(text, j, ",")
+    j = _js_expect(text, j, "{")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+    if m is None:
+        raise _JSExprFail(what + " not get")
+    j = _js_expect(text, m, ":")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+    if m is None:
+        raise _JSExprFail(what + " get not function")
+    j = _js_expect(text, m, "(")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail(what + " get not return")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+    if nm != sname:
+        raise _JSExprFail(what + " get not acc")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ",")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "set")
+    if m is None:
+        raise _JSExprFail(what + " not set")
+    j = _js_expect(text, m, ":")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+    if m is None:
+        raise _JSExprFail(what + " set not function")
+    j = _js_expect(text, m, "(")
+    pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != sname:
+        raise _JSExprFail(what + " set not acc")
+    j = _js_expect(text, j, "=")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != pname:
+        raise _JSExprFail(what + " set not param")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    return prop, j
+
+
+def _js_f1282_parse_literal_accessor(text, j, what):
+    """Parse `var|let|const O={B:'',get P(){return this.B;},set P(v){this.B=v;}};`.
+
+    The backing field B starts as '' and both accessors mediate
+    exactly B via this (anything else changes the accumulation
+    semantics -- fail closed). Returns (oname, prop, next_index).
+    Never evals.
+    """
+    _, oname, j = _js_f96x_decl(text, j)
+    if oname in ("RESULT", "String", "Object"):
+        raise _JSExprFail(what + " bad obj name")
+    j = _js_expect(text, j, "{")
+    bname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if bname in (oname, "RESULT", "String", "Object"):
+        raise _JSExprFail(what + " bad backing name")
+    j = _js_expect(text, j, ":")
+    init, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    if init != "":
+        raise _JSExprFail(what + " backing not empty")
+    j = _js_expect(text, j, ",")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+    if m is None:
+        raise _JSExprFail(what + " not get")
+    prop, j = _js_parse_ident(text, _js_skip_ws(text, m))
+    if prop in (oname, bname, "RESULT", "String", "Object"):
+        raise _JSExprFail(what + " prop name clash")
+    j = _js_expect(text, j, "(")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+    if m is None:
+        raise _JSExprFail(what + " get not return")
+    m = _js_match_kw(text, _js_skip_ws(text, m), "this")
+    if m is None:
+        raise _JSExprFail(what + " get not this")
+    j = _js_expect(text, m, ".")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != bname:
+        raise _JSExprFail(what + " get not backing")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ",")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "set")
+    if m is None:
+        raise _JSExprFail(what + " not set")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+    if nm != prop:
+        raise _JSExprFail(what + " set prop mismatch")
+    j = _js_expect(text, j, "(")
+    pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "this")
+    if m is None:
+        raise _JSExprFail(what + " set not this")
+    j = _js_expect(text, m, ".")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != bname:
+        raise _JSExprFail(what + " set not backing")
+    j = _js_expect(text, j, "=")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != pname:
+        raise _JSExprFail(what + " set not param")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ";")
+    return oname, prop, j
+
+
+def _js_f1282_parse_foreach_accum(text, j, cname, oname, prop, what):
+    """Parse `C.forEach(function(c){O.P=O.P+String.fromCharCode(c);});`.
+
+    Returns next_index. Never evals.
+    """
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " forEach arr mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "forEach")
+    if m is None:
+        raise _JSExprFail(what + " not forEach")
+    j = _js_expect(text, m, "(")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+    if m is None:
+        raise _JSExprFail(what + " not function")
+    j = _js_expect(text, m, "(")
+    pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if pname in (cname, oname, "RESULT", "String", "Object"):
+        raise _JSExprFail(what + " bad elem param")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, "{")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != oname:
+        raise _JSExprFail(what + " accum obj mismatch")
+    j = _js_expect(text, j, ".")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != prop:
+        raise _JSExprFail(what + " accum prop mismatch")
+    j = _js_expect(text, j, "=")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != oname:
+        raise _JSExprFail(what + " accum rhs obj mismatch")
+    j = _js_expect(text, j, ".")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != prop:
+        raise _JSExprFail(what + " accum rhs prop mismatch")
+    j = _js_expect(text, j, "+")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+    if m is None:
+        raise _JSExprFail(what + " not String")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "fromCharCode")
+    if m is None:
+        raise _JSExprFail(what + " not fromCharCode")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != pname:
+        raise _JSExprFail(what + " fcc arg mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    j = _js_expect(text, j, "}")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    return j
+
+
+def _js_f1282_stmt_decode(text):
+    """Decode F1282 getter/setter accumulation staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S='';`
+    `var|let|const O={};`
+    `Object.defineProperty(O,'P',{get:function(){return S;},set:function(v){S=v;}});`
+    `C.forEach(function(c){O.P=O.P+String.fromCharCode(c);});`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+    OR
+    `var|let|const C=[INT,...];`
+    `var|let|const S='';`
+    `var|let|const O={B:'',get P(){return this.B;},set P(v){this.B=v;}};`
+    `C.forEach(function(c){O.P=O.P+String.fromCharCode(c);});`
+    `S=O.P;`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): the accessor pair mediates the
+    accumulator -- S directly (defineProperty form) or the backing
+    field B via this (literal form). O.P=O.P+fcc(c) appends one
+    char per element, so the final accumulator holds the full
+    credential. The getter must return exactly the accumulator
+    and the setter must assign its parameter to it; the backing
+    field must start as ''. Anything else fails closed. Disjoint
+    from F1214 (which stages indexed chars via defineProperty,
+    not accessor-mediated accumulation) and from the plain
+    forEach control (which blocks). Returns the decoded string,
+    or None. Never evals.
+    """
+    _compact = _js_ws_compact(text)
+    if "fromCharCode(" not in _compact or "forEach(" not in _compact:
+        return None
+    state = {"ops": 0, "parts": 0}
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1281f1282_parse_c_decl(text, j, state,
+                                                    "F1282")
+        sname, j = _js_f1124f1130_parse_s_init(
+            text, _js_skip_ws(text, j), "F1282")
+        # Object creation: `var O={};` + defineProperty, or the
+        # accessor object literal. Lookahead on the character after
+        # `{` to pick the production (no backtracking).
+        decl_j = _js_skip_ws(text, j)
+        _, oname, j = _js_f96x_decl(text, decl_j)
+        if oname in ("RESULT", "String", "Object", cname, sname):
+            raise _JSExprFail("F1282 bad obj name")
+        k = _js_skip_ws(text, j)
+        if k >= len(text) or text[k] != "{":
+            raise _JSExprFail("F1282 not object")
+        k2 = _js_skip_ws(text, k + 1)
+        if k2 < len(text) and text[k2] == "}":
+            # Empty literal: defineProperty production.
+            j = _js_expect(text, j, "{")
+            j = _js_expect(text, j, "}")
+            j = _js_expect(text, j, ";")
+            prop, j = _js_f1282_parse_define_property(
+                text, j, oname, sname, "F1282")
+            j = _js_f1282_parse_foreach_accum(
+                text, j, cname, oname, prop, "F1282")
+            _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+            if rname != "RESULT":
+                raise _JSExprFail("F1282 not RESULT")
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+            if nm != sname:
+                raise _JSExprFail("F1282 RESULT not acc")
+            _js_f96x_expect_semi_end(text, j)
+            return dstr
+        # Non-empty literal: accessor-literal production. Rewind to
+        # the declaration start; the literal parser is linear.
+        oname, prop, j = _js_f1282_parse_literal_accessor(
+            text, decl_j, "F1282")
+        j = _js_f1282_parse_foreach_accum(
+            text, j, cname, oname, prop, "F1282")
+        # S=O.P;
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail("F1282 copy not acc")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != oname:
+            raise _JSExprFail("F1282 copy not obj")
+        j = _js_expect(text, j, ".")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != prop:
+            raise _JSExprFail("F1282 copy prop mismatch")
+        j = _js_expect(text, j, ";")
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail("F1282 not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail("F1282 RESULT not acc")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
 
 
 def _js_f1259_stmt_decode(text):
@@ -158052,6 +158587,22 @@ def _decode_layer(text):
                      _js_f1276_stmt_decode, _js_f1277_stmt_decode,
                      _js_f1278_stmt_decode, _js_f1279_stmt_decode,
                      _js_f1280_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F1281/F1282: destructuring-spread and accessor-mediated
+    # accumulation decoders (wave-410 lane 4). Each parses a
+    # strict whole-text grammar; every filed shape BREAKs on the
+    # open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint
+    # from siblings by grammar (documented per hook). Additive,
+    # in F-number order.
+    for _stmtdec in (_js_f1281_stmt_decode,
+                     _js_f1282_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
