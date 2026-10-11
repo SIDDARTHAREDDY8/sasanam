@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F1646 red-first: String.prototype.normalize('NFKC') identity
+"""F1646 red-first: toLocaleString variants beyond F1631
 
-Filed 2026-10-11, wave-421 lane-3 spec-review follow-up (spec reviewer 04034536; local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
+Filed 2026-10-11 22:15 UTC, wave-421 attack round 89 (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -44,13 +44,11 @@ def _codes(s):
     return "[" + ",".join(str(ord(c)) for c in s) + "]"
 
 
-def _strcodes(s):
-    return "[" + ",".join('"%d"' % ord(c) for c in s) + "]"
-
-
 _TMPLS = [
     ("f1646-0",
-     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.normalize('NFKC');var RESULT=T;"),
+     "var C={I};var S=C.toLocaleString();var T=S.split(',').map(Number);var U=String.fromCharCode.apply(null,T);var RESULT=U;"),
+    ("f1646-1",
+     "var C={I};var D=C.map(function(c){return c.toLocaleString();});var S=String.fromCharCode.apply(null,D.map(Number));var RESULT=S;"),
 ]
 
 _CONTROLS = [
@@ -61,8 +59,8 @@ _CONTROLS = [
 def main():
     fails = 0
     for name, tmpl in _TMPLS:
-        for secret, label, coder in ((SECRET_S, "short", _codes), (SECRET_L, "long", _codes)):
-            payload = tmpl.replace("{I}", coder(secret)).replace("{J}", _strcodes(secret))
+        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
+            payload = tmpl.replace("{I}", _codes(secret))
             nc = subprocess.run(
                 ["node", "-e",
                  payload + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
@@ -92,7 +90,7 @@ def main():
             print(("CTRL-OK " if ok else "CTRL-FAIL ") + "%s %s node=%s scanner=%s" % (name, label, node_ok, verdict))
             if not ok:
                 fails += 1
-    junk = _TMPLS[0][1].replace("{I}", "[55,57,113,50]").replace("{J}", '["55","57"]')
+    junk = _TMPLS[0][1].replace("{I}", "[55,57,113,50]")
     v = _scan(junk)
     ok = (v == "MISS")
     print(("CTRL-OK " if ok else "CTRL-FAIL ") + "machine-token -> " + v)
