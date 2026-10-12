@@ -195189,6 +195189,406 @@ def _js_f1748_stmt_decode(text):
         return None
 
 
+def _js_f1752f1753f1754_parse_u8_view(text, j, b2name, bound, state,
+                                     what):
+    """Parse the F1752/F1753/F1754 fcc-apply readout tail.
+
+    `var|let|const S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));`
+    where B2 is the given base name. Returns (sname, next_index).
+    Never evals.
+    """
+    _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                    what)
+    j = _js_f1739f1741_parse_fcc_apply_head(text,
+                                           _js_skip_ws(text, j),
+                                           what)
+    m = _js_match_kw(text, _js_skip_ws(text, j), "Array")
+    if m is None:
+        raise _JSExprFail(what + " not Array")
+    j = _js_expect(text, m, ".")
+    m = _js_match_kw(text, j, "from")
+    if m is None:
+        raise _JSExprFail(what + " not from")
+    j = _js_expect(text, m, "(")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+    if m is None:
+        raise _JSExprFail(what + " not new")
+    m = _js_match_kw(text, _js_skip_ws(text, m), "Uint8Array")
+    if m is None:
+        raise _JSExprFail(what + " not Uint8Array")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != b2name:
+        raise _JSExprFail(what + " u8 view base mismatch")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ";")
+    _js_f96x_charge(state, what + " apply")
+    return sname, j
+
+
+def _js_f1752_stmt_decode(text):
+    """Decode F1752 ArrayBuffer.transfer() staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const B=new Uint8Array(C).buffer;`
+    `var|let|const B2=B.transfer();`
+    `var|let|const S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0) on the admitted domain: `.buffer` exposes
+    the fresh backing store; `.transfer()` with no args detaches it
+    and returns a new buffer with the same bytes (identity on the
+    admitted domain); the new Uint8Array views it; `Array.from`
+    materializes the bytes; the apply readout is the byte string via
+    _js_f1739f1740f1741_byte_decode. No filed finding covers
+    ArrayBuffer.prototype.transfer -- the filed shape BREAKs on the
+    open tree. Disjoint from F1741 (`.slice(0)` -- here
+    `.transfer()`) and F1753 (`.transferToFixedLength()` -- here
+    `.transfer()`, which cannot match the longer keyword because
+    _js_match_kw is ident-boundary checked) by grammar. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "Uint8Array" not in text or ".buffer" not in text:
+        return None
+    if "transfer" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1752"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "Uint8Array", "Array"}
+        # var B=new Uint8Array(C).buffer;
+        _, bname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(bname, bound, {"String"},
+                                        what)
+        bound.add(bname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Uint8Array")
+        if m is None:
+            raise _JSExprFail(what + " not Uint8Array")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " u8 base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "buffer")
+        if m is None:
+            raise _JSExprFail(what + " not buffer")
+        j = _js_expect(text, m, ";")
+        _js_f96x_charge(state, what + " buffer")
+        # var B2=B.transfer();
+        _, b2name, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(b2name, bound, {"String"},
+                                        what)
+        bound.add(b2name)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != bname:
+            raise _JSExprFail(what + " transfer base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "transfer")
+        if m is None:
+            raise _JSExprFail(what + " not transfer")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != ")":
+            raise _JSExprFail(what + " transfer not no-arg")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " transfer")
+        # var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));
+        sname, j = _js_f1752f1753f1754_parse_u8_view(text, j, b2name,
+                                                     bound, state,
+                                                     what)
+        bound.add(sname)
+        # var RESULT=S;
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return _js_f1739f1740f1741_byte_decode(dstr, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1753_stmt_decode(text):
+    """Decode F1753 ArrayBuffer.transferToFixedLength() staging
+    (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const B=new Uint8Array(C).buffer;`
+    `var|let|const B2=B.transferToFixedLength();`
+    `var|let|const S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0) on the admitted domain:
+    `.transferToFixedLength()` with no args detaches the backing
+    store and returns a new non-resizable buffer with the same bytes
+    (identity on the admitted domain -- the source is not resizable,
+    so the fixed-length result carries the full byte content); the
+    new Uint8Array views it; `Array.from` materializes the bytes;
+    the apply readout is the byte string via
+    _js_f1739f1740f1741_byte_decode. No filed finding covers
+    ArrayBuffer.prototype.transferToFixedLength -- the filed shape
+    BREAKs on the open tree. Disjoint from F1741 (`.slice(0)` --
+    here `.transferToFixedLength()`) and F1752 (`.transfer()` --
+    here `.transferToFixedLength()`; distinct keyword) by grammar.
+    Anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
+    """
+    if "Uint8Array" not in text or ".buffer" not in text:
+        return None
+    if "transferToFixedLength" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1753"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "Uint8Array", "Array"}
+        # var B=new Uint8Array(C).buffer;
+        _, bname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(bname, bound, {"String"},
+                                        what)
+        bound.add(bname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Uint8Array")
+        if m is None:
+            raise _JSExprFail(what + " not Uint8Array")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " u8 base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "buffer")
+        if m is None:
+            raise _JSExprFail(what + " not buffer")
+        j = _js_expect(text, m, ";")
+        _js_f96x_charge(state, what + " buffer")
+        # var B2=B.transferToFixedLength();
+        _, b2name, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(b2name, bound, {"String"},
+                                        what)
+        bound.add(b2name)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != bname:
+            raise _JSExprFail(what + " transfer base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "transferToFixedLength")
+        if m is None:
+            raise _JSExprFail(what + " not transferToFixedLength")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != ")":
+            raise _JSExprFail(what + " transfer not no-arg")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " transfer")
+        # var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));
+        sname, j = _js_f1752f1753f1754_parse_u8_view(text, j, b2name,
+                                                     bound, state,
+                                                     what)
+        bound.add(sname)
+        # var RESULT=S;
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return _js_f1739f1740f1741_byte_decode(dstr, what)
+    except _JSExprFail:
+        return None
+
+
+def _js_f1754_stmt_decode(text):
+    """Decode F1754 resizable ArrayBuffer + resize() staging
+    (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const B=new ArrayBuffer(C.length,{maxByteLength:C.length*<int>});`
+    `var|let|const U=new Uint8Array(B);`
+    `U.set(C);`
+    `B.resize(C.length);`
+    `var|let|const S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B)));`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0) on the admitted domain: the constructor
+    admits a resizable buffer whose current byte length is
+    C.length (maxByteLength is C.length*<int> with 1 <= int <= 1024,
+    so node never throws); `new Uint8Array(B)` views the whole
+    current buffer; `U.set(C)` stores the codes as bytes; `B.resize(`
+    `C.length)` is a no-op (already that length); the final
+    `new Uint8Array(B)` + `Array.from` materialize the bytes; the
+    apply readout is the byte string via
+    _js_f1739f1740f1741_byte_decode. No filed finding covers
+    resizable ArrayBuffers -- the filed shape BREAKs on the
+    open tree. Disjoint from F1741 (`.slice(0)` on `.buffer` -- here
+    direct `new ArrayBuffer` construction with options) and F1740
+    (DataView staging -- here plain buffer + resize) by grammar.
+    Documented narrow-domain misses (wave-428 spec S1/S2): a
+    maxByteLength multiplier above 1024, and the staging with the
+    `B.resize(C.length);` no-op statement omitted, both assemble in
+    node but are outside the admitted grammar -- misses, never
+    mis-decodes. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "ArrayBuffer" not in text or "maxByteLength" not in text:
+        return None
+    if "resize" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1754"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "Uint8Array", "Array",
+                 "ArrayBuffer"}
+        # var B=new ArrayBuffer(C.length,{maxByteLength:C.length*<int>});
+        _, bname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(bname, bound, {"String"},
+                                        what)
+        bound.add(bname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "ArrayBuffer")
+        if m is None:
+            raise _JSExprFail(what + " not ArrayBuffer")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " length base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail(what + " not length")
+        j = _js_expect(text, m, ",")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "maxByteLength")
+        if m is None:
+            raise _JSExprFail(what + " not maxByteLength")
+        j = _js_expect(text, m, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " max base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail(what + " not length2")
+        j = _js_expect(text, m, "*")
+        k = _js_skip_ws(text, j)
+        k2 = k
+        # ASCII digits only (wave-428 spec H1/H2): str.isdigit() is
+        # True for Unicode decimal digits that int() rejects
+        # (ValueError would escape the hook, breaking the fail-closed
+        # contract) or accepts-while-node-rejects (mis-decode). The
+        # run is bounded well below the 4300-digit int() cap; longer
+        # runs fail closed at the range check / the following `}`.
+        while k2 < len(text) and k2 - k < 7 and "0" <= text[k2] <= "9":
+            k2 += 1
+        if k2 == k:
+            raise _JSExprFail(what + " max mult not int")
+        mult = int(text[k:k2])
+        if mult < 1 or mult > 1024:
+            raise _JSExprFail(what + " max mult out of range")
+        j = _js_expect(text, k2, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " ctor")
+        # var U=new Uint8Array(B);
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Uint8Array")
+        if m is None:
+            raise _JSExprFail(what + " not Uint8Array")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != bname:
+            raise _JSExprFail(what + " u8 view base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " view")
+        # U.set(C);
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " set base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "set")
+        if m is None:
+            raise _JSExprFail(what + " not set")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " set arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " set")
+        # B.resize(C.length);
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != bname:
+            raise _JSExprFail(what + " resize base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "resize")
+        if m is None:
+            raise _JSExprFail(what + " not resize")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " resize arg mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail(what + " not length3")
+        j = _js_expect(text, m, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " resize")
+        # var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B)));
+        sname, j = _js_f1752f1753f1754_parse_u8_view(text, j, bname,
+                                                     bound, state,
+                                                     what)
+        bound.add(sname)
+        # var RESULT=S;
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return _js_f1739f1740f1741_byte_decode(dstr, what)
+    except _JSExprFail:
+        return None
+
+
 
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
@@ -197682,6 +198082,23 @@ def _decode_layer(text):
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
 
+    # F1752/F1753/F1754: ArrayBuffer.transfer() staging,
+    # ArrayBuffer.transferToFixedLength() staging, and resizable
+    # ArrayBuffer + resize() staging. Each parses a strict whole-text
+    # grammar; every filed shape BREAKs on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Disjoint from F1741
+    # (ArrayBuffer.slice on .buffer -- here .transfer() /
+    # .transferToFixedLength() on .buffer, and direct resizable
+    # construction) by grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1752_stmt_decode, _js_f1753_stmt_decode,
+                     _js_f1754_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
 
     # F953/F954/F955/F956: top-level statement-sequence decode --
     # `var` declaration runs with switch/for/for-in accumulation
