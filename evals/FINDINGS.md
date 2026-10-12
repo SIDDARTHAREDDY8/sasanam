@@ -13342,4 +13342,4 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 # Wave-424 lane C: F1700-F1702 CLOSED (3); F1690-F1699, F1703-F1704 OPEN (12); next free F1705
 # Wave-424 lane D: F1704 CLOSED (1); F1703 OPEN (1, partial -- expression-route residual re-filed as F1714); F1690-F1702 OPEN (13); F1714 OPEN (1); next free F1706
 
-# Wave-424: F1376-F1704 CLOSED (329); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1705-F1713 OPEN (9); F1714 OPEN (1, renumbered lane-D residual); next free F1715
+# Wave-424: F1376-F1702 CLOSED (327); F1703 OPEN (1, partial); F1704 CLOSED (1); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1705-F1713 OPEN (9); F1714 OPEN (1, renumbered lane-D residual); next free F1715
