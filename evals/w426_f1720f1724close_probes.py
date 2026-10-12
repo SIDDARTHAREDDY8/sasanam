@@ -109,8 +109,8 @@ def test_p0_pins():
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (len(loops) == 112)
-    notes.append("loops=%d (expect 112)" % len(loops))
+    ok = (len(loops) == 115)
+    notes.append("loops=%d (expect 115)" % len(loops))
     # new loop present with tail guard
     has_new = "_js_f1720_stmt_decode, _js_f1721_stmt_decode," in body
     ok = ok and has_new
@@ -350,9 +350,9 @@ def test_g0_green():
         return (True, "skipped (GOV_SKIP_GREEN=1)")
     notes = []
     ok = True
-    # F1715/F1725 red-first should still BREAK (open findings)
-    for fn, name in (("w425_f1715_redfirst.py", "f1715"),
-                     ("w425_f1725_redfirst.py", "f1725")):
+    # F1739/F1740 red-first should still BREAK (open findings)
+    for fn, name in (("w426_f1739_redfirst.py", "f1739"),
+                     ("w426_f1740_redfirst.py", "f1740")):
         p = os.path.join(REPO_ROOT, "evals", fn)
         if not os.path.exists(p):
             notes.append("%s missing (skip)" % name)

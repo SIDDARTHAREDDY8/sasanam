@@ -59,7 +59,7 @@ def test_p0_pins():
     with open(os.path.join(REPO_ROOT, "evals", "w395_perfharden_probes.py")) as f:
         perf_src = f.read()
     m = re.search(r"N_STMTDEC_LOOPS\s*=\s*(\d+)", perf_src)
-    ok = _check("p0-loops", m and m.group(1) == "112",
+    ok = _check("p0-loops", m and m.group(1) == "115",
                 "N_STMTDEC_LOOPS=%s" % (m.group(1) if m else "missing")) and ok
     # All five hooks defined
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
