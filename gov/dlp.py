@@ -3405,10 +3405,10 @@ def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False,
                     tval, jt = _js_parse_fcc_number(text, jt)
                     val += tval
                     i = jt
-                ch = _safe_chr(val)
-                if ch is None:
-                    raise _JSExprFail("bad codepoint")
-                out.append(ch)
+                # F1703: ToUint16-faithful (chr(val & 0xFFFF)); the prior
+                # _safe_chr fail-closed let surrogate-camouflaged
+                # payloads slip through.
+                out.append(chr(val & 0xFFFF))
                 total += 1
         if total > _JS_EXPR_MAX_CODEPOINTS:
             raise _JSExprFail("too many codepoints")
@@ -69863,10 +69863,10 @@ def _js_f967_stmt_decode(text):
                 flat.append(e)
         out = []
         for cp in flat:
-            ch = _safe_chr(cp)
-            if ch is None:
-                raise _JSExprFail("F967 bad codepoint")
-            out.append(chr(ord(ch) & 0xFFFF))
+            # F1703: ToUint16-faithful (chr(cp & 0xFFFF)); the prior
+            # _safe_chr fail-closed let surrogate-camouflaged payloads
+            # slip through.
+            out.append(chr(cp & 0xFFFF))
             if len(out) > _JS_EXPR_MAX_CODEPOINTS:
                 raise _JSExprFail("F967 too many codepoints")
         val = "".join(out)

@@ -91,22 +91,17 @@ def test_p0_pins():
     # re.compile = 29
     ok = _check("p0-recompile", src.count("re.compile(") == 29,
                 "%d" % src.count("re.compile(")) and ok
-    # footer: F1703, F1704 stamped CLOSED
+    # footer: F1704 stamped CLOSED; F1703 OPEN (partial); F1705 OPEN (new)
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         ftxt = f.read()
-    # F1703 uses "; LOW, [CLOSED"; F1704 uses "Severity: LOW, [CLOSED"
-    c1703 = bool(re.search(r"\(F1703 filed .*?\[CLOSED", ftxt, re.DOTALL))
     c1704 = bool(re.search(r"\(F1704 filed .*?\[CLOSED", ftxt, re.DOTALL))
-    # Ensure no stale OPEN remains in either entry (check the entry segment)
-    for n, c in ((1703, c1703), (1704, c1704)):
-        idx = ftxt.find("(F%d filed" % n)
-        seg = ftxt[idx:idx+2500]
-        # The entry is CLOSED if [CLOSED appears before any standalone OPEN marker
-        has_closed = "[CLOSED" in seg
-        _check("p0-f%d-closed" % n, has_closed, "stamped" if has_closed else "missing")
-        ok = ok and has_closed
-    ok = _check("p0-footer-closed", c1703 and c1704,
-                "F1703/F1704 stamped closed") and ok
+    o1703 = bool(re.search(r"\(F1703 filed .*?LOW, OPEN", ftxt))
+    o1705 = bool(re.search(r"\(F1705 filed", ftxt))
+    ok = _check("p0-f1704-closed", c1704, "stamped" if c1704 else "missing") and ok
+    ok = _check("p0-f1703-open", o1703, "open" if o1703 else "wrong") and ok
+    ok = _check("p0-f1705-open", o1705, "filed" if o1705 else "missing") and ok
+    ok = _check("p0-footer", c1704 and o1703 and o1705,
+                "F1704 closed, F1703/F1705 open") and ok
     return ok
 
 
