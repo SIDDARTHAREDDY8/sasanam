@@ -119,6 +119,10 @@ def test_p3_failclosed():
         ("f1850-meta", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.search('xoxb.*')>=0){var S=T;}else{var S='';}var RESULT=S;" % cs),
         # F1850: pattern not in credential (guard false -> MISS)
         ("f1850-nomatch", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.search('zzzzz')>=0){var S=T;}else{var S='';}var RESULT=S;" % cs),
+        # F1850: regex literal with backslash escape (H-1, wave-434 merge) --
+        # regex escapes have different semantics than string escapes; fail closed
+        ("f1850-regex-esc1", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.search(/x\\d/)>=0){var S=T;}else{var S='';}var RESULT=S;" % cs),
+        ("f1850-regex-esc2", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.search(/\\wxoxb/)>=0){var S=T;}else{var S='';}var RESULT=S;" % cs),
         # F1851: wrong index
         ("f1851-badidx", "var C=%s;var D=C.slice();if(D.includes(D[1])){var S=String.fromCharCode.apply(null,D);}else{var S='';}var RESULT=S;" % cs),
     ]

@@ -207614,7 +207614,17 @@ def _js_f1850_stmt_decode(text):
         if m is None:
             raise _JSExprFail(what + " not search")
         j = _js_expect(text, m, "(")
-        pat, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        _pat_start = _js_skip_ws(text, j)
+        pat, j = _js_f99x_parse_str(text, _pat_start)
+        # If the pattern was a regex literal (not a quoted string), reject
+        # backslash escapes fail-closed: regex escapes (\d, \w, etc.) have
+        # different semantics than string escapes, so the "no metacharacters
+        # => substring semantics" argument is unsound. (H-1, wave-434 merge)
+        if _pat_start < len(text) and text[_pat_start] == "/":
+            # Find the closing / (accounting for the parser's consumption)
+            # The raw regex source is text[_pat_start:j]; scan for backslash
+            if "\\" in text[_pat_start:j]:
+                raise _JSExprFail(what + " regex has escape")
         j = _js_expect(text, j, ")")
         j = _js_skip_ws(text, j)
         if not text.startswith(">=", j):
