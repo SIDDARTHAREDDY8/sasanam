@@ -68,7 +68,8 @@ _NEW = [
 # Carry-forward round-90 pins (F1672-F1689) — exact templates from w422_attack_probes.py
 # NOTE: F1675 and F1676 are now incidentally HIT on the wave-422 base (see report);
 # they are carried as HIT-expect pins below, not MISS.
-_CARRY_MISS = [
+# wave-423 merge: F1672-F1688 CLOSED -> expect HIT; F1689 S2-fresh is F1704 (OPEN) -> expect MISS
+_CARRY_HIT_MERGED = [
     ("F1672", "var C={I};var D=Iterator.from(C).map(function(c){return c;}).toArray();var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1673", "var C={I};var T='';Iterator.from(C).forEach(function(c){T+=String.fromCharCode(c);});var RESULT=T;"),
     ("F1677", "var C={I};var D=structuredClone(C);var RESULT=String.fromCharCode.apply(null,D);"),
@@ -83,7 +84,10 @@ _CARRY_MISS = [
     ("F1686", "var C={I};var D=C.map(function(c){return String(c);});var E=D.map(Number);var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
     ("F1687", "var C={I};var T=C.join(',');var D=T.split(',').map(Number);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1688", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.split('').reverse().reverse().join('');var RESULT=T;"),
-    ("F1689", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var D=[...S].map(function(ch){return ch.charCodeAt(0);});var S2=String.fromCharCode.apply(null,D);var RESULT=S2;"),
+]
+_CARRY_MISS = [
+    # F1689 S2-fresh variant is F1704 (OPEN) -- expect MISS
+    ("F1704", "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var D=[...S].map(function(ch){return ch.charCodeAt(0);});var S2=String.fromCharCode.apply(null,D);var RESULT=S2;"),
 ]
 
 # F1675/F1676 incidentally closed on wave-422 base — expect HIT (documented, not restamped)
@@ -114,6 +118,14 @@ def main():
     total += t1
     # p2: carry-forward MISS pins (both sizes)
     h2 = t2 = 0
+    for name, tmpl in _CARRY_HIT_MERGED:
+        for secret in (SECRET_S, SECRET_L):
+            t2 += 1
+            v = _scan(tmpl.replace("{I}", _codes(secret)))
+            if v == "HIT":
+                h2 += 1
+            else:
+                print("FAIL carry-closed %s: got %s" % (name, v))
     for name, tmpl in _CARRY_MISS:
         for secret in (SECRET_S, SECRET_L):
             t2 += 1
@@ -158,7 +170,7 @@ def main():
     t4 = 1
     h4 = 0
     ftxt = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
-    if "# Wave-423 attack round 91:" in ftxt and "next free F1703" in ftxt:
+    if "# Wave-423 attack round 91:" in ftxt and "next free F1705" in ftxt:
         h4 = 1
     else:
         print("FAIL footer")
