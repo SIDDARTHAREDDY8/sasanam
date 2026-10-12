@@ -2207,6 +2207,54 @@ def _has_hidden_script_xtemplate(text):
 _VTT_CUE_TS = r"(?:\d{2}:)?\d{2}:\d{2}\.\d{3}"
 
 
+_F1943_EXEC_SCRIPT_TYPES = frozenset({
+    "text/javascript", "application/javascript",
+    "text/ecmascript", "application/ecmascript",
+    "module", "importmap", "speculationrules",
+})
+_F1943_COVERED_SCRIPT_DATA_TYPES = frozenset({
+    "text/plain", "text/x-template", "application/ld+json",
+})
+
+
+def _has_hidden_script_other_nonexec_type(text):
+    """True when *text* carries prose-shaped text in a `<script>`
+    block whose type is a non-executable data-block type outside the
+    already-covered set (F1943).
+
+    F1943: the detectors cover exactly text/plain (F1073),
+    text/x-template (F1085), and application/ld+json (F1047); any
+    other non-executable type (text/unknown, text/foo,
+    application/json, ...) is an equally hidden carrier -- never
+    rendered and never executed, so prose there is hidden from the
+    human reader (the F1024 rationale). This detector inverts to an
+    executable-type denylist: a missing or empty type (classic
+    script, executes) and the known executable types (javascript /
+    ecmascript MIME variants, module, importmap, speculationrules)
+    are out of scope, as are the three already-covered data types
+    (disjoint by the type value, case-insensitive). Empty blocks and
+    machine tokens are honest text, quiet. Never evals.
+    """
+    for m in re.finditer(r"<script\b[^>]*>", text, re.I):
+        itype, has_type = _f1047_attr_value(m.group(0), "type")
+        if not has_type:
+            continue  # classic script: executes, out of scope
+        t = (itype or "").lower()
+        if not t:
+            continue  # empty type: classic script, executes
+        if t in _F1943_EXEC_SCRIPT_TYPES:
+            continue  # executable script type, out of scope
+        if t in _F1943_COVERED_SCRIPT_DATA_TYPES:
+            continue  # already covered by its own detector
+        start = m.end()
+        close = re.search(r"</script\s*>", text[start:], re.I)
+        region = text[start:start + close.start()] if close \
+            else text[start:]
+        if _is_prose_shaped(region):
+            return True
+    return False
+
+
 def _has_hidden_vtt_cue_text(text):
     """True when *text* carries prose-shaped text in a WebVTT cue
     payload (F1085).
@@ -2521,6 +2569,16 @@ def instruction_shaped(text):
             or _has_hidden_vtt_cue_text(norm)
             or _has_hidden_img_longdesc(norm)
             or _has_hidden_area_alt(norm)):
+        return True
+    # F1943: the same construction for script data blocks with any
+    # other non-executable type -- the detectors cover exactly
+    # text/plain (F1073), text/x-template (F1085), and
+    # application/ld+json (F1047); every remaining non-executable
+    # type is an equally hidden carrier. Inverts to an
+    # executable-type denylist (classic scripts execute, out of
+    # scope). Disjoint from the three covered types by the type value
+    # (documented in the detector).
+    if _has_hidden_script_other_nonexec_type(norm):
         return True
     # F1079: the same construction for six further hidden-from-human
     # carriers -- collapsed <details> (no `open`), <datalist> option
