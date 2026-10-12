@@ -117,19 +117,19 @@ def _misses(payload):
 
 # ---------------------------------------------------------------- p0: pins
 def test_p0_pins():
-    """N_STMTDEC_LOOPS=100, re.compile=29, pin 2143, footer."""
+    """N_STMTDEC_LOOPS=101, re.compile=29, pin 2143, footer."""
     ok = True
     details = []
-    # Loop count (base had 99, +1 for F1642-F1649 = 100)
+    # Loop count (merge: 99 base +1 lane A +1 lane B = 101)
     dsrc = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    if len(loops) != 100:
+    if len(loops) != 101:
         ok = False
-        details.append("loops=%d want 100" % len(loops))
+        details.append("loops=%d want 101" % len(loops))
     else:
-        details.append("loops=100")
+        details.append("loops=101")
     # re.compile count
     rc = len(re.findall(r"re\.compile\(", dsrc))
     if rc != 29:
