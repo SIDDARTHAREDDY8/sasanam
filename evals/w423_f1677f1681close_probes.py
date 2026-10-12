@@ -323,7 +323,7 @@ def test_p5_honest_quiet():
 
 @_t
 def test_p6_other_opens_miss():
-    """F1672-F1676, F1682-F1689 (other opens) still MISS at the decoder seam."""
+    """F1672-F1676, F1682-F1684 now CLOSED in merge -> expect HIT; F1688 now CLOSED in merge -> expect HIT."""
     cs = _codes(SECRET_S)
     cases = [
         ("f1672", "var C=%s;var D=Array.from(C);var E=D.map(function(c){return c+1;});var S=String.fromCharCode.apply(null,E);var RESULT=S;" % cs),
@@ -332,8 +332,8 @@ def test_p6_other_opens_miss():
         ("f1685", "var C=%s;var H=C.map(function(c){return c.toString(16);});var B=H.map(function(h){return parseInt(h,16);});var S=String.fromCharCode.apply(null,B);var RESULT=S;" % cs),
         ("f1688", "var C=%s;var S=C.map(function(c){return String.fromCharCode(c);}).join('');var R=S.split('').reverse().reverse().join('');var RESULT=R;" % cs),
     ]
-    bad = [n for n, p in cases if not _misses(p)]
-    return (not bad, "%d/%d other-opens miss%s"
+    bad = [n for n, p in cases if _misses(p)]
+    return (not bad, "%d/%d merged-closed hit%s"
             % (len(cases) - len(bad), len(cases),
                "" if not bad else ": " + ",".join(bad)))
 

@@ -13317,4 +13317,7 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 # Wave-423 attack round 91: F1690-F1702 filed OPEN (13, first-filing 2026-10-12 00:34 UTC, $0 model spend); next free F1703
 
 
-# Wave-423: F1376-F1689 CLOSED (314); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1690-F1702 OPEN (13); F1703 OPEN (1, renumbered lane-D residual); next free F1704
+(F1704 filed 2026-10-12 01:30 UTC, wave-423 merge red-first audit (local node validation, $0.00 model spend (0 paid calls)): F1689 closure overstated -- lane D's _js_f1689_stmt_decode handles the S-redeclare form (var S=String.fromCharCode.apply(null,D)) but MISSES the S2-fresh variant (var S2=String.fromCharCode.apply(null,D);var RESULT=S2;). The hook's grammar is too narrow (binds the result to the redeclared S name). Filed shapes: `var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var D=[...S].map(function(ch){return ch.charCodeAt(0);});var S2=String.fromCharCode.apply(null,D);var RESULT=S2;`. Severity: LOW, OPEN; close-when: decoder handles fresh-name result binding for the charCodeAt-spread rebuild.)
+
+
+# Wave-423: F1376-F1689 CLOSED (314); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1690-F1702 OPEN (13); F1703 OPEN (1, renumbered lane-D residual); F1704 OPEN (1, F1689 S2-fresh gap); next free F1705

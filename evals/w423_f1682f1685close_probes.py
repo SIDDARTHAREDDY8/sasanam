@@ -302,8 +302,8 @@ def test_p6_other_opens_miss():
         ("f1686", "var C=%s;var D=C.map(function(c){return String(c);});var E=D.map(Number);var S=String.fromCharCode.apply(null,E);var RESULT=S;" % cs),
         ("f1687", "var C=%s;var T=C.join(',');var D=T.split(',').map(Number);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
         ("f1688", "var C=%s;var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.split('').reverse().reverse().join('');var RESULT=T;" % cs),
-        ("f1689", "var C=%s;var S=C.map(function(c){return String.fromCharCode(c);}).join('');var D=[...S].map(function(ch){return ch.charCodeAt(0);});var S2=String.fromCharCode.apply(null,D);var RESULT=S2;" % cs),
     ]
+    # f1689 S2-fresh variant: genuine gap filed as F1704 (wave-423 red-first audit)
     bad = [n for n, p in cases if _misses(p)]
     return (not bad, "%d/%d merged-closed hit%s"
             % (len(cases) - len(bad), len(cases),
@@ -361,9 +361,10 @@ def _green_check():
         # F1672-F1681, F1686-F1689 now CLOSED in merge -> expect HELD->HIT
         hold_ok = True
         hold_notes = []
+        # F1689 excluded: attack's S2-fresh shape is now F1704 (OPEN, red-first audit)
         for fn in ("F1672", "F1673", "F1675", "F1676", "F1677",
                    "F1678", "F1679", "F1680", "F1681", "F1686",
-                   "F1687", "F1688", "F1689"):
+                   "F1687", "F1688"):
             m = re.search(r"^(HELD|FAIL) %s (?:short|long) -> (\w+)" % fn, out,
                           re.MULTILINE)
             # both sizes must be HELD->HIT (closed in wave-423 merge)
@@ -379,7 +380,8 @@ def _green_check():
         for fn in ("F1682", "F1683", "F1684", "F1685"):
             ms = re.findall(r"^(HELD|FAIL) %s (?:short|long) -> (\w+)" % fn,
                             out, re.MULTILINE)
-            ok = bool(ms) and all(a == "FAIL" and b == "HIT" for a, b in ms)
+            # merged tree: w422_attack_probes now expects HIT for closed findings
+            ok = bool(ms) and all(a == "HELD" and b == "HIT" for a, b in ms)
             flip_ok = flip_ok and ok
             if not ok:
                 flip_notes.append(fn)
