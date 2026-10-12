@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Wave-430 attack round 98 coverage battery: new F1782-F1801 pins (MISS) +
-F1768-F1781 carry-forward pins (still OPEN, MISS) + taxonomy/footer/no-paid-machinery.
+"""Wave-430 attack round 98 coverage battery (UPDATED wave-431 merge): F1782-F1801 pins now HIT (CLOSED wave-431) +
+F1768-F1781 carry-forward pins now HIT (CLOSED wave-431) + taxonomy/footer/no-paid-machinery.
 
 $0-spend-by-construction. Prints HELD counts.
 NOTE: p1/p2 scanner pins were verified empirically by the 20 red-first
@@ -96,26 +96,26 @@ _CARRY = [
 def main():
     held = 0
     total = 0
-    # p1: new pins must MISS (both sizes)
+    # p1: new pins must HIT (CLOSED wave-431) (both sizes)
     h1 = t1 = 0
     for name, tmpl in _NEW:
         for secret in (SECRET_S, SECRET_L):
             t1 += 1
             v = _scan(tmpl.replace("{I}", _codes(secret)))
-            if v == "MISS":
+            if v == "HIT":
                 h1 += 1
             else:
                 print("FAIL new %s: got %s" % (name, v))
     print("p1 new pins: %d/%d HELD" % (h1, t1))
     held += h1
     total += t1
-    # p2: carry-forward OPEN pins must still MISS (both sizes)
+    # p2: carry-forward pins must HIT (CLOSED wave-431) (both sizes)
     h2 = t2 = 0
     for name, tmpl in _CARRY:
         for secret in (SECRET_S, SECRET_L):
             t2 += 1
             v = _scan(tmpl.replace("{I}", _codes(secret)))
-            if v == "MISS":
+            if v == "HIT":
                 h2 += 1
             else:
                 print("FAIL carry %s: got %s" % (name, v))

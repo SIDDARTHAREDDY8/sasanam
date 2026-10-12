@@ -199463,6 +199463,162 @@ def _js_f1781_stmt_decode(text):
         return None
 
 
+def _js_w431_parse_push_cb(text, j, dname, bound, state, what):
+    """Parse a forEach push callback at text[j]; returns next index.
+
+    Admits `function(p){D.push(p);}`, `(p)=>{D.push(p);}`, `p=>{D.push(p);}`,
+    and `(p)=>D.push(p)` / `p=>D.push(p)` (expression bodies take no `;`
+    -- node SyntaxError). The param must be a fresh name;
+    the body must push exactly the param into D. Node-exact: forEach visits
+    elements in order, so D accumulates C element-wise. Anything else fails
+    closed. Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, bound, set(), what)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        block = True
+    else:
+        # arrow: (p)=> or p=>
+        k = _js_skip_ws(text, j)
+        if k < len(text) and text[k] == "(":
+            k += 1
+            pname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+            _js_f1028f1029_check_fresh_name(pname, bound, set(), what)
+            k = _js_expect(text, _js_skip_ws(text, k), ")")
+        else:
+            pname, k = _js_parse_ident(text, k)
+            _js_f1028f1029_check_fresh_name(pname, bound, set(), what)
+        k = _js_skip_ws(text, k)
+        if not text.startswith("=>", k):
+            raise _JSExprFail(what + " not arrow")
+        k += 2
+        k = _js_skip_ws(text, k)
+        block = k < len(text) and text[k] == "{"
+        if block:
+            k += 1
+        j = k
+    # body: D.push(p);
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != dname:
+        raise _JSExprFail(what + " cb push base mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, j, "push")
+    if m is None:
+        raise _JSExprFail(what + " cb not push")
+    j = _js_expect(text, m, "(")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != pname:
+        raise _JSExprFail(what + " cb push arg mismatch")
+    j = _js_expect(text, j, ")")
+    if block:
+        # Block body: D.push(p); then } (semicolon required, node-exact).
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    # Expression body: no trailing ";" (node rejects `=>expr;` inside the
+    # call as a SyntaxError); the caller expects ")".
+    _js_f96x_charge(state, what + " cb")
+    return j
+
+
+def _js_w431_parse_index_cb(text, j, cname, bound, state, what):
+    """Parse a map index callback at text[j]; returns next index.
+
+    Admits `function(i){return C[i];}`, `(i)=>{return C[i];}`,
+    `(i)=>C[i]`, and `i=>C[i]` (expression bodies take no `;` -- node
+    SyntaxError). The param must be a fresh name; the body
+    must read exactly C[param]. Node-exact: map over the key array yields
+    the values in order. Anything else fails closed. Never evals.
+    """
+    j = _js_skip_ws(text, j)
+    m = _js_match_kw(text, j, "function")
+    if m is not None:
+        j = _js_expect(text, m, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, bound, set(), what)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        block = True
+    else:
+        k = _js_skip_ws(text, j)
+        if k < len(text) and text[k] == "(":
+            k += 1
+            pname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+            _js_f1028f1029_check_fresh_name(pname, bound, set(), what)
+            k = _js_expect(text, _js_skip_ws(text, k), ")")
+        else:
+            pname, k = _js_parse_ident(text, k)
+            _js_f1028f1029_check_fresh_name(pname, bound, set(), what)
+        k = _js_skip_ws(text, k)
+        if not text.startswith("=>", k):
+            raise _JSExprFail(what + " not arrow")
+        k += 2
+        k = _js_skip_ws(text, k)
+        block = k < len(text) and text[k] == "{"
+        if block:
+            k += 1
+        j = k
+    if block:
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " cb not return")
+        j = m
+    # C[i]
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " cb read base mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "[")
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != pname:
+        raise _JSExprFail(what + " cb index mismatch")
+    j = _js_expect(text, _js_skip_ws(text, j), "]")
+    if block:
+        # Block body: return C[i]; then } (semicolon required, node-exact).
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+    # Expression body: no trailing ";" (node SyntaxError); caller expects ")".
+    _js_f96x_charge(state, what + " cb")
+    return j
+
+
+def _js_w431_tail_result(text, j, sname, state, what):
+    """Parse optional `var RESULT=S;` then end-of-text; returns None.
+
+    Trailing `;` after the apply is optional (filed shapes vary); RESULT
+    is optional (batteries include it; some filed shapes omit it).
+    """
+    # Trailing ; optional.
+    k = _js_skip_ws(text, j)
+    if k < len(text) and text[k] == ";":
+        j = k + 1
+    _js_f96x_charge(state, what + " apply")
+    # Optional var RESULT=S;
+    k = _js_skip_ws(text, j)
+    save = k
+    try:
+        _, rname, k = _js_f96x_decl(text, k)
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        k = _js_skip_ws(text, k)
+        if k < len(text) and text[k] == ";":
+            k += 1
+        _js_f96x_charge(state, what + " result")
+        j = k
+    except _JSExprFail:
+        j = save
+    j = _js_skip_ws(text, j)
+    if j != len(text):
+        raise _JSExprFail(what + " trailing input")
+    return None
+
+
 def _js_f1782_stmt_decode(text):
     """Decode F1782 flat-chunk reassembly (whole-text hook).
 

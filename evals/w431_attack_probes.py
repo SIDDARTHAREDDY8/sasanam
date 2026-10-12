@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Wave-431 attack round 99 coverage battery: new F1805-F1822 pins (MISS) +
-F1782-F1804 carry-forward pins (still OPEN, MISS) + taxonomy/footer/no-paid-machinery.
+"""Wave-431 attack round 99 coverage battery: new F1805-F1822 + F1823-F1826 pins (MISS) +
+F1782-F1804 carry-forward pins (now CLOSED wave-431, HIT) + taxonomy/footer/no-paid-machinery.
 
 $0-spend-by-construction. Prints HELD counts.
 NOTE: p1/p2 scanner pins were verified empirically by the 18 red-first
@@ -70,6 +70,10 @@ _NEW = [
     ("f1820", "var C={I};var O={};for(var i=0;i<C.length;i++){O[i]=C[i];}var D=Object.values(O);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("f1821", "var C={I};var D=[];for(var [i,v] of C.entries()){D[i]=v;}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("f1822", "var C={I};var D=new Array(C.length);for(var i=0;i<C.length;i++){D[i]=C[i];}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("f1823", "var C={I};var D=[];for(const i in C){D[i]=C[i];}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("f1824", "var C={I};var D=[];for(i in C){D[i]=C[i];}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("f1825", "var C={I};var D=Array.from(Object.create(C,{}));var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("f1826", "var C={I};var W=new Map();var O={};W.set(O,C);var D=W.get(O);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
 ]
 
 # Carry-forward OPEN pins (F1782-F1804: attack 98 + lane-C residuals) — must still MISS
@@ -96,37 +100,39 @@ _CARRY = [
     ("F1801", "var C={I};var D=C.slice();var t=D[0];D[0]=D[D.length-1];D[D.length-1]=t;var u=D[0];D[0]=D[D.length-1];D[D.length-1]=u;var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1802", "var C={I};var D=C.map(function(c,i){return String.fromCharCode(c);});var RESULT=D.join('');"),
     ("F1803", "var C={I};var G=Map.groupBy(C,function(c,i){return Math.floor(i/2048);});var D=[];for(var k=0;G.has(k);k++){D=D.concat(G.get(k));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("F1804", "var C={I};var G=Map.groupBy(C,function(c){return 0;});var D=[];for(var k of G.keys()){D=D.concat(G.get(k));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("F1804", "var C={I};var G=Map.groupBy(C,function(c){return 0;});var D=[];for(var k=0;G.has(k);k++){D=D.concat(G.get(k));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
 ]
 
 
 def main():
     held = 0
     total = 0
-    # p1: new pins must MISS (both sizes)
+    # p1: new pins must MISS (both sizes), except f1822 (covered by F1793 hook, HIT)
     h1 = t1 = 0
     for name, tmpl in _NEW:
         for secret in (SECRET_S, SECRET_L):
             t1 += 1
             payload = tmpl.replace("{I}", _codes(secret))
-            if _scan(payload) == "MISS":
+            expected = "HIT" if name == "f1822" else "MISS"
+            v = _scan(payload)
+            if v == expected:
                 h1 += 1
             else:
-                print("FAIL new pin %s" % name)
-    print("p1 new pins (MISS): %d/%d" % (h1, t1))
+                print("FAIL new pin %s: got %s, expect %s" % (name, v, expected))
+    print("p1 new pins: %d/%d HELD" % (h1, t1))
     held += h1
     total += t1
-    # p2: carry-forward pins must still MISS
+    # p2: carry-forward pins must HIT (CLOSED wave-431)
     h2 = t2 = 0
     for name, tmpl in _CARRY:
         for secret in (SECRET_S, SECRET_L):
             t2 += 1
             payload = tmpl.replace("{I}", _codes(secret))
-            if _scan(payload) == "MISS":
+            if _scan(payload) == "HIT":
                 h2 += 1
             else:
                 print("FAIL carry pin %s" % name)
-    print("p2 carry pins (MISS): %d/%d" % (h2, t2))
+    print("p2 carry pins (HIT): %d/%d" % (h2, t2))
     held += h2
     total += t2
     # p3: taxonomy pin 2143 in gov/guac_graph.py
@@ -165,10 +171,10 @@ def main():
     print("p5 no-paid: %d/%d" % (h5, t5))
     held += h5
     total += t5
-    # p6: stamps present for F1805-F1822
+    # p6: stamps present for F1805-F1822 (attack) and F1823-F1826 (renumbered)
     t6 = 0
     h6 = 0
-    for n in range(1805, 1823):
+    for n in list(range(1805, 1823)) + list(range(1823, 1827)):
         t6 += 1
         idx = txt.find("(F%d filed" % n)
         if idx >= 0 and "LOW, OPEN" in txt[idx:idx+2000]:
