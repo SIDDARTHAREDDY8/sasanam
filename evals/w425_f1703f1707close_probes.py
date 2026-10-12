@@ -91,15 +91,15 @@ _FILED = [
 
 @_t
 def test_p0_pins():
-    """N_STMTDEC_LOOPS=109 (108 base + 1 lane); re.compile=29; pin 2143; wave-424 footer lineage."""
+    """N_STMTDEC_LOOPS=111 (108 base + 3 lanes); re.compile=29; pin 2143; wave-425 merge."""
     notes = []
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         dsrc = f.read()
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (len(loops) == 109)
-    notes.append("loops=%d (expect 109)" % len(loops))
+    ok = (len(loops) == 111)
+    notes.append("loops=%d (expect 111)" % len(loops))
     # new loop present with tail guard
     has_new = "_js_f1705_stmt_decode" in body and "_js_f1707_stmt_decode" in body
     ok = ok and has_new
@@ -283,16 +283,12 @@ def test_p6_other_opens_miss():
     """Other open findings still MISS."""
     cs = _codes(SECRET_S)
     cases = [
-        # F1708: flatMap with null thisArg
-        ("f1708", "var C=%s;var D=C.flatMap(function(c){return [c];},null);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        # F1709: map with null thisArg
-        ("f1709", "var C=%s;var D=C.map(function(c){return c;},null);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        # F1710: Array.from with null thisArg
-        ("f1710", "var C=%s;var D=Array.from(C,function(c){return c;},null);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        # F1711: trailing comma spread
-        ("f1711", "var C=%s;var D=[...C,];var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        # F1714: direct apply with surrogate (lane C's territory)
-        ("f1714", "var C=[0xD800,%s];var S=String.fromCharCode.apply(null,C);var RESULT=S;" % ",".join(str(ord(c)) for c in SECRET_S)),
+        # F1715: reduceRight (attack 93, still open)
+        ("f1715", "var C=%s;var D=C.reduceRight(function(a,c){return [c].concat(a);},[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
+        # F1716: entries destructuring (attack 93, still open)
+        ("f1716", "var C=%s;var E=C.entries();var D=[];for(var [i,c] of E){D.push(c);}var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
+        # F1725: flat() residual (lane C, still open)
+        ("f1725", "var C=[0xD800,%s];var D=C.flat();var S=String.fromCharCode.apply(null,D);var RESULT=S;" % ",".join(str(ord(c)) for c in SECRET_S)),
     ]
     bad = [n for n, p in cases if _hits(p)]
     return (not bad, "%d/%d other-opens miss%s"

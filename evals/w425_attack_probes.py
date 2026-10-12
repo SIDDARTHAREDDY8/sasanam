@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Wave-425 attack round 93 coverage battery: new F1715-F1724 pins (MISS) +
-carry-forward F1703, F1705-F1714 pins (MISS) + taxonomy/footer/no-paid-machinery.
+F1715-F1725 pins (MISS) + closed F1703/F1705-F1714 pins (HIT) + taxonomy/footer/no-paid-machinery.
 
 $0-spend-by-construction. Prints HELD counts.
 """
@@ -64,12 +64,25 @@ _NEW = [
     ("f1724", "var C={I};var D=C.filter(function(c,i,a){return a[i]===c;});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
 ]
 
-# Carry-forward pins (must still MISS except F1703-partial): F1705-F1714
-# F1703 is OPEN (partial): wave-424 lane D fixed the statement-decoder paths,
-# so the statement shape now HITs (asserted as HIT-OK in _CARRY_HIT below);
-# the remaining expression-route gap is covered by the F1714 pin.
+# Wave-425 merge: F1703, F1705-F1714 are now CLOSED (lanes A/B/C).
+# New open pins: F1715-F1724 (attack 93) + F1725 (lane-C residual), all must MISS.
 _CARRY_MISS = [
-    # F1705-F1713: round-92 shapes
+    ("F1715", "var C={I};var D=C.reduceRight(function(a,c){return [c].concat(a);},[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("F1716", "var C={I};var E=C.entries();var D=[];for(var [i,c] of E){D.push(c);}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("F1717", "var C={I};var O=Object.assign({},C);var D=[];for(var [k,v] of Object.entries(O)){D.push(Number(v));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("F1718", "var C={I};var D=[];D.push.apply(D,C);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("F1719", "var C={I};var D=Array.from(C,function(c){return c;},undefined);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("F1720", "var C={I};var T=C.join(undefined);var D=T.split(',').map(Number);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("F1721", "var C={I};var D=[C];var E=D.flat(Infinity);var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
+    ("F1722", "var C={I};var D=structuredClone(C,{transfer:[]});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("F1723", "var C={I};var T=[];C.findLast(function(c){T.unshift(c);return false;});var S=String.fromCharCode.apply(null,T);var RESULT=S;"),
+    ("F1724", "var C={I};var D=C.filter(function(c,i,a){return a[i]===c;});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("F1725", "var C=[55296,{CODES}];var S=String.fromCharCode.apply(null,C.flat());var RESULT=S;"),
+]
+
+# Closed in wave-425: F1703 (full), F1705-F1714 (lanes A/B/C) — must now HIT
+_CARRY_HIT = [
+    ("F1703", "var C=[55296,{CODES}];var D=C.map(function(c){return String(c);});var E=D.map(Number);var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
     ("F1705", "var C={I};var D=Object.assign([],C,C);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1706", "var C={I};var S=String.fromCharCode.apply(null,C);var T=`${S}`;var RESULT=T;"),
     ("F1707", "var C={I};var D=[C];var E=D.flat(C.length-C.length+1);var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
@@ -79,13 +92,7 @@ _CARRY_MISS = [
     ("F1711", "var C={I};var D=[...C,];var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1712", "var C={I};var D=C.slice();D.splice(0,0);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1713", "var C={I};var D=C.reduce(function(a,c){return a.concat([c]);},[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    # F1714: renumbered lane-D residual — direct apply with surrogate prefix
     ("F1714", "var C=[55296,{CODES}];var S=String.fromCharCode.apply(null,C);var RESULT=S;"),
-]
-
-# F1703-partial: statement-decoder shape must now HIT (partial fix verified)
-_CARRY_HIT = [
-    ("F1703-partial", "var C=[55296,{CODES}];var D=C.map(function(c){return String(c);});var E=D.map(Number);var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
 ]
 
 
@@ -127,7 +134,10 @@ def main():
     for name, tmpl in _CARRY_HIT:
         for secret in (SECRET_S, SECRET_L):
             t2b += 1
-            payload = tmpl.replace("{CODES}", _codes_bare(secret))
+            if "{CODES}" in tmpl:
+                payload = tmpl.replace("{CODES}", _codes_bare(secret))
+            else:
+                payload = tmpl.replace("{I}", _codes(secret))
             v = _scan(payload)
             if v == "HIT":
                 h2b += 1

@@ -55,11 +55,11 @@ def _codes_surr(s):
 def test_p0_pins():
     """Pin checks: footer, taxonomy, counts."""
     ok = True
-    # N_STMTDEC_LOOPS = 109 (108 base + 1 new dispatch loop)
+    # N_STMTDEC_LOOPS = 111 (108 base + 3 lanes, wave-425 merge)
     with open(os.path.join(REPO_ROOT, "evals", "w395_perfharden_probes.py")) as f:
         perf_src = f.read()
     m = re.search(r"N_STMTDEC_LOOPS\s*=\s*(\d+)", perf_src)
-    ok = _check("p0-loops", m and m.group(1) == "109",
+    ok = _check("p0-loops", m and m.group(1) == "111",
                 "N_STMTDEC_LOOPS=%s" % (m.group(1) if m else "missing")) and ok
     # All three hooks defined
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
@@ -166,11 +166,11 @@ def test_p5_quiet():
 def test_p6_other_opens():
     """Other open findings still MISS (not accidentally closed)."""
     ok = True
-    # F1705 (Object.assign) should still MISS
-    payload = ('var C=%s;var D=Object.assign([],C,C);var S=String.fromCharCode.apply(null,D);'
-               'var RESULT=S;' % _codes(SECRET_S))
+    # F1715 (reduceRight, attack 93) should still MISS
+    payload = ('var C=%s;var D=C.reduceRight(function(a,c){return [c].concat(a);},[]);'
+               'var S=String.fromCharCode.apply(null,D);var RESULT=S;' % _codes(SECRET_S))
     v = _scan(payload)
-    ok = _check("p6-f1705-open", v == "MISS", "got %s" % v) and ok
+    ok = _check("p6-f1715-open", v == "MISS", "got %s" % v) and ok
     return ok
 
 def test_p7_perf():

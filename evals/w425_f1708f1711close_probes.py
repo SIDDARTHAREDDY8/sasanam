@@ -95,15 +95,15 @@ _FILED = [
 
 @_t
 def test_p0_pins():
-    """N_STMTDEC_LOOPS=109 (108 base + 1 lane); re.compile=29; pin 2143; wave-424 footer lineage."""
+    """N_STMTDEC_LOOPS=111 (108 base + 3 lanes); re.compile=29; pin 2143; wave-425 merge."""
     notes = []
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         dsrc = f.read()
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (len(loops) == 109)
-    notes.append("loops=%d (expect 109)" % len(loops))
+    ok = (len(loops) == 111)
+    notes.append("loops=%d (expect 111)" % len(loops))
     # new loop present with tail guard
     has_new = "_js_f1708_stmt_decode, _js_f1709_stmt_decode," in body
     ok = ok and has_new
@@ -285,24 +285,18 @@ def test_p5_honest_quiet():
 
 @_t
 def test_p6_other_opens_miss():
-    """F1703, F1705-F1707, F1712-F1714 (other opens) still MISS."""
+    """F1715-F1717, F1725 (other opens) still MISS."""
     cs = _codes(SECRET_S)
     sur = "[55296," + ",".join(str(ord(c)) for c in SECRET_S) + "]"
     cases = [
-        ("f1703",
-         "var C=%s;var S=String.fromCharCode.apply(null,C);var RESULT=S;" % sur),
-        ("f1705",
-         "var C=%s;var D=Object.assign([],C,C);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        ("f1706",
-         "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');var S=`${T}`;var RESULT=S;" % cs),
-        ("f1707",
-         "var C=%s;var D=[C];var E=D.flat(C.length-C.length+1);var S=String.fromCharCode.apply(null,E);var RESULT=S;" % cs),
-        ("f1712",
-         "var C=%s;var D=C.slice();D.splice(0,0);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        ("f1713",
-         "var C=%s;var D=C.reduce((a,c)=>a.concat([c]),[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        ("f1714",
-         "var C=%s;var S=String.fromCharCode.apply(null,C);var RESULT=S;" % sur),
+        ("f1715",
+         "var C=%s;var D=C.reduceRight(function(a,c){return [c].concat(a);},[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
+        ("f1716",
+         "var C=%s;var E=C.entries();var D=[];for(var [i,c] of E){D.push(c);}var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
+        ("f1717",
+         "var O={};var C=%s;for(var i=0;i<C.length;i++){O['k'+i]=C[i];}var D=[];for(var [k,v] of Object.entries(O)){D.push(v);}var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
+        ("f1725",
+         "var C=%s;var D=C.flat();var S=String.fromCharCode.apply(null,D);var RESULT=S;" % sur),
     ]
     bad = [n for n, p in cases if not _misses(p)]
     return (not bad, "%d/%d other-opens miss%s"
