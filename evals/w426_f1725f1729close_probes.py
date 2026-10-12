@@ -55,7 +55,7 @@ def _codes_surr(s):
 def test_p0_pins():
     """Pin checks: footer, taxonomy, counts."""
     ok = True
-    # N_STMTDEC_LOOPS = 112 (111 base + 1 lane, wave-426 lane C)
+    # N_STMTDEC_LOOPS = 115 (111 base + 4 lanes, wave-426 lane C)
     with open(os.path.join(REPO_ROOT, "evals", "w395_perfharden_probes.py")) as f:
         perf_src = f.read()
     m = re.search(r"N_STMTDEC_LOOPS\s*=\s*(\d+)", perf_src)
@@ -177,15 +177,13 @@ def test_p5_quiet():
 def test_p6_other_opens():
     """Other open findings still MISS (not accidentally closed)."""
     ok = True
-    # F1715-F1724 (attack 93) should still MISS
-    payload = "var C=%s;var D=C.reduceRight(function(a,c){return [c].concat(a);},[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % _codes(SECRET_S)
+    # F1743-F1744 (attack 94) should still MISS
+    payload = "var C=%s;var n=C.length-C.length+1;var D=[C];var F=D.flat(n);var S=String.fromCharCode.apply(null,F);var RESULT=S;" % _codes(SECRET_S)
     v = _scan(payload)
-    ok = _check("p6-f1715-open", v == "MISS", "got %s" % v) and ok
-    # F1730-F1734 (merge residuals) should still MISS - use a generic shape
-    payload = "var C=%s;var D=C.filter(function(c){return true;});var S=String.fromCharCode.apply(null,D);var RESULT=S;" % _codes(SECRET_S)
+    ok = _check("p6-f1743-open", v == "MISS", "got %s" % v) and ok
+    payload = "var C=%s;var S=String.fromCharCode.apply(null,C);var n=C.length-C.length+1;var T=S.repeat(n);var RESULT=T;" % _codes(SECRET_S)
     v = _scan(payload)
-    # This may HIT or MISS depending on coverage; just check no crash
-    ok = _check("p6-other", v in ("HIT", "MISS"), "got %s" % v) and ok
+    ok = _check("p6-f1744-open", v == "MISS", "got %s" % v) and ok
     return ok
 
 def test_p7_perf():

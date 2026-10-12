@@ -13463,3 +13463,5 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 
 # Wave-426 attack round 94: F1735-F1748 filed OPEN (14, first-filing 2026-10-12 04:38 UTC, $0 model spend); next free F1749
 
+
+# Wave-426: F1376-F1734 CLOSED (359); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1735-F1748 OPEN (14); next free F1749

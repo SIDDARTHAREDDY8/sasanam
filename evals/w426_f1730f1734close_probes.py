@@ -55,7 +55,7 @@ def _codes_trailing_surr(s):
 def test_p0_pins():
     """Pin checks: footer, taxonomy, counts."""
     ok = True
-    # N_STMTDEC_LOOPS = 112 (111 base + 1 new dispatch loop, wave-426 lane D)
+    # N_STMTDEC_LOOPS = 115 (111 base + 1 new dispatch loop, wave-426 lane D)
     with open(os.path.join(REPO_ROOT, "evals", "w395_perfharden_probes.py")) as f:
         perf_src = f.read()
     m = re.search(r"N_STMTDEC_LOOPS\s*=\s*(\d+)", perf_src)
@@ -199,10 +199,14 @@ def test_p6_other_opens():
     ok = True
     cs = _codes(SECRET_S)
     opens = [
-        # F1715: reduceRight (attack 93)
-        ("f1715", 'var C={I};var D=C.reduceRight(function(a,c){return [c].concat(a);},[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
-        # F1725: lane-C residual (whatever it is, must still MISS)
-        # F1726-F1729: other spec-review residuals
+        # F1745: fill per-index (attack 94)
+        ("f1745", 'var C={I};var D=C.slice();for(var i=0;i<D.length;i++){D.fill(D[i],i,i+1);}var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
+        # F1746: DataView setUint16 (attack 94)
+        ("f1746", 'var C={I};var B=new ArrayBuffer(C.length*2);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setUint16(i*2,C[i]);}var D=[];for(var j=0;j<C.length;j++){D.push(V.getUint16(j*2));}var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
+        # F1747: copyWithin (attack 94)
+        ("f1747", 'var C={I};var D=C.slice();D.copyWithin(C.length-C.length,0);var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
+        # F1748: fill empty range (attack 94)
+        ("f1748", 'var C={I};var D=C.slice();D.fill(0,C.length-C.length,C.length-C.length);var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
     ]
     for name, tmpl in opens:
         payload = tmpl.replace("{I}", cs)

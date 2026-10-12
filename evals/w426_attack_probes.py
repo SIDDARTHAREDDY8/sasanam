@@ -68,8 +68,7 @@ _NEW = [
     ("f1748", "var C={I};var D=C.slice();D.fill(0,C.length-C.length,C.length-C.length);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
 ]
 
-# Carry-forward OPEN pins from wave-425 (attack 93 F1715-F1724, lane-C F1725,
-# S1 residuals F1726-F1734) — must still MISS on the open tree
+# Carry-forward CLOSED pins from wave-426 (lanes closed F1715-F1734) — must now HIT
 _CARRY_MISS = [
     ("F1715", "var C={I};var D=C.reduceRight(function(a,c){return [c].concat(a);},[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1716", "var C={I};var E=C.entries();var D=[];for(var [i,c] of E){D.push(c);}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
@@ -110,7 +109,7 @@ def main():
     print("p1 new pins: %d/%d HELD" % (h1, t1))
     held += h1
     total += t1
-    # p2: carry-forward MISS pins (both sizes)
+    # p2: carry-forward CLOSED pins (both sizes) — F1715-F1734 closed by wave-426 lanes
     h2 = t2 = 0
     for name, tmpl in _CARRY_MISS:
         for secret in (SECRET_S, SECRET_L):
@@ -120,10 +119,10 @@ def main():
             else:
                 payload = tmpl.replace("{I}", _codes(secret))
             v = _scan(payload)
-            if v == "MISS":
+            if v == "HIT":
                 h2 += 1
             else:
-                print("FAIL carry %s: got %s" % (name, v))
+                print("FAIL carry %s: got %s (expected HIT, now closed)" % (name, v))
     print("p2 carry pins: %d/%d HELD" % (h2, t2))
     held += h2
     total += t2

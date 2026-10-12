@@ -102,7 +102,7 @@ _FILED = [
 
 @_t
 def test_p0_pins():
-    """N_STMTDEC_LOOPS=112 (111 base + 1 lane); re.compile=29; pin 2143; wave-425 merge footer."""
+    """N_STMTDEC_LOOPS = 115 (111 base + 4 lanes); re.compile=29; pin 2143; wave-425 merge footer."""
     notes = []
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         dsrc = f.read()
@@ -302,22 +302,17 @@ def test_p5_honest_quiet():
 
 @_t
 def test_p6_other_opens_miss():
-    """F1715-F1719, F1725 (other opens) still MISS."""
+    """F1739-F1742 (other opens) still MISS."""
     cs = _codes(SECRET_S)
-    sur = "[55296," + ",".join(str(ord(c)) for c in SECRET_S) + "]"
     cases = [
-        ("f1715",
-         "var C=%s;var D=C.reduceRight(function(a,c){return [c].concat(a);},[]);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        ("f1716",
-         "var C=%s;var E=C.entries();var D=[];for(var [i,c] of E){D.push(c);}var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        ("f1717",
-         "var O={};var C=%s;for(var i=0;i<C.length;i++){O['k'+i]=C[i];}var D=[];for(var [k,v] of Object.entries(O)){D.push(v);}var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        ("f1718",
-         "var C=%s;var D=[];D.push.apply(D,C);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        ("f1719",
-         "var C=%s;var D=Array.from(C,function(c){return c;},undefined);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        ("f1725",
-         "var C=%s;var D=C.flat();var S=String.fromCharCode.apply(null,D);var RESULT=S;" % sur),
+        ("f1739",
+         "var C=%s;var U=new Uint8Array(C);var V=U.subarray(0).subarray(0);var S=String.fromCharCode.apply(null,Array.from(V));var RESULT=S;" % cs),
+        ("f1740",
+         "var C=%s;var B=new ArrayBuffer(C.length);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setUint8(i,C[i]);}var D=[];for(var j=0;j<C.length;j++){D.push(V.getUint8(j));}var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
+        ("f1741",
+         "var C=%s;var B=new Uint8Array(C).buffer;var B2=B.slice(0);var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));var RESULT=S;" % cs),
+        ("f1742",
+         "var C=%s;var D=C.toReversed();D.reverse();var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
     ]
     bad = [n for n, p in cases if not _misses(p)]
     return (not bad, "%d/%d other-opens miss%s"
