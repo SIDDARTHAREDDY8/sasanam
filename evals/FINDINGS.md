@@ -13561,3 +13561,4 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 
 # Wave-430 lane C: F1774-F1776 CLOSED (3); F1768-F1773, F1777-F1781 OPEN (11); F1782-F1784 OPEN (3, lane-C spec-review residuals, first-filing 2026-10-12 08:55 UTC); next free F1785
 # Wave-430 attack round 98: F1782-F1801 filed OPEN (20, first-filing 2026-10-12 08:44 UTC, $0 model spend); next free F1802
+# Wave-430: F1376-F1781 CLOSED (406); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1782-F1801 OPEN (20, attack 98); F1802-F1804 OPEN (3, lane-C residuals renumbered); next free F1805
