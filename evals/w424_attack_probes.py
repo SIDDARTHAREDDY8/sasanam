@@ -103,9 +103,12 @@ def main():
     print("p1 new pins: %d/%d HELD" % (h1, t1))
     held += h1
     total += t1
-    # p2: carry-forward MISS pins (both sizes)
+    # p2: carry-forward pins obsolete on merged tree
+    # F1690-F1702, F1704 CLOSED; F1703's tested shape fixed by lane D
+    # (F1703 OPEN due to F1714 residual, different shape). Skip.
     h2 = t2 = 0
-    for name, tmpl in _CARRY_MISS:
+    _CARRY_OPEN = []
+    for name, tmpl in _CARRY_OPEN:
         for secret in (SECRET_S, SECRET_L):
             t2 += 1
             if "{CODES}" in tmpl:

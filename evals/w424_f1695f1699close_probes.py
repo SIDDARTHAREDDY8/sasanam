@@ -31,7 +31,7 @@ F1699: join/tab-split roundtrip --
   tab join/split invert on integer arrays. Disjoint from F1687
   (comma separator) by grammar.
 
-One new _decode_layer dispatch loop; N_STMTDEC_LOOPS 105->106
+One new _decode_layer dispatch loop; N_STMTDEC_LOOPS 105->108 (merge: 3 lanes)
 (wave-385: repoint only on actual code-count change).
 Node-exact on all filed shapes (short + 40-char, v24.20.0);
 fail-closed hook-level bounds; sibling pins hold; F1690-F1694,
@@ -104,15 +104,15 @@ _FILED = [
 
 @_t
 def test_p0_pins():
-    """N_STMTDEC_LOOPS=106 (105 base + 1 new loop); re.compile=29; pin 2143; wave-423 footer lineage."""
+    """N_STMTDEC_LOOPS=108 (105 base + 3 lanes); re.compile=29; pin 2143; wave-423 footer lineage."""
     notes = []
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         dsrc = f.read()
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (len(loops) == 106)
-    notes.append("loops=%d (expect 106)" % len(loops))
+    ok = (len(loops) == 108)
+    notes.append("loops=%d (expect 108)" % len(loops))
     # new loop present with tail guard
     has_new = "_js_f1695_stmt_decode, _js_f1696_stmt_decode," in body
     ok = ok and has_new
@@ -262,17 +262,9 @@ def test_p5_honest_quiet():
 
 @_t
 def test_p6_other_opens_miss():
-    """F1690-F1694, F1700-F1704 (other lanes' scope) still MISS."""
+    """F1703 (other open) still MISS. F1690-F1694, F1700-F1702 closed by lanes A/C."""
     cs = _codes(SECRET_S)
     cases = [
-        ("f1690",
-         "var C=%s;var f=String.fromCharCode.bind(null);var S=f(...C);var RESULT=S;" % cs),
-        ("f1691",
-         "var C=%s;var f=String.fromCodePoint.bind(null);var S=f.apply(null,C);var RESULT=S;" % cs),
-        ("f1692",
-         "var C=%s;var D=C.slice().sort((a,b)=>0);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        ("f1700",
-         "var C=%s;var T=C.map(String);var D=T.map(function(x){return parseInt(x,10);});var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
         ("f1703",
          "var C=[0xD800,%s];var D=C.map(function(c){return String(c);});var E=D.map(Number);var S=String.fromCharCode.apply(null,E);var RESULT=S;" % cs[1:]),
     ]

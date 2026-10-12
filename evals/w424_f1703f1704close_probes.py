@@ -77,13 +77,13 @@ def _check(name, ok, detail=""):
 @_t("p0")
 def test_p0_pins():
     ok = True
-    # N_STMTDEC_LOOPS = 105 (no new loops in this lane)
+    # N_STMTDEC_LOOPS = 108 (merge: 3 lanes added loops; this lane added none)
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         src = f.read()
     m = re.search(r"def _decode_layer\(text\):", src)
     body = src[m.end():src.find("\ndef ", m.end())]
     loops = list(re.finditer(r"for _stmtdec in \(([^)]*)\):", body, re.DOTALL))
-    ok = _check("p0-loops", len(loops) == 105,
+    ok = _check("p0-loops", len(loops) == 108,
                 "%d loops" % len(loops)) and ok
     # pin 2143
     with open(os.path.join(REPO_ROOT, "evals", "w423_attack_probes.py")) as f:

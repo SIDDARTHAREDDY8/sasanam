@@ -35,7 +35,7 @@ F1694: Object.entries pair readout --
   Number(e[1]) recovers each code. Disjoint from F1682
   (Object.values) by the entries-pair grammar.
 
-One new _decode_layer dispatch loop; N_STMTDEC_LOOPS 105->106
+One new _decode_layer dispatch loop; N_STMTDEC_LOOPS 105->108 (merge: 3 lanes)
 (wave-385: repoint only on actual code-count change).
 Node-exact on all filed shapes (short + 40-char, v24.20.0);
 fail-closed hook-level bounds; sibling pins hold; F1695-F1704
@@ -113,7 +113,7 @@ _FILED = [
 
 @_t
 def test_p0_pins():
-    """N_STMTDEC_LOOPS=106 (105 base + 1 new loop); re.compile=29; pin 2143; wave-423 footer lineage."""
+    """N_STMTDEC_LOOPS=108 (105 base + 3 lanes); re.compile=29; pin 2143; wave-424 merge."""
     ok = True
     notes = []
     # N_STMTDEC_LOOPS actual count
@@ -122,9 +122,9 @@ def test_p0_pins():
     body = src[m.end():src.find("\ndef ", m.end())]
     loops = list(re.finditer(r"for _stmtdec in \(([^)]*)\):", body,
                              re.DOTALL))
-    if len(loops) != 106:
+    if len(loops) != 108:
         ok = False
-        notes.append("loops=%d (want 106)" % len(loops))
+        notes.append("loops=%d (want 108)" % len(loops))
     # re.compile count
     n_re = len(re.findall(r"re\.compile\(", src))
     if n_re != 29:
@@ -279,20 +279,13 @@ def test_p5_honest_quiet():
 
 @_t
 def test_p6_other_opens_miss():
-    """F1695-F1704 (other opens) still MISS."""
+    """F1703-F1704, F1705-F1714 (other opens) still MISS."""
     cs = _codes(SECRET_S)
-    # F1695: Object.keys
-    p1695 = ("var C=%s;var O=Object.assign({},C);var K=Object.keys(O);"
-             "var D=K.map(function(k){return Number(O[k]);});"
-             "var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs)
-    # F1696: Reflect.construct
-    p1696 = ("var C=%s;var D=Reflect.construct(Array,[C.length]);"
-             "for(var i=0;i<C.length;i++){D[i]=C[i];}"
-             "var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs)
-    # F1703: surrogate smuggling (should MISS - systemic gap)
+    # F1703: surrogate smuggling (should MISS - systemic gap, partial)
     p1703 = ("var C=[55296,%s];var S=String.fromCharCode.apply(null,C);"
              "var RESULT=S;" % ",".join(str(ord(c)) for c in SECRET_S))
-    cases = [("f1695", p1695), ("f1696", p1696), ("f1703", p1703)]
+    # Note: F1695-F1702 closed by lanes B/C, removed from other-opens
+    cases = [("f1703", p1703)]
     bad = [n for n, p in cases if not _misses(p)]
     return (not bad, "%d/%d other-opens miss%s"
             % (len(cases) - len(bad), len(cases),
