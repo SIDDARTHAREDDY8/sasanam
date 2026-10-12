@@ -194981,6 +194981,214 @@ def _js_f1746_stmt_decode(text):
         return None
 
 
+def _js_f1747f1748_parse_zero_expr(text, j, what):
+    """Parse a node-exact zero expression (F1747/F1748, wave-427).
+
+    Admitted domain: the literal `0`, or
+    `<ident>.length-<ident>.length` with the same ident on both sides
+    (self-subtraction is always 0 in node, v24.20.0 verified).
+    Returns the index just past the expression. Anything else raises
+    _JSExprFail: a miss, never a mis-decode. Never evals.
+    """
+    n = len(text)
+    j = _js_skip_ws(text, j)
+    if j < n and text[j] == "0":
+        k = j + 1
+        if k >= n or text[k] not in _JS_IDENT_CONT:
+            if k < n and text[k] == ".":
+                raise _JSExprFail(what + " zero not bare")
+            return k
+    nm1, k = _js_parse_ident(text, j)
+    k = _js_expect(text, _js_skip_ws(text, k), ".")
+    m = _js_match_kw(text, k, "length")
+    if m is None:
+        raise _JSExprFail(what + " not length")
+    k = _js_expect(text, _js_skip_ws(text, m), "-")
+    nm2, k = _js_parse_ident(text, _js_skip_ws(text, k))
+    if nm2 != nm1:
+        raise _JSExprFail(what + " length idents differ")
+    k = _js_expect(text, _js_skip_ws(text, k), ".")
+    m = _js_match_kw(text, k, "length")
+    if m is None:
+        raise _JSExprFail(what + " not length")
+    return m
+
+
+def _js_f1747_stmt_decode(text):
+    """Decode F1747 copyWithin computed-identity staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.slice();`
+    `D.copyWithin(<zero>,<zero>);`  -- zero: literal `0` or
+      `<ident>.length-<ident>.length` (same ident)
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0) on the admitted domain: copyWithin with
+    target=0 and start=0 copies [0,len) onto [0,len) -- identity, so D
+    is the code array and the apply readout is dstr (ToUint16
+    discipline, same as _js_f1124f1130_parse_c_decl). Disjoint from
+    F820 (IIFE-wrapped, string-literal array, literal-int args -- here
+    a flat statement sequence, int-code array, computed-zero args) by
+    grammar -- the filed shape BREAKs on the open tree. Anything else
+    fails closed: a miss, never a mis-decode. Returns the decoded
+    string, or None. Never evals.
+    """
+    if ".copyWithin(" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1747"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        # var D=C.slice();
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " slice base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " slice")
+        # D.copyWithin(<zero>,<zero>);
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " copyWithin base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "copyWithin")
+        if m is None:
+            raise _JSExprFail(what + " not copyWithin")
+        j = _js_expect(text, m, "(")
+        j = _js_f1747f1748_parse_zero_expr(text, j, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_f1747f1748_parse_zero_expr(text, j, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " copyWithin")
+        # var S=String.fromCharCode.apply(null,D);
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, _js_skip_ws(text, j),
+                                           dname, what)
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " apply")
+        # var RESULT=S;
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1748_stmt_decode(text):
+    """Decode F1748 fill empty-computed-range staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.slice();`
+    `D.fill(<int>,<zero>,<zero>);`  -- zero: literal `0` or
+      `<ident>.length-<ident>.length` (same ident)
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0) on the admitted domain: fill(v,0,0) is an
+    empty range -- D is unchanged for any fill value, so D is the code
+    array and the apply readout is dstr (ToUint16 discipline, same as
+    _js_f1124f1130_parse_c_decl). Disjoint from F1745 (per-index
+    fill(D[i],i,i+1) -- here a literal-int value with two zero range
+    args), F681 (join-return statement loop -- here the apply
+    readout), and F773 (IIFE-wrapped fill -- here a flat statement
+    sequence) by grammar -- the filed shape BREAKs on the open tree.
+    Anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
+    """
+    if ".fill(" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1748"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        # var D=C.slice();
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " slice base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " slice")
+        # D.fill(<int>,<zero>,<zero>);
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " fill base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "fill")
+        if m is None:
+            raise _JSExprFail(what + " not fill")
+        j = _js_expect(text, m, "(")
+        _, j = _js_parse_slice_int(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_f1747f1748_parse_zero_expr(text, j, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_f1747f1748_parse_zero_expr(text, j, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " fill")
+        # var S=String.fromCharCode.apply(null,D);
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, _js_skip_ws(text, j),
+                                           dname, what)
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " apply")
+        # var RESULT=S;
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
 
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
@@ -197448,6 +197656,26 @@ def _decode_layer(text):
     # order.
     for _stmtdec in (_js_f1743_stmt_decode, _js_f1744_stmt_decode,
                      _js_f1745_stmt_decode, _js_f1746_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1747/F1748: copyWithin computed-identity staging and fill
+    # empty-computed-range staging. Each parses a strict whole-text
+    # grammar; every filed shape BREAKs on the open tree, so no
+    # earlier production decoded them and the pre-existing variant
+    # order (F441) is preserved. Disjoint from F820 (IIFE-wrapped
+    # copyWithin with literal-int args -- here a flat statement
+    # sequence with computed-zero args), F1745 (per-index
+    # fill(D[i],i,i+1) -- here a literal-int value with two zero range
+    # args), F681 (join-return statement loop -- here the apply
+    # readout), and F773 (IIFE-wrapped fill -- here a flat statement
+    # sequence) by grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1747_stmt_decode,
+                     _js_f1748_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
