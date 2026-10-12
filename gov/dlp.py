@@ -195190,6 +195190,538 @@ def _js_f1748_stmt_decode(text):
 
 
 
+def _js_f1749_stmt_decode(text):
+    """Decode F1749 DataView setUint32/getUint32 round-trip (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const B=new ArrayBuffer(C.length*4);`
+    `var|let|const V=new DataView(B);`
+    `for(var i=0;i<C.length;i++){V.setUint32(i*4,C[i]);}`
+    `var|let|const D=[];`
+    `for(var j=0;j<C.length;j++){D.push(V.getUint32(j*4));}`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0) on the admitted domain: setUint32 applies
+    ToNumber+ToUint32 to the value; dstr is the ToUint16 image of the
+    code array (0..65535) and ToUint32 is identity there, so the store
+    is an identity; getUint32 reads the stored value back, so D is a
+    copy of C and the apply readout is dstr. The `*4` stride matches
+    the uint32 width and the buffer is exactly `C.length*4` bytes, so
+    no store can go out of bounds on the admitted domain. Disjoint
+    from F742 (CLOSED: IIFE form with setUint8), F1740 (statement form
+    with setUint8 -- here the 32-bit width is required), F1746
+    (setUint16/getUint16 with stride 2 -- here stride 4), F1750
+    (setBigUint64 -- BigInt domain), and F1751 (setFloat64) by
+    grammar -- the filed shape BREAKs on the open tree. Anything else
+    fails closed: a miss, never a mis-decode. Returns the decoded
+    string, or None. Never evals.
+    """
+    if "DataView" not in text or "fromCharCode" not in text:
+        return None
+    if "setUint32" not in text or "getUint32" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1749"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        # var B=new ArrayBuffer(C.length*4);
+        _, bname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(bname, bound, {"String"},
+                                        what)
+        bound.add(bname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "ArrayBuffer":
+            raise _JSExprFail(what + " not ArrayBuffer")
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " buffer size base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail(what + " buffer size not length")
+        j = _js_expect(text, m, "*")
+        lit, j = _js_parse_canonical_int(text, _js_skip_ws(text, j),
+                                         what)
+        if int(lit) != 4:
+            raise _JSExprFail(what + " buffer stride not 4")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " buffer")
+        # var V=new DataView(B);
+        _, vname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(vname, bound, {"String"},
+                                        what)
+        bound.add(vname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new 2")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "DataView":
+            raise _JSExprFail(what + " not DataView")
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != bname:
+            raise _JSExprFail(what + " view base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " view")
+        # for(var i=0;i<C.length;i++){V.setUint32(i*4,C[i]);}
+        ivar, j = _js_f1740_parse_for_header(text, j, cname, bound,
+                                             state, what)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != vname:
+            raise _JSExprFail(what + " set view mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "setUint32")
+        if m is None:
+            raise _JSExprFail(what + " not setUint32")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != ivar:
+            raise _JSExprFail(what + " set idx var mismatch")
+        j = _js_expect(text, j, "*")
+        lit, j = _js_parse_canonical_int(text, _js_skip_ws(text, j),
+                                         what)
+        if int(lit) != 4:
+            raise _JSExprFail(what + " set stride not 4")
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " set val base mismatch")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != ivar:
+            raise _JSExprFail(what + " set val idx mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        _js_f96x_charge(state, what + " store loop")
+        # var D=[];
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " acc")
+        # for(var j=0;j<C.length;j++){D.push(V.getUint32(j*4));}
+        jvar, j = _js_f1740_parse_for_header(text, j, cname, bound,
+                                             state, what)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " push base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "push")
+        if m is None:
+            raise _JSExprFail(what + " not push")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != vname:
+            raise _JSExprFail(what + " get view mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "getUint32")
+        if m is None:
+            raise _JSExprFail(what + " not getUint32")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != jvar:
+            raise _JSExprFail(what + " get idx var mismatch")
+        j = _js_expect(text, j, "*")
+        lit, j = _js_parse_canonical_int(text, _js_skip_ws(text, j),
+                                         what)
+        if int(lit) != 4:
+            raise _JSExprFail(what + " get stride not 4")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        _js_f96x_charge(state, what + " load loop")
+        # var S=String.fromCharCode.apply(null,D);
+        sname, j = _js_f1397f1412_parse_apply_s(text, j, dname,
+                                                bound, state, what)
+        # var RESULT=S;
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1750_stmt_decode(text):
+    """Decode F1750 DataView setBigUint64/getBigUint64 round-trip (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const B=new ArrayBuffer(C.length*8);`
+    `var|let|const V=new DataView(B);`
+    `for(var i=0;i<C.length;i++){V.setBigUint64(i*8,BigInt(C[i]));}`
+    `var|let|const D=[];`
+    `for(var j=0;j<C.length;j++){D.push(Number(V.getBigUint64(j*8)));}`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0) on the admitted domain: BigInt(C[i]) is
+    exact for the integer codes; setBigUint64 stores the 64-bit
+    value; getBigUint64 reads it back; Number() is exact for values
+    below 2**53, and dstr codes are the ToUint16 image (0..65535),
+    so the round-trip is an identity; D is a copy of C and the apply
+    readout is dstr. The `*8` stride matches the 64-bit width and the
+    buffer is exactly `C.length*8` bytes, so no store can go out of
+    bounds on the admitted domain. Disjoint from F742 (CLOSED: IIFE
+    form with setUint8), F1740 (setUint8), F1746 (setUint16), F1749
+    (setUint32 -- here the BigInt domain with the BigInt()/Number()
+    wrappers is required), and F1751 (setFloat64) by grammar -- the
+    filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "DataView" not in text or "fromCharCode" not in text:
+        return None
+    if "setBigUint64" not in text or "getBigUint64" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1750"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "BigInt", "Number"}
+        # var B=new ArrayBuffer(C.length*8);
+        _, bname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(bname, bound, {"String"},
+                                        what)
+        bound.add(bname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "ArrayBuffer":
+            raise _JSExprFail(what + " not ArrayBuffer")
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " buffer size base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail(what + " buffer size not length")
+        j = _js_expect(text, m, "*")
+        lit, j = _js_parse_canonical_int(text, _js_skip_ws(text, j),
+                                         what)
+        if int(lit) != 8:
+            raise _JSExprFail(what + " buffer stride not 8")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " buffer")
+        # var V=new DataView(B);
+        _, vname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(vname, bound, {"String"},
+                                        what)
+        bound.add(vname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new 2")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "DataView":
+            raise _JSExprFail(what + " not DataView")
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != bname:
+            raise _JSExprFail(what + " view base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " view")
+        # for(var i=0;i<C.length;i++){V.setBigUint64(i*8,BigInt(C[i]));}
+        ivar, j = _js_f1740_parse_for_header(text, j, cname, bound,
+                                             state, what)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != vname:
+            raise _JSExprFail(what + " set view mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "setBigUint64")
+        if m is None:
+            raise _JSExprFail(what + " not setBigUint64")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != ivar:
+            raise _JSExprFail(what + " set idx var mismatch")
+        j = _js_expect(text, j, "*")
+        lit, j = _js_parse_canonical_int(text, _js_skip_ws(text, j),
+                                         what)
+        if int(lit) != 8:
+            raise _JSExprFail(what + " set stride not 8")
+        j = _js_expect(text, j, ",")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "BigInt")
+        if m is None:
+            raise _JSExprFail(what + " not BigInt")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " set val base mismatch")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != ivar:
+            raise _JSExprFail(what + " set val idx mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        _js_f96x_charge(state, what + " store loop")
+        # var D=[];
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " acc")
+        # for(var j=0;j<C.length;j++){D.push(Number(V.getBigUint64(j*8)));}
+        jvar, j = _js_f1740_parse_for_header(text, j, cname, bound,
+                                             state, what)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " push base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "push")
+        if m is None:
+            raise _JSExprFail(what + " not push")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Number")
+        if m is None:
+            raise _JSExprFail(what + " not Number")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != vname:
+            raise _JSExprFail(what + " get view mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "getBigUint64")
+        if m is None:
+            raise _JSExprFail(what + " not getBigUint64")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != jvar:
+            raise _JSExprFail(what + " get idx var mismatch")
+        j = _js_expect(text, j, "*")
+        lit, j = _js_parse_canonical_int(text, _js_skip_ws(text, j),
+                                         what)
+        if int(lit) != 8:
+            raise _JSExprFail(what + " get stride not 8")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        _js_f96x_charge(state, what + " load loop")
+        # var S=String.fromCharCode.apply(null,D);
+        sname, j = _js_f1397f1412_parse_apply_s(text, j, dname,
+                                                bound, state, what)
+        # var RESULT=S;
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1751_stmt_decode(text):
+    """Decode F1751 DataView setFloat64/getFloat64 round-trip (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const B=new ArrayBuffer(C.length*8);`
+    `var|let|const V=new DataView(B);`
+    `for(var i=0;i<C.length;i++){V.setFloat64(i*8,C[i]);}`
+    `var|let|const D=[];`
+    `for(var j=0;j<C.length;j++){D.push(V.getFloat64(j*8));}`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0) on the admitted domain: setFloat64 applies
+    ToNumber to the value; dstr codes are the ToUint16 image of the
+    code array (0..65535), all exactly representable as float64, so
+    the store is an identity; getFloat64 reads the stored value back,
+    so D is a copy of C and the apply readout is dstr. The `*8`
+    stride matches the 64-bit width and the buffer is exactly
+    `C.length*8` bytes, so no store can go out of bounds on the
+    admitted domain. Disjoint from F742 (CLOSED: IIFE form with
+    setUint8), F1740 (setUint8), F1746 (setUint16), F1749 (setUint32
+    with stride 4 -- here stride 8), and F1750 (setBigUint64 -- BigInt
+    domain) by grammar -- the filed shape BREAKs on the open tree.
+    Anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
+    """
+    if "DataView" not in text or "fromCharCode" not in text:
+        return None
+    if "setFloat64" not in text or "getFloat64" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1751"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        # var B=new ArrayBuffer(C.length*8);
+        _, bname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(bname, bound, {"String"},
+                                        what)
+        bound.add(bname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "ArrayBuffer":
+            raise _JSExprFail(what + " not ArrayBuffer")
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " buffer size base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail(what + " buffer size not length")
+        j = _js_expect(text, m, "*")
+        lit, j = _js_parse_canonical_int(text, _js_skip_ws(text, j),
+                                         what)
+        if int(lit) != 8:
+            raise _JSExprFail(what + " buffer stride not 8")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " buffer")
+        # var V=new DataView(B);
+        _, vname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(vname, bound, {"String"},
+                                        what)
+        bound.add(vname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new 2")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "DataView":
+            raise _JSExprFail(what + " not DataView")
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != bname:
+            raise _JSExprFail(what + " view base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " view")
+        # for(var i=0;i<C.length;i++){V.setFloat64(i*8,C[i]);}
+        ivar, j = _js_f1740_parse_for_header(text, j, cname, bound,
+                                             state, what)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != vname:
+            raise _JSExprFail(what + " set view mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "setFloat64")
+        if m is None:
+            raise _JSExprFail(what + " not setFloat64")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != ivar:
+            raise _JSExprFail(what + " set idx var mismatch")
+        j = _js_expect(text, j, "*")
+        lit, j = _js_parse_canonical_int(text, _js_skip_ws(text, j),
+                                         what)
+        if int(lit) != 8:
+            raise _JSExprFail(what + " set stride not 8")
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " set val base mismatch")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != ivar:
+            raise _JSExprFail(what + " set val idx mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        _js_f96x_charge(state, what + " store loop")
+        # var D=[];
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " acc")
+        # for(var j=0;j<C.length;j++){D.push(V.getFloat64(j*8));}
+        jvar, j = _js_f1740_parse_for_header(text, j, cname, bound,
+                                             state, what)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " push base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "push")
+        if m is None:
+            raise _JSExprFail(what + " not push")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != vname:
+            raise _JSExprFail(what + " get view mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "getFloat64")
+        if m is None:
+            raise _JSExprFail(what + " not getFloat64")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != jvar:
+            raise _JSExprFail(what + " get idx var mismatch")
+        j = _js_expect(text, j, "*")
+        lit, j = _js_parse_canonical_int(text, _js_skip_ws(text, j),
+                                         what)
+        if int(lit) != 8:
+            raise _JSExprFail(what + " get stride not 8")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        _js_f96x_charge(state, what + " load loop")
+        # var S=String.fromCharCode.apply(null,D);
+        sname, j = _js_f1397f1412_parse_apply_s(text, j, dname,
+                                                bound, state, what)
+        # var RESULT=S;
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if rname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -197681,6 +198213,23 @@ def _decode_layer(text):
             _add(_sdec)
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
+
+    # F1749/F1750/F1751: DataView setUint32/getUint32, setBigUint64/
+    # getBigUint64, and setFloat64/getFloat64 statement-form round-
+    # trips. Each parses a strict whole-text grammar; every filed
+    # shape BREAKs on the open tree, so no earlier production decoded
+    # them and the pre-existing variant order (F441) is preserved.
+    # Disjoint from F742 (DataView IIFE form), F1740 (setUint8),
+    # F1746 (setUint16) by grammar (documented per hook). Additive,
+    # in F-number order.
+    for _stmtdec in (_js_f1749_stmt_decode, _js_f1750_stmt_decode,
+                     _js_f1751_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
 
 
     # F953/F954/F955/F956: top-level statement-sequence decode --
