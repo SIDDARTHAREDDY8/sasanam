@@ -195190,6 +195190,408 @@ def _js_f1748_stmt_decode(text):
 
 
 
+def _js_f1755_stmt_decode(text):
+    """Decode F1755 RegExp d-flag exec staging (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S=String.fromCharCode.apply(null,C);`
+    `var|let|const R=/(.)/gd;`  (flags exactly {d,g}, either order)
+    `var|let|const D=new Array(C.length);`
+    `var|let M;`
+    `while((M=R.exec(S))!==null){D[M.indices[0][0]]=M[1].charCodeAt(0);}`
+    `var|let|const T=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=T;`
+    then end-of-text.
+
+    Node-exact (v24.20.0) on the admitted domain: `/(.)/gd` matches
+    one code unit per exec call with lastIndex advancing; M.indices
+    (the `d` flag) gives the match start and M[1] the char, so the
+    loop copies the UTF-16 code units of S into D in order -- D is
+    the code array and the apply readout is dstr (ToUint16
+    discipline, same as _js_f1124f1130_parse_c_decl). The `d` flag is
+    required (M.indices is undefined without it -- node TypeError)
+    and the `g` flag is required (without it exec never advances --
+    the loop never terminates); any other flag set fails closed.
+    `.` never matches line terminators (\\n, \\r, U+2028, U+2029),
+    so a dstr containing one fails closed (node would leave a hole,
+    decoding NUL -- not the identity decode). `const M;` fails
+    closed (node SyntaxError: const needs an initializer).
+    Disjoint from F1033 (RegExp replace-callback -- here d-flag
+    exec staging with indices) by grammar -- the filed shape BREAKs
+    on the open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if ".indices[" not in text or "charCodeAt" not in text:
+        return None
+    if "fromCharCode" not in text or ".exec(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1755"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "Array"}
+        # var S=String.fromCharCode.apply(null,C);
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, _js_skip_ws(text, j),
+                                           cname, what)
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " str")
+        # var R=/(.)/gd;
+        _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(rname, bound, {"String"},
+                                        what)
+        bound.add(rname)
+        j = _js_expect(text, j, "/")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ".")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "/")
+        k = _js_skip_ws(text, j)
+        flags = []
+        while k < len(text) and text[k] in "abcdefghijklmnopqrstuvwxyz":
+            flags.append(text[k])
+            k += 1
+        if sorted(flags) != ["d", "g"]:
+            raise _JSExprFail(what + " bad regexp flags")
+        j = k
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " regexp")
+        # var D=new Array(C.length);
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Array")
+        if m is None:
+            raise _JSExprFail(what + " not Array")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " array base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail(what + " not length")
+        j = _js_expect(text, m, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " array")
+        # var|let M;
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw not in ("var", "let"):
+            raise _JSExprFail(what + " bad match decl")
+        mname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(mname, bound, {"String"},
+                                        what)
+        bound.add(mname)
+        j = _js_expect(text, k, ";")
+        _js_f96x_charge(state, what + " match decl")
+        # while((M=R.exec(S))!==null){
+        m = _js_match_kw(text, _js_skip_ws(text, j), "while")
+        if m is None:
+            raise _JSExprFail(what + " not while")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != mname:
+            raise _JSExprFail(what + " exec target mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != rname:
+            raise _JSExprFail(what + " exec base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "exec")
+        if m is None:
+            raise _JSExprFail(what + " not exec")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " exec arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "!")
+        j = _js_expect(text, j, "=")
+        j = _js_expect(text, j, "=")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "null")
+        if m is None:
+            raise _JSExprFail(what + " not null")
+        j = _js_expect(text, m, ")")
+        j = _js_expect(text, j, "{")
+        _js_f96x_charge(state, what + " while head")
+        # D[M.indices[0][0]]=M[1].charCodeAt(0);
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " store base mismatch")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != mname:
+            raise _JSExprFail(what + " indices base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "indices")
+        if m is None:
+            raise _JSExprFail(what + " not indices")
+        j = _js_expect(text, m, "[")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "0":
+            raise _JSExprFail(what + " indices group not 0")
+        j = _js_expect(text, j + 1, "]")
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "0":
+            raise _JSExprFail(what + " indices start not 0")
+        j = _js_expect(text, j + 1, "]")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != mname:
+            raise _JSExprFail(what + " group base mismatch")
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "1":
+            raise _JSExprFail(what + " group not 1")
+        j = _js_expect(text, j + 1, "]")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "charCodeAt")
+        if m is None:
+            raise _JSExprFail(what + " not charCodeAt")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "0":
+            raise _JSExprFail(what + " charCodeAt arg not 0")
+        j = _js_expect(text, j + 1, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        _js_f96x_charge(state, what + " while body")
+        # var T=String.fromCharCode.apply(null,D);
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1349f1352_parse_fcc_apply(text, _js_skip_ws(text, j),
+                                           dname, what)
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " apply")
+        # var RESULT=T;
+        _, resname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if resname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        # `.` never matches line terminators: node would leave a
+        # hole (decoding NUL), not the identity decode -- fail
+        # closed.
+        for ch in dstr:
+            if ord(ch) in (0x0A, 0x0D, 0x2028, 0x2029):
+                raise _JSExprFail(what + " line terminator")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1756_stmt_decode(text):
+    """Decode F1756 DataView u32 IIFE round-trip (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const S=(function(){`
+    `var|let|const B=new ArrayBuffer(C.length*4);`
+    `var|let|const V=new DataView(B);`
+    `for(var|let i=0;i<C.length;i++){V.setUint32(i*4,C[i]);}`
+    `var|let|const D=[];`
+    `for(var|let j=0;j<C.length;j++){D.push(V.getUint32(j*4));}`
+    `return String.fromCharCode.apply(null,D);`
+    `})();`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0) on the admitted domain: the buffer holds
+    C.length*4 bytes; setUint32(i*4, C[i]) stores ToUint32(C[i]) and
+    getUint32(j*4) reads it back, so D[j] is C[j] mod 2**32; the
+    apply readout applies ToUint16, and (x mod 2**32) mod 2**16 ==
+    x mod 2**16 for every integer x, so the readout is exactly
+    dstr (ToUint16 discipline, same as
+    _js_f1124f1130_parse_c_decl). Disjoint from F742 (u8 IIFE --
+    here the 32-bit width and *4 stride are required), F1749 (u32
+    statement form -- here the IIFE wrapper is required), and
+    F1740/F1746 (statement-form u8/u16 -- here the IIFE form is
+    required) by grammar -- the filed shape BREAKs on the open
+    tree. Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "setUint32" not in text or "getUint32" not in text:
+        return None
+    if "DataView" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1756"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "ArrayBuffer",
+                 "DataView"}
+        # var S=(function(){
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        _jh = _js_parse_f6xx_iife_head(text, _js_skip_ws(text, j))
+        if _jh is None:
+            raise _JSExprFail(what + " not iife")
+        j = _jh + 1
+        _js_f96x_charge(state, what + " iife head")
+        # var B=new ArrayBuffer(C.length*4);
+        _, bname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(bname, bound, {"String"},
+                                        what)
+        bound.add(bname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "ArrayBuffer")
+        if m is None:
+            raise _JSExprFail(what + " not ArrayBuffer")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " buffer base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail(what + " not length")
+        j = _js_expect(text, m, "*")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "4":
+            raise _JSExprFail(what + " buffer width not 4")
+        j = _js_expect(text, j + 1, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " buffer")
+        # var V=new DataView(B);
+        _, vname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(vname, bound, {"String"},
+                                        what)
+        bound.add(vname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "DataView")
+        if m is None:
+            raise _JSExprFail(what + " not DataView")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != bname:
+            raise _JSExprFail(what + " dataview base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " dataview")
+        # for(var|let i=0;i<C.length;i++){V.setUint32(i*4,C[i]);}
+        iv, j = _js_f1740_parse_for_header(text, j, cname, bound,
+                                           state, what)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != vname:
+            raise _JSExprFail(what + " set base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "setUint32")
+        if m is None:
+            raise _JSExprFail(what + " not setUint32")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != iv:
+            raise _JSExprFail(what + " set idx mismatch")
+        j = _js_expect(text, j, "*")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "4":
+            raise _JSExprFail(what + " set stride not 4")
+        j += 1
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " set arr mismatch")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != iv:
+            raise _JSExprFail(what + " set elem idx mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        _js_f96x_charge(state, what + " set loop")
+        # var D=[];
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_expect(text, j, "[")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " acc")
+        # for(var|let j=0;j<C.length;j++){D.push(V.getUint32(j*4));}
+        jv, j = _js_f1740_parse_for_header(text, j, cname, bound,
+                                           state, what)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " push base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "push")
+        if m is None:
+            raise _JSExprFail(what + " not push")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != vname:
+            raise _JSExprFail(what + " get base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "getUint32")
+        if m is None:
+            raise _JSExprFail(what + " not getUint32")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != jv:
+            raise _JSExprFail(what + " get idx mismatch")
+        j = _js_expect(text, j, "*")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "4":
+            raise _JSExprFail(what + " get stride not 4")
+        j += 1
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        _js_f96x_charge(state, what + " get loop")
+        # return String.fromCharCode.apply(null,D);
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " not return")
+        j = _js_f1349f1352_parse_fcc_apply(text, _js_skip_ws(text, m),
+                                           dname, what)
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " return")
+        # })(); -- consume the brace, then the helper parses `)()`
+        j = _js_expect(text, j, "}")
+        _, j = _js_parse_f6xx_iife_tail(text, j, 0, state, None)
+        j = _js_expect(text, j, ";")
+        # var RESULT=S;
+        _, resname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if resname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -197676,6 +198078,25 @@ def _decode_layer(text):
     # F-number order.
     for _stmtdec in (_js_f1747_stmt_decode,
                      _js_f1748_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F1755/F1756: RegExp d-flag exec staging and DataView u32 IIFE
+    # round-trip. Each parses a strict whole-text grammar; every
+    # filed shape BREAKs on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint from F742 (u8 IIFE -- here the 32-bit
+    # width and *4 stride are required), F1749 (u32 statement form
+    # -- here the IIFE wrapper is required), F1033 (RegExp
+    # replace-callback -- here d-flag exec staging with indices),
+    # and F1740/F1746 (statement-form u8/u16 -- here the IIFE form
+    # is required for F1756) by grammar (documented per hook).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f1755_stmt_decode,
+                     _js_f1756_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
