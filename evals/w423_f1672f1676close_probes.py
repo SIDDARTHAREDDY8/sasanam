@@ -274,20 +274,20 @@ def test_p5_honest_quiet():
 
 # ------------------------------------------------------- p6: other opens miss
 def test_p6_other_opens_miss():
-    """F1677-F1689 (other opens) still MISS."""
-    # F1677: structuredClone staging (sample)
-    others = [
+    """F1677-F1689: merged-tree pin update (wave-423 merge). F1677/F1680 now CLOSED (lane B) -> expect HIT; F1686-F1689 now CLOSED (lane D) -> expect HIT."""
+    # F1677: structuredClone staging (sample) -- CLOSED in merge, expect HIT
+    hits = [
         "var C={I};var D=structuredClone(C);var RESULT=String.fromCharCode.apply(null,D);",
-        # F1680: Uint8Array staging (sample)
+        # F1680: Uint8Array staging (sample) -- CLOSED in merge, expect HIT
         "var C={I};var D=new Uint8Array(C);var RESULT=String.fromCharCode.apply(null,D);",
     ]
     fails = []
-    for tmpl in others:
+    for tmpl in hits:
         payload = tmpl.replace("{I}", _codes(SECRET_S))
-        if not _misses(payload):
+        if _misses(payload):
             fails.append(tmpl[:40])
     ok = not fails
-    return ok, "%d/2 other-opens MISS" % (2 - len(fails)) + ("; fails: " + ",".join(fails) if fails else "")
+    return ok, "%d/2 merged-closed HIT" % (2 - len(fails)) + ("; fails: " + ",".join(fails) if fails else "")
 
 
 # ------------------------------------------------------- p7: perf

@@ -281,7 +281,7 @@ def test_p5_honest_quiet():
 
 @_t
 def test_p6_other_opens_miss():
-    """F1672-F1685 (other opens, attack-90) still MISS at the decoder seam."""
+    """F1672-F1685 now CLOSED in merge -> expect HIT at the decoder seam."""
     cs = _codes(SECRET_S)
     cases = [
         ("f1672",
@@ -293,8 +293,8 @@ def test_p6_other_opens_miss():
         ("f1684",
          "var C=%s;var S=C.map(function(c){return String.fromCharCode(c);}).join('');var D=[];for(var i=0;i<S.length;i++){D.push(S.at(i-S.length).charCodeAt(0));}var E=String.fromCharCode.apply(null,D);var RESULT=E;" % cs),
     ]
-    bad = [n for n, p in cases if not _misses(p)]
-    return (not bad, "%d/%d other-opens miss%s"
+    bad = [n for n, p in cases if _misses(p)]
+    return (not bad, "%d/%d merged-closed hit%s"
             % (len(cases) - len(bad), len(cases),
                "" if not bad else ": " + ",".join(bad)))
 
@@ -329,9 +329,8 @@ def test_p7_perf():
 # ---------------- g0: green check ----------------
 
 def _green_check():
-    """Regression check: F1672-F1685 red-first batteries still BREAK
-    (other lanes' findings, still OPEN); F1686-F1689 red-first
-    batteries now NO-BREAK (filed shapes HIT). Honors GOV_SKIP_GREEN.
+    """Regression check (wave-423 merge): F1672-F1689 all CLOSED ->
+    red-first batteries now NO-BREAK (filed shapes HIT). Honors GOV_SKIP_GREEN.
     """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green: skipped via GOV_SKIP_GREEN=1")
@@ -348,9 +347,9 @@ def _green_check():
                 capture_output=True, text=True, timeout=300, env=env,
                 cwd=os.path.join(REPO_ROOT, "evals"))
             out = (r.stdout or "") + (r.stderr or "")
-            held = "RESULT: BREAK" in out
-            notes.append("f%d-break=%s" % (n, held))
-            ok = ok and held
+            nobreak = "RESULT: NO-BREAK" in out
+            notes.append("f%d-nobreak=%s" % (n, nobreak))
+            ok = ok and nobreak
         for n in range(1686, 1690):
             r = subprocess.run(
                 [sys.executable, os.path.join(REPO_ROOT, "evals",

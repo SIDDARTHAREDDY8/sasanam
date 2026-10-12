@@ -111,14 +111,15 @@ _CARRY = [
 def main():
     fails = 0
     total = 0
+    # wave-423 merge: F1672-F1689 now CLOSED -> expect HIT
     for fname, tmpls in _NEW_PINS:
         for tmpl in tmpls:
             for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
                 total += 1
                 payload = tmpl.replace("{I}", _codes(secret))
                 v = _scan(payload)
-                ok = (v == "MISS")
-                print(("HELD " if ok else "FAIL ") + "%s %s -> %s" % (fname, label, v))
+                ok = (v == "HIT")
+                print(("HELD " if ok else "FAIL ") + "%s %s -> %s (expect HIT, closed wave-423)" % (fname, label, v))
                 if not ok:
                     fails += 1
     for fname, tmpl in _LONLY_PINS:
@@ -134,13 +135,14 @@ def main():
         print(("HELD " if ok_l else "FAIL ") + "%s long -> %s (expect MISS)" % (fname, v_l))
         if not ok_l:
             fails += 1
+    # wave-422: F1642-F1671 CLOSED -> expect HIT
     for fname, tmpl in _CARRY:
         for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
             total += 1
             payload = tmpl.replace("{I}", _codes(secret))
             v = _scan(payload)
-            ok = (v == "MISS")
-            print(("HELD " if ok else "FAIL ") + "%s %s -> %s" % (fname, label, v))
+            ok = (v == "HIT")
+            print(("HELD " if ok else "FAIL ") + "%s %s -> %s (expect HIT, closed wave-422)" % (fname, label, v))
             if not ok:
                 fails += 1
     # taxonomy pin

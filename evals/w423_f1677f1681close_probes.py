@@ -368,9 +368,9 @@ def test_p7_perf():
 # ---------------- g0: green check ----------------
 
 def _green_check():
-    """Regression check: F1672-F1676, F1682-F1689 (still OPEN) still
-    BREAK; F1677-F1681 red-first batteries now NO-BREAK (filed shapes
-    HIT). Honors GOV_SKIP_GREEN.
+    """Regression check (wave-423 merge): F1672-F1689 now CLOSED, so their
+    red-first batteries must be NO-BREAK (filed shapes HIT). Honors
+    GOV_SKIP_GREEN.
     """
     if os.environ.get("GOV_SKIP_GREEN") == "1":
         return (True, "green: skipped via GOV_SKIP_GREEN=1")
@@ -380,7 +380,7 @@ def _green_check():
     tmpd = tempfile.mkdtemp(prefix="g423lb-green-", dir="/var/tmp")
     env = dict(os.environ, GOV_SKIP_GREEN="1", TMPDIR=tmpd)
     try:
-        # 1. Still-open findings must still BREAK (no regression).
+        # 1. Merged-closed findings must now be NO-BREAK (no regression).
         for n in (1672, 1676, 1682, 1689):
             r = subprocess.run(
                 [sys.executable, os.path.join(REPO_ROOT, "evals",
@@ -388,9 +388,9 @@ def _green_check():
                 capture_output=True, text=True, timeout=300, env=env,
                 cwd=os.path.join(REPO_ROOT, "evals"))
             out = (r.stdout or "") + (r.stderr or "")
-            held = "RESULT: BREAK" in out
-            notes.append("f%d-break=%s" % (n, held))
-            ok = ok and held
+            nobreak = "RESULT: NO-BREAK" in out
+            notes.append("f%d-nobreak=%s" % (n, nobreak))
+            ok = ok and nobreak
         # 2. F1677-F1681 red-first batteries must now be NO-BREAK.
         for n in range(1677, 1682):
             r = subprocess.run(

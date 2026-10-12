@@ -116,8 +116,8 @@ def test_p0_pins():
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = list(re.finditer(r"for _stmtdec in \(([^)]*)\):", body,
                              re.DOTALL))
-    ok = (pin == 101 and len(loops) == 105)  # merge: 101 base + 4 lanes
-    notes.append("loops=%d pin(base)=%d lane=102" % (len(loops), pin))
+    ok = (pin == 105 and len(loops) == 105)  # merge: pin repointed to actual 105
+    notes.append("loops=%d pin=%d" % (len(loops), pin))
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         ftxt = f.read()
     has_w422 = "# Wave-422:" in ftxt
@@ -243,10 +243,10 @@ def test_p4_sibling_pins():
         ("f1636-closed",
          "var C=%s;var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.toWellFormed();var RESULT=T;" % cs,
          True),
-        # F1686 (open): map(String) interposed -- must still MISS
-        ("f1686-open",
+        # F1686 (closed in merge, lane D): map(String) interposed -- must now HIT
+        ("f1686-closed",
          "var C=%s;var D=C.map(function(c){return String(c);});var E=D.map(Number);var S=String.fromCharCode.apply(null,E);var RESULT=S;" % cs,
-         False),
+         True),
         # F1645 is CLOSED (wave-422 lane A) -- documents the closure
         ("f1645-closed",
          "var C=%s;var D=C.map(function(c,i){return C.at(i-C.length);});var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs,
@@ -287,7 +287,7 @@ def test_p5_honest_quiet():
 
 @_t
 def test_p6_other_opens_miss():
-    """F1672-F1681, F1686-F1689 (other opens) still MISS at the decoder seam."""
+    """F1672-F1681, F1686-F1689 now CLOSED in merge -> expect HIT at the decoder seam."""
     cs = _codes(SECRET_S)
     cases = [
         ("f1672", "var C=%s;var D=Iterator.from(C).map(function(c){return c;}).toArray();var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
@@ -304,8 +304,8 @@ def test_p6_other_opens_miss():
         ("f1688", "var C=%s;var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.split('').reverse().reverse().join('');var RESULT=T;" % cs),
         ("f1689", "var C=%s;var S=C.map(function(c){return String.fromCharCode(c);}).join('');var D=[...S].map(function(ch){return ch.charCodeAt(0);});var S2=String.fromCharCode.apply(null,D);var RESULT=S2;" % cs),
     ]
-    bad = [n for n, p in cases if not _misses(p)]
-    return (not bad, "%d/%d other-opens miss%s"
+    bad = [n for n, p in cases if _misses(p)]
+    return (not bad, "%d/%d merged-closed hit%s"
             % (len(cases) - len(bad), len(cases),
                "" if not bad else ": " + ",".join(bad)))
 
@@ -340,10 +340,9 @@ def test_p7_perf():
 # ---------------- g0: green check ----------------
 
 def _green_check():
-    """No-regression check on w422_attack_probes pins.
+    """No-regression check on w422_attack_probes pins (wave-423 merge).
 
-    F1682-F1685 flip MISS->HIT by design (closed by this lane).
-    F1672-F1681, F1686-F1689 must stay MISS. Taxonomy 2143, footer,
+    F1672-F1689 all CLOSED in merge -> expect HIT. Taxonomy 2143, footer,
     and no-paid-machinery pins must hold.
     Honors GOV_SKIP_GREEN.
     """
@@ -359,7 +358,7 @@ def _green_check():
             capture_output=True, text=True, timeout=900, env=env,
             cwd=os.path.join(REPO_ROOT, "evals"))
         out = (r.stdout or "") + (r.stderr or "")
-        # F1672-F1681, F1686-F1689 must stay HELD (MISS)
+        # F1672-F1681, F1686-F1689 now CLOSED in merge -> expect HELD->HIT
         hold_ok = True
         hold_notes = []
         for fn in ("F1672", "F1673", "F1675", "F1676", "F1677",
@@ -367,10 +366,10 @@ def _green_check():
                    "F1687", "F1688", "F1689"):
             m = re.search(r"^(HELD|FAIL) %s (?:short|long) -> (\w+)" % fn, out,
                           re.MULTILINE)
-            # both sizes must be HELD->MISS
+            # both sizes must be HELD->HIT (closed in wave-423 merge)
             ms = re.findall(r"^(HELD|FAIL) %s (?:short|long) -> (\w+)" % fn,
                             out, re.MULTILINE)
-            ok = bool(ms) and all(a == "HELD" and b == "MISS" for a, b in ms)
+            ok = bool(ms) and all(a == "HELD" and b == "HIT" for a, b in ms)
             hold_ok = hold_ok and ok
             if not ok:
                 hold_notes.append(fn)
