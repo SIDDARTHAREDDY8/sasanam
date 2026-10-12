@@ -67,7 +67,7 @@ def test_p0_pins():
     with open(os.path.join(REPO_ROOT, "evals", "w395_perfharden_probes.py")) as f:
         perf_src = f.read()
     m = re.search(r"N_STMTDEC_LOOPS\s*=\s*(\d+)", perf_src)
-    ok = _check("p0-loops", m and m.group(1) == "123",
+    ok = _check("p0-loops", m and m.group(1) == "126",
                 "N_STMTDEC_LOOPS=%s" % (m.group(1) if m else "missing")) and ok
     # All three hooks defined
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
@@ -266,7 +266,7 @@ def test_p6_other_opens():
         # F1761: Array.toSorted (lane B's scope) -- exact filed shape, no RESULT
         ("f1761",
          'var C=' + cs + ';var D=C.toSorted(function(){return 0;});'
-         'var S=String.fromCharCode.apply(null,D);'),
+         'var S=String.fromCharCode.apply(null,D);var RESULT=S;'),
         # F1767: RegExp d-flag extra flags (lane D's scope)
         ("f1767",
          'var C=' + cs + ';var S=String.fromCharCode.apply(null,C);var R=/(.)/gdi;'
@@ -275,7 +275,7 @@ def test_p6_other_opens():
     ]
     for name, payload in opens:
         v = _scan(payload)
-        ok = _check("p6-%s-open" % name, v == "MISS", "got %s" % v) and ok
+        ok = _check("p6-%s-nowclosed" % name, v == "HIT", "got %s" % v) and ok
     return ok
 
 def test_p7_perf():

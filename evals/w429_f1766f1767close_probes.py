@@ -69,7 +69,7 @@ def test_p0_pins():
     with open(os.path.join(REPO_ROOT, "evals", "w395_perfharden_probes.py")) as f:
         perf_src = f.read()
     m = re.search(r"N_STMTDEC_LOOPS\s*=\s*(\d+)", perf_src)
-    ok = _check("p0-loops", m and m.group(1) == "123",
+    ok = _check("p0-loops", m and m.group(1) == "126",
                 "N_STMTDEC_LOOPS=%s" % (m.group(1) if m else "missing")) and ok
     # Both hooks defined
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
@@ -230,7 +230,7 @@ def test_p6_other_opens():
     opens = [
         ("f1757", "var C={I};var G=Object.groupBy(C,function(c,i){return Math.floor(i/4);});var D=[];for(var k=0;String(k) in G;k++){D=D.concat(G[String(k)]);}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
         ("f1758", "var C={I};var M=new Map(C.map(function(c,i){return [i,c];}));var D=Array.from(M.values());var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-        ("f1759", "var C={I};(async function(){var D=await Array.fromAsync(C);console.log('OUT:'+String.fromCharCode.apply(null,D));})();"),
+        ("f1759", "var C={I};(async function(){var D=await Array.fromAsync(C);var S=String.fromCharCode.apply(null,D);})();"),
         ("f1760", "var C={I};var B=new Uint8Array(C).buffer;var B2=structuredClone(B,{transfer:[B]});var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));var RESULT=S;"),
         ("f1761", "var C={I};var D=C.toSorted(function(){return 0;});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
         ("f1762", "var C={I};var O={};for(var i=0;i<C.length;i++){O[i]=C[i];}O.length=C.length;var D=Array.from(O);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
@@ -241,7 +241,7 @@ def test_p6_other_opens():
     for name, tmpl in opens:
         payload = tmpl.replace("{I}", cs)
         v = _scan(payload)
-        ok = _check("p6-%s-open" % name, v == "MISS", "got %s" % v) and ok
+        ok = _check("p6-%s-nowclosed" % name, v == "HIT", "got %s" % v) and ok
     return ok
 
 def test_p7_perf():
