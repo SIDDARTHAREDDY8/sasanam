@@ -225085,6 +225085,849 @@ def _js_f2013_stmt_decode(text):
         return None
 
 
+# Wave-440 lane D hooks (F2048-F2057). Modeled on _js_f2000f2004_stmt_decode
+# (F2000-F2004): whole-text statement decoders for narrow array-predicate
+# guards (some/every/includes/indexOf/filter-length-zero/find/flat-length) and
+# negated string guards (!includes/!startsWith/!endsWith).
+def _js_f2048_stmt_decode(text):
+    """Decode F2048 some-with-charCode-comparison guard (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const D=T.split('').map(c=>c.charCodeAt(0));`
+    `var|let|const U;`
+    `if(D.some(c=>c===T.charCodeAt(0))){U=T;}else{U='';}`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): D is the char-code array of the non-empty
+    T; T.charCodeAt(0) is the first code, which is in D, so
+    D.some(c=>c===T.charCodeAt(0)) is true; the taken branch assigns
+    U=T=dstr. Disjoint from F2000-F2004 (findLast/findLastIndex/
+    filter/reduce/map+join -- here some with charCode comparison)
+    by method name -- the filed shape BREAKs on the open tree.
+    Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ".some(" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    if ".every(" in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2048"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        dname, j = _js_f2000f2004_parse_d_decl(text, j, cname, tname,
+                                               bound, state, what)
+        uname, j = _js_f2000f2004_parse_u_decl(text, j, bound, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " guard base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "some")
+        if m is None:
+            raise _JSExprFail(what + " not some")
+        j = _js_expect(text, m, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " not arrow")
+        j = _js_skip_ws(text, j + 2)
+        nm, j = _js_parse_ident(text, j)
+        if nm != pname:
+            raise _JSExprFail(what + " pred param mismatch")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("===", j):
+            raise _JSExprFail(what + " not ===")
+        j = _js_skip_ws(text, j + 3)
+        nm, j = _js_parse_ident(text, j)
+        if nm != tname:
+            raise _JSExprFail(what + " rhs base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "charCodeAt")
+        if m is None:
+            raise _JSExprFail(what + " not charCodeAt")
+        j = _js_expect(text, m, "(")
+        v, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if v != 0:
+            raise _JSExprFail(what + " charCodeAt idx not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " guard")
+        if not dstr:
+            raise _JSExprFail(what + " guard not provably true")
+        j = _js_f2000f2004_parse_branches(text, j, uname, tname,
+                                          state, what)
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2049_stmt_decode(text):
+    """Decode F2049 every-with-upper-bound guard (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const D=T.split('').map(c=>c.charCodeAt(0));`
+    `var|let|const U;`
+    `if(D.every(c=>c<2000)){U=T;}else{U='';}`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): D is the char-code array of T; every code
+    < 2000 (verified from dstr, else fail closed), so every() is
+    true; the taken branch assigns U=T=dstr. Disjoint from
+    F2000-F2004 by method name -- the filed shape BREAKs on the open
+    tree. Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ".every(" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2049"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        dname, j = _js_f2000f2004_parse_d_decl(text, j, cname, tname,
+                                               bound, state, what)
+        uname, j = _js_f2000f2004_parse_u_decl(text, j, bound, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " guard base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "every")
+        if m is None:
+            raise _JSExprFail(what + " not every")
+        j = _js_expect(text, m, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " not arrow")
+        j = _js_skip_ws(text, j + 2)
+        nm, j = _js_parse_ident(text, j)
+        if nm != pname:
+            raise _JSExprFail(what + " pred param mismatch")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("<", j) or text.startswith("<=", j):
+            raise _JSExprFail(what + " pred op not <")
+        j = _js_skip_ws(text, j + 1)
+        v, j = _js_parse_fcc_number(text, j)
+        if v != 2000:
+            raise _JSExprFail(what + " pred bound not 2000")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " guard")
+        if not dstr or not all(ord(c) < 2000 for c in dstr):
+            raise _JSExprFail(what + " guard not provably true")
+        j = _js_f2000f2004_parse_branches(text, j, uname, tname,
+                                          state, what)
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2050_stmt_decode(text):
+    """Decode F2050 includes-charCode guard (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const D=T.split('').map(c=>c.charCodeAt(0));`
+    `var|let|const U;`
+    `if(D.includes(T.charCodeAt(0))){U=T;}else{U='';}`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): D is the char-code array of the non-empty
+    T; T.charCodeAt(0) is in D, so includes() is true; the taken
+    branch assigns U=T=dstr. Disjoint from F2000-F2004 by method
+    name -- the filed shape BREAKs on the open tree. Anything else
+    fails closed: a miss, never a mis-decode. Returns the decoded
+    string, or None. Never evals.
+    """
+    if ".includes(" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2050"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        dname, j = _js_f2000f2004_parse_d_decl(text, j, cname, tname,
+                                               bound, state, what)
+        uname, j = _js_f2000f2004_parse_u_decl(text, j, bound, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " guard base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "includes")
+        if m is None:
+            raise _JSExprFail(what + " not includes")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " arg base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "charCodeAt")
+        if m is None:
+            raise _JSExprFail(what + " not charCodeAt")
+        j = _js_expect(text, m, "(")
+        v, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if v != 0:
+            raise _JSExprFail(what + " charCodeAt idx not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " guard")
+        if not dstr:
+            raise _JSExprFail(what + " guard not provably true")
+        j = _js_f2000f2004_parse_branches(text, j, uname, tname,
+                                          state, what)
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2051_stmt_decode(text):
+    """Decode F2051 indexOf-charCode-not-minus-1 guard (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const D=T.split('').map(c=>c.charCodeAt(0));`
+    `var|let|const U;`
+    `if(D.indexOf(T.charCodeAt(0))!==-1){U=T;}else{U='';}`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): D is the char-code array of the non-empty
+    T; T.charCodeAt(0) is in D, so indexOf() !== -1 is true; the
+    taken branch assigns U=T=dstr. Disjoint from F2000-F2004 by
+    method name -- the filed shape BREAKs on the open tree.
+    Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ".indexOf(" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2051"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        dname, j = _js_f2000f2004_parse_d_decl(text, j, cname, tname,
+                                               bound, state, what)
+        uname, j = _js_f2000f2004_parse_u_decl(text, j, bound, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " guard base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "indexOf")
+        if m is None:
+            raise _JSExprFail(what + " not indexOf")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " arg base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "charCodeAt")
+        if m is None:
+            raise _JSExprFail(what + " not charCodeAt")
+        j = _js_expect(text, m, "(")
+        v, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if v != 0:
+            raise _JSExprFail(what + " charCodeAt idx not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("!==", j):
+            raise _JSExprFail(what + " not !==")
+        j = _js_skip_ws(text, j + 3)
+        # Manual -1 parse (_js_parse_fcc_number has no signs).
+        if not text.startswith("-1", j):
+            raise _JSExprFail(what + " not -1")
+        j += 2
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " guard")
+        if not dstr:
+            raise _JSExprFail(what + " guard not provably true")
+        j = _js_f2000f2004_parse_branches(text, j, uname, tname,
+                                          state, what)
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2052_stmt_decode(text):
+    """Decode F2052 filter-negative-length-zero guard (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const D=T.split('').map(c=>c.charCodeAt(0));`
+    `var|let|const U;`
+    `if(D.filter(c=>c<0).length===0){U=T;}else{U='';}`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): D is the char-code array of T; char codes
+    are always >= 0, so filter(c=>c<0) is empty and .length===0 is
+    true; the taken branch assigns U=T=dstr. Disjoint from
+    F2000-F2004 by method chain -- the filed shape BREAKs on the
+    open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if ".filter(" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2052"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        dname, j = _js_f2000f2004_parse_d_decl(text, j, cname, tname,
+                                               bound, state, what)
+        uname, j = _js_f2000f2004_parse_u_decl(text, j, bound, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " guard base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "filter")
+        if m is None:
+            raise _JSExprFail(what + " not filter")
+        j = _js_expect(text, m, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " not arrow")
+        j = _js_skip_ws(text, j + 2)
+        nm, j = _js_parse_ident(text, j)
+        if nm != pname:
+            raise _JSExprFail(what + " pred param mismatch")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("<", j) or text.startswith("<=", j):
+            raise _JSExprFail(what + " pred op not <")
+        j = _js_skip_ws(text, j + 1)
+        v, j = _js_parse_fcc_number(text, j)
+        if v != 0:
+            raise _JSExprFail(what + " pred bound not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+        if m is None:
+            raise _JSExprFail(what + " not length")
+        j = m
+        j = _js_skip_ws(text, j)
+        if not text.startswith("===", j):
+            raise _JSExprFail(what + " not ===")
+        j = _js_skip_ws(text, j + 3)
+        v, j = _js_parse_fcc_number(text, j)
+        if v != 0:
+            raise _JSExprFail(what + " length not 0")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " guard")
+        if not all(ord(c) >= 0 for c in dstr):
+            raise _JSExprFail(what + " guard not provably true")
+        j = _js_f2000f2004_parse_branches(text, j, uname, tname,
+                                          state, what)
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2053_stmt_decode(text):
+    """Decode F2053 find-charCode-not-undefined guard (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const D=T.split('').map(c=>c.charCodeAt(0));`
+    `var|let|const U;`
+    `if(D.find(c=>c===T.charCodeAt(0))!==undefined){U=T;}else{U='';}`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): D is the char-code array of the non-empty
+    T; T.charCodeAt(0) is in D, so find() returns it (not undefined);
+    the taken branch assigns U=T=dstr. Disjoint from F2000-F2004 by
+    method name -- the filed shape BREAKs on the open tree.
+    Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ".find(" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    if ".findLast(" in text or ".findLastIndex(" in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2053"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        dname, j = _js_f2000f2004_parse_d_decl(text, j, cname, tname,
+                                               bound, state, what)
+        uname, j = _js_f2000f2004_parse_u_decl(text, j, bound, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " guard base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "find")
+        if m is None:
+            raise _JSExprFail(what + " not find")
+        j = _js_expect(text, m, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " not arrow")
+        j = _js_skip_ws(text, j + 2)
+        nm, j = _js_parse_ident(text, j)
+        if nm != pname:
+            raise _JSExprFail(what + " pred param mismatch")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("===", j):
+            raise _JSExprFail(what + " not ===")
+        j = _js_skip_ws(text, j + 3)
+        nm, j = _js_parse_ident(text, j)
+        if nm != tname:
+            raise _JSExprFail(what + " rhs base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "charCodeAt")
+        if m is None:
+            raise _JSExprFail(what + " not charCodeAt")
+        j = _js_expect(text, m, "(")
+        v, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if v != 0:
+            raise _JSExprFail(what + " charCodeAt idx not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("!==", j):
+            raise _JSExprFail(what + " not !==")
+        j = _js_skip_ws(text, j + 3)
+        m = _js_match_kw(text, j, "undefined")
+        if m is None:
+            raise _JSExprFail(what + " not undefined")
+        j = m
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " guard")
+        if not dstr:
+            raise _JSExprFail(what + " guard not provably true")
+        j = _js_f2000f2004_parse_branches(text, j, uname, tname,
+                                          state, what)
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2054_stmt_decode(text):
+    """Decode F2054 flat-length-equals guard (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const D=T.split('').map(c=>c.charCodeAt(0));`
+    `var|let|const U;`
+    `if(D.flat().length===T.length){U=T;}else{U='';}`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): D is the char-code array of T with
+    len(D) == len(T); D.flat() on a 1D array is D itself, so
+    .length===T.length is true; the taken branch assigns U=T=dstr.
+    Disjoint from F2000-F2004 by method chain -- the filed shape
+    BREAKs on the open tree. Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None. Never
+    evals.
+    """
+    if ".flat()" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2054"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        dname, j = _js_f2000f2004_parse_d_decl(text, j, cname, tname,
+                                               bound, state, what)
+        uname, j = _js_f2000f2004_parse_u_decl(text, j, bound, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " guard base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "flat")
+        if m is None:
+            raise _JSExprFail(what + " not flat")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+        if m is None:
+            raise _JSExprFail(what + " not length")
+        j = m
+        j = _js_skip_ws(text, j)
+        if not text.startswith("===", j):
+            raise _JSExprFail(what + " not ===")
+        j = _js_skip_ws(text, j + 3)
+        nm, j = _js_parse_ident(text, j)
+        if nm != tname:
+            raise _JSExprFail(what + " rhs base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "length")
+        if m is None:
+            raise _JSExprFail(what + " not length")
+        j = m
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " guard")
+        j = _js_f2000f2004_parse_branches(text, j, uname, tname,
+                                          state, what)
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2055_stmt_decode(text):
+    """Decode F2055 negated-includes guard (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const D=T.split('').map(c=>c.charCodeAt(0));`
+    `var|let|const U;`
+    `if(!T.includes('zzz')){U=T;}else{U='';}`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): the guard passes iff 'zzz' does not occur
+    in T -- the hook requires 'zzz' not in dstr, else fails closed
+    (the else branch would assign U=''). The guard passes and the
+    taken branch assigns U=T=dstr. Disjoint from F2005 (positive
+    includes -- here negated) by the `!` -- the filed shape BREAKs
+    on the open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if ".includes(" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2055"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        dname, j = _js_f2000f2004_parse_d_decl(text, j, cname, tname,
+                                               bound, state, what)
+        uname, j = _js_f2000f2004_parse_u_decl(text, j, bound, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "!":
+            raise _JSExprFail(what + " not negated")
+        j = _js_skip_ws(text, j + 1)
+        nm, j = _js_parse_ident(text, j)
+        if nm != tname:
+            raise _JSExprFail(what + " guard base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "includes")
+        if m is None:
+            raise _JSExprFail(what + " not includes")
+        j = _js_expect(text, m, "(")
+        lit, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " guard")
+        if lit in dstr:
+            raise _JSExprFail(what + " guard not provably true")
+        j = _js_f2000f2004_parse_branches(text, j, uname, tname,
+                                          state, what)
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2056_stmt_decode(text):
+    """Decode F2056 negated-startsWith guard (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const D=T.split('').map(c=>c.charCodeAt(0));`
+    `var|let|const U;`
+    `if(!T.startsWith('zzz')){U=T;}else{U='';}`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): the guard passes iff T does not start
+    with 'zzz' -- the hook requires not dstr.startswith(lit), else
+    fails closed. The guard passes and the taken branch assigns
+    U=T=dstr. Disjoint from siblings by method name -- the filed
+    shape BREAKs on the open tree. Anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".startsWith(" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2056"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        dname, j = _js_f2000f2004_parse_d_decl(text, j, cname, tname,
+                                               bound, state, what)
+        uname, j = _js_f2000f2004_parse_u_decl(text, j, bound, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "!":
+            raise _JSExprFail(what + " not negated")
+        j = _js_skip_ws(text, j + 1)
+        nm, j = _js_parse_ident(text, j)
+        if nm != tname:
+            raise _JSExprFail(what + " guard base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "startsWith")
+        if m is None:
+            raise _JSExprFail(what + " not startsWith")
+        j = _js_expect(text, m, "(")
+        lit, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " guard")
+        if dstr.startswith(lit):
+            raise _JSExprFail(what + " guard not provably true")
+        j = _js_f2000f2004_parse_branches(text, j, uname, tname,
+                                          state, what)
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2057_stmt_decode(text):
+    """Decode F2057 negated-endsWith guard (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const D=T.split('').map(c=>c.charCodeAt(0));`
+    `var|let|const U;`
+    `if(!T.endsWith('zzz')){U=T;}else{U='';}`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): the guard passes iff T does not end with
+    'zzz' -- the hook requires not dstr.endswith(lit), else fails
+    closed. The guard passes and the taken branch assigns U=T=dstr.
+    Disjoint from siblings by method name -- the filed shape BREAKs
+    on the open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if ".endsWith(" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2057"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        dname, j = _js_f2000f2004_parse_d_decl(text, j, cname, tname,
+                                               bound, state, what)
+        uname, j = _js_f2000f2004_parse_u_decl(text, j, bound, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "!":
+            raise _JSExprFail(what + " not negated")
+        j = _js_skip_ws(text, j + 1)
+        nm, j = _js_parse_ident(text, j)
+        if nm != tname:
+            raise _JSExprFail(what + " guard base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "endsWith")
+        if m is None:
+            raise _JSExprFail(what + " not endsWith")
+        j = _js_expect(text, m, "(")
+        lit, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        _js_f96x_charge(state, what + " guard")
+        if dstr.endswith(lit):
+            raise _JSExprFail(what + " guard not provably true")
+        j = _js_f2000f2004_parse_branches(text, j, uname, tname,
+                                          state, what)
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -228628,6 +229471,35 @@ def _decode_layer(text):
     # F1972 ([...T].toString().split(',').join('')) by grammar.
     # Additive, in F-number order.
     for _stmtdec in (_js_f2013_stmt_decode,):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F2048/F2049/F2050/F2051/F2052/F2053/F2054/F2055/F2056/F2057
+    # (wave-440 lane D): array-predicate guard variants (some with
+    # charCode comparison, every with upper bound, includes charCode,
+    # indexOf charCode not -1, filter negative length zero, find
+    # charCode defined, flat length equals) and negated string-guard
+    # variants (negated includes, negated startsWith, negated
+    # endsWith). Each parses a strict whole-text grammar; every filed
+    # shape BREAKs on the open tree, so no earlier production decoded
+    # them and the pre-existing variant order (F441) is preserved.
+    # Disjoint from F2000-F2004 (findLast/findLastIndex/filter/
+    # reduce/map+join -- here some/every/includes/indexOf/filter/
+    # find/flat) and F2005-F2012 (positive string guards -- here
+    # negated) by method name and grammar (documented per hook).
+    for _stmtdec in (_js_f2048_stmt_decode,
+                     _js_f2049_stmt_decode,
+                     _js_f2050_stmt_decode,
+                     _js_f2051_stmt_decode,
+                     _js_f2052_stmt_decode,
+                     _js_f2053_stmt_decode,
+                     _js_f2054_stmt_decode,
+                     _js_f2055_stmt_decode,
+                     _js_f2056_stmt_decode,
+                     _js_f2057_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
