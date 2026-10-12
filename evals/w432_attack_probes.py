@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Wave-432 attack round 100 coverage battery: new F1827-F1847 pins (MISS) +
-F1805-F1821, F1823-F1826 carry-forward pins (still OPEN, MISS) + taxonomy/footer/no-paid-machinery.
+F1805-F1821, F1823-F1826 carry-forward pins (CLOSED wave-432, HIT) + taxonomy/footer/no-paid-machinery.
 
 $0-spend-by-construction. Prints HELD counts.
 NOTE: p1/p2 scanner pins were verified empirically by the 21 red-first
@@ -117,17 +117,17 @@ def main():
     print("p1 new pins (MISS): %d/%d" % (h1, t1))
     held += h1
     total += t1
-    # p2: carry-forward pins must still MISS
+    # p2: carry-forward pins must HIT (CLOSED wave-432)
     h2 = t2 = 0
     for name, tmpl in _CARRY:
         for secret in (SECRET_S, SECRET_L):
             t2 += 1
             payload = tmpl.replace("{I}", _codes(secret))
-            if _scan(payload) == "MISS":
+            if _scan(payload) == "HIT":
                 h2 += 1
             else:
                 print("FAIL carry pin %s" % name)
-    print("p2 carry pins (MISS): %d/%d" % (h2, t2))
+    print("p2 carry pins (HIT): %d/%d" % (h2, t2))
     held += h2
     total += t2
     # p3: taxonomy pin 2143 in gov/guac_graph.py

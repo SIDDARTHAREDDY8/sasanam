@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wave-431 attack round 99 coverage battery: new F1805-F1822 + F1823-F1826 pins (MISS) +
+"""Wave-431 attack round 99 coverage battery: F1805-F1821/F1823-F1826 pins (HIT, closed wave-432) +
 F1782-F1804 carry-forward pins (now CLOSED wave-431, HIT) + taxonomy/footer/no-paid-machinery.
 
 $0-spend-by-construction. Prints HELD counts.
@@ -107,13 +107,13 @@ _CARRY = [
 def main():
     held = 0
     total = 0
-    # p1: new pins must MISS (both sizes), except f1822 (covered by F1793 hook, HIT)
+    # p1: wave-432 closed pins must HIT (F1805-F1821, F1823-F1826 closed; f1822 covered)
     h1 = t1 = 0
     for name, tmpl in _NEW:
         for secret in (SECRET_S, SECRET_L):
             t1 += 1
             payload = tmpl.replace("{I}", _codes(secret))
-            expected = "HIT" if name == "f1822" else "MISS"
+            expected = "HIT"  # all closed wave-432 (f1822 covered by F1793)
             v = _scan(payload)
             if v == expected:
                 h1 += 1
@@ -171,13 +171,13 @@ def main():
     print("p5 no-paid: %d/%d" % (h5, t5))
     held += h5
     total += t5
-    # p6: stamps present for F1805-F1822 (attack) and F1823-F1826 (renumbered)
+    # p6: CLOSED stamps present for F1805-F1821, F1823-F1826 (closed wave-432); F1822 covered
     t6 = 0
     h6 = 0
-    for n in list(range(1805, 1823)) + list(range(1823, 1827)):
+    for n in list(range(1805, 1822)) + list(range(1823, 1827)):
         t6 += 1
         idx = txt.find("(F%d filed" % n)
-        if idx >= 0 and "LOW, OPEN" in txt[idx:idx+2000]:
+        if idx >= 0 and "[CLOSED 2026-10-12 wave-432 lane" in txt[idx:idx+8000]:
             h6 += 1
         else:
             print("FAIL stamp F%d" % n)
