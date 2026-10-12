@@ -215697,8 +215697,8 @@ def _js_f1920_stmt_decode(text):
                                         what)
         bound.add(uname)
         pad, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
-        if len(pad) != 1:
-            raise _JSExprFail(what + " pad not one char")
+        if len(pad) != 1 or ord(pad) > 0xFFFF:
+            raise _JSExprFail(what + " pad not one UTF-16 unit")
         j = _js_expect(text, j, ".")
         m = _js_match_kw(text, j, "concat")
         if m is None:
@@ -221357,6 +221357,292 @@ def _js_f1972_stmt_decode(text):
         if len(dstr) > _MAX_DECODE_BYTES:
             raise _JSExprFail(what + " result too long")
         return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2014_stmt_decode(text):
+    """Decode F2014 Array.of spread join rebuild (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Array.of(...T).join('');`
+    then optional `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T is the char-code-derived string (dstr,
+    ToUint16 discipline -- BMP-only, so one char per unit);
+    Array.of(...T) spreads T into one array element per char, and
+    .join('') rebuilds T exactly, so U=T=dstr -- an identity rebuild.
+    Disjoint from F1971 (Array.from with map fn -- here Array.of
+    spread) and F1972 ([...T].toString().split -- here Array.of)
+    by grammar -- the filed shape BREAKs on the open tree. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "Array.of(" not in text or "..." not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    if ".join(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2014"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"}, what)
+        bound = {cname, "RESULT", "String", "Array"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " map base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+        if m is None:
+            raise _JSExprFail(what + " not map")
+        j = _js_f1090_parse_map_cb(text, _js_expect(text, m, "("),
+                                   what, False)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "":
+            raise _JSExprFail(what + " join sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " mapjoin")
+        # var U=Array.of(...T).join('');
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String",
+                                                       "Array"},
+                                        what)
+        bound.add(uname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "Array":
+            raise _JSExprFail(what + " not Array.of")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "of")
+        if m is None:
+            raise _JSExprFail(what + " not of")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail(what + " not spread")
+        j = _js_skip_ws(text, j + 3)
+        nm, j = _js_parse_ident(text, j)
+        if nm != tname:
+            raise _JSExprFail(what + " spread base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "":
+            raise _JSExprFail(what + " join sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " arrayofjoin")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2015_stmt_decode(text):
+    """Decode F2015 spread slice join rebuild (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=[...T].slice().join('');`
+    then optional `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): [...T] spreads dstr (BMP-only: one char
+    per unit) into an array; .slice() with no arguments is the
+    identity (shallow copy); .join('') rebuilds dstr exactly, so
+    U=T=dstr -- an identity rebuild. Disjoint from F1972
+    ([...T].toString().split(',') -- here .slice() with no args)
+    by grammar -- the filed shape BREAKs on the open tree. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "..." not in text or ".slice()" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    if ".join(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2015"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"}, what)
+        bound = {cname, "RESULT", "String", "Array"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " map base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+        if m is None:
+            raise _JSExprFail(what + " not map")
+        j = _js_f1090_parse_map_cb(text, _js_expect(text, m, "("),
+                                   what, False)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "":
+            raise _JSExprFail(what + " join sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " mapjoin")
+        # var U=[...T].slice().join('');
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String",
+                                                       "Array"},
+                                        what)
+        bound.add(uname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail(what + " not spread")
+        j = _js_skip_ws(text, j + 3)
+        nm, j = _js_parse_ident(text, j)
+        if nm != tname:
+            raise _JSExprFail(what + " spread base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "":
+            raise _JSExprFail(what + " join sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " spreadslicejoin")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2016_stmt_decode(text):
+    """Decode F2016 statement-interaction composition (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=String.fromCharCode.apply(null,C);`
+    `var|let|const RESULT=U;`
+    (or the T/U statements in the opposite order, with RESULT bound
+    to the second), then end-of-text.
+
+    Node-exact (v24.20.0): both T and U assemble the char-code-derived
+    string dstr from C (ToUint16 discipline -- BMP-only, so one char
+    per unit); RESULT is one of them, so RESULT == dstr. The two
+    assembly shapes each HIT alone via their own hooks, but the
+    4-statement composition matches no whole-text hook (statement-
+    sequence fragility) -- this hook flags the composition directly.
+    Disjoint from the single-shape hooks by grammar (two assembly
+    statements required) -- the filed shapes BREAK on the open tree.
+    Anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
+    """
+    if "String.fromCharCode.apply(null," not in text:
+        return None
+    if ".map(function(c){return String.fromCharCode(c);}).join('')" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2016"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        # The remainder must be exactly two assembly statements plus
+        # RESULT, in either order. We match the literal RHS patterns.
+        # (RESULT is mandatory here, unlike _js_f181x_parse_opt_result's
+        # optional-RESULT -- hence the hand-rolled tail below.)
+        _map_pat = cname + ".map(function(c){return String.fromCharCode(c);}).join('');"
+        _apply_pat = "String.fromCharCode.apply(null," + cname + ");"
+        # Try to parse: var X=<rhs>; var Y=<rhs>; var RESULT=Y;
+        # where the two RHS are the map and apply patterns in either order.
+        for _order in (("map", "apply"), ("apply", "map")):
+            try:
+                _jj = _js_skip_ws(text, j)
+                _bound = {cname, "RESULT", "String", "Array"}
+                _xnames = []
+                _ok = True
+                for _kind in _order:
+                    _, _xn, _jj = _js_f96x_decl(text, _jj)
+                    if _xn in _bound:
+                        _ok = False
+                        break
+                    _bound.add(_xn)
+                    _jj = _js_skip_ws(text, _jj)
+                    if _kind == "map":
+                        if not text.startswith(_map_pat, _jj):
+                            _ok = False
+                            break
+                        _jj += len(_map_pat)
+                    else:
+                        if not text.startswith(_apply_pat, _jj):
+                            _ok = False
+                            break
+                        _jj += len(_apply_pat)
+                    _xnames.append(_xn)
+                if not _ok:
+                    continue
+                # var RESULT=<second>;
+                _jj = _js_skip_ws(text, _jj)
+                _, _rn, _jj = _js_f96x_decl(text, _jj)
+                if _rn != "RESULT":
+                    continue
+                _jj = _js_skip_ws(text, _jj)
+                _nm, _jj = _js_parse_ident(text, _jj)
+                if _nm != _xnames[1]:
+                    continue
+                _jj = _js_skip_ws(text, _jj)
+                if _jj >= len(text) or text[_jj] != ";":
+                    continue
+                _jj += 1
+                if text[_jj:].strip() != "":
+                    continue
+                # Node-exact: both shapes assemble dstr.
+                _js_f96x_charge(state, what + " composition")
+                if len(dstr) > _MAX_DECODE_BYTES:
+                    raise _JSExprFail(what + " result too long")
+                return dstr
+            except _JSExprFail:
+                continue
+        return None
     except _JSExprFail:
         return None
 
@@ -228342,6 +228628,24 @@ def _decode_layer(text):
     # F1972 ([...T].toString().split(',').join('')) by grammar.
     # Additive, in F-number order.
     for _stmtdec in (_js_f2013_stmt_decode,):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+    # F2014-F2016 (wave-439 lane E): Array.of spread join rebuild,
+    # spread slice join rebuild, and statement-interaction
+    # composition decoders. Each parses a strict whole-text grammar;
+    # every filed shape BREAKs on the open tree, so no earlier
+    # production decoded them and the pre-existing variant order
+    # (F441) is preserved. Disjoint from F1971 (Array.from with map
+    # fn -- here Array.of), F1972 ([...T].toString().split -- here
+    # .slice()), and the single-shape hooks (F2016 requires two
+    # assembly statements) by grammar (documented per hook).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f2014_stmt_decode,
+                     _js_f2015_stmt_decode,
+                     _js_f2016_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
