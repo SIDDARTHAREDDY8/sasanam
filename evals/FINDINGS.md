@@ -13811,3 +13811,5 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 # Wave-434 lane B: F1852-F1855 CLOSED (4); F1848-F1851, F1856-F1864 OPEN (13); next free F1865
 # Wave-434 lane C: F1856-F1860 CLOSED (5); F1848-F1855, F1861-F1864 OPEN (12); next free F1865
 # Wave-434 lane D: F1861-F1864 CLOSED (4); F1848-F1860 OPEN (13); next free F1865
+
+# Wave-434: F1376-F1821 CLOSED (446); F1823-F1826 CLOSED (4); F1827-F1864 CLOSED (38); F1822 CLOSED (1, covered by F1793 hook); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1865-F1890 OPEN (26, attack 102); next free F1891
