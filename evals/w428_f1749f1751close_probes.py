@@ -58,11 +58,11 @@ FILED = {
 def test_p0_pins():
     """Pin checks: footer, taxonomy, counts."""
     ok = True
-    # N_STMTDEC_LOOPS = 120 (119 base + 1 new dispatch loop, wave-428 lane A)
+    # N_STMTDEC_LOOPS = 122 (119 base + 3 new dispatch loops, wave-428 merge)
     with open(os.path.join(REPO_ROOT, "evals", "w395_perfharden_probes.py")) as f:
         perf_src = f.read()
     m = re.search(r"N_STMTDEC_LOOPS\s*=\s*(\d+)", perf_src)
-    ok = _check("p0-loops", m and m.group(1) == "120",
+    ok = _check("p0-loops", m and m.group(1) == "122",
                 "N_STMTDEC_LOOPS=%s" % (m.group(1) if m else "missing")) and ok
     # All three hooks defined
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
@@ -205,11 +205,7 @@ def test_p6_other_opens():
     ok = True
     cs = _codes(SECRET_S)
     opens = [
-        ("f1752", "var C={I};var B=new Uint8Array(C).buffer;var B2=B.transfer();var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));var RESULT=S;"),
-        ("f1753", "var C={I};var B=new Uint8Array(C).buffer;var B2=B.transferToFixedLength();var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));var RESULT=S;"),
-        ("f1754", "var C={I};var B=new ArrayBuffer(C.length,{maxByteLength:C.length*2});var U=new Uint8Array(B);U.set(C);B.resize(C.length);var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B)));var RESULT=S;"),
-        ("f1755", "var C={I};var S=String.fromCharCode.apply(null,C);var R=/(.)/gd;var D=new Array(C.length);var M;while((M=R.exec(S))!==null){D[M.indices[0][0]]=M[1].charCodeAt(0);}var T=String.fromCharCode.apply(null,D);var RESULT=T;"),
-        ("f1756", "var C={I};var S=(function(){var B=new ArrayBuffer(C.length*4);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setUint32(i*4,C[i]);}var D=[];for(var j=0;j<C.length;j++){D.push(V.getUint32(j*4));}return String.fromCharCode.apply(null,D);})();var RESULT=S;"),
+        # F1752-F1756 now CLOSED on the merged tree (lanes B+C) -- removed from other-opens
     ]
     for name, tmpl in opens:
         payload = tmpl.replace("{I}", cs)

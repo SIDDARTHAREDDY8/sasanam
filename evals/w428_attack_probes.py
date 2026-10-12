@@ -60,8 +60,8 @@ _NEW = [
     ("f1766", "var C={I};var F=new Function('C','return String.fromCharCode.apply(null,C);');var S=F(C);var RESULT=S;"),
 ]
 
-# Carry-forward OPEN pins from round 95 (F1749-F1756) — must still MISS
-_CARRY_MISS = [
+# Carry-forward CLOSED pins from wave-428 lanes (F1749-F1756) — must now HIT
+_CARRY_HIT = [
     ("F1749", "var C={I};var B=new ArrayBuffer(C.length*4);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setUint32(i*4,C[i]);}var D=[];for(var j=0;j<C.length;j++){D.push(V.getUint32(j*4));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1750", "var C={I};var B=new ArrayBuffer(C.length*8);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setBigUint64(i*8,BigInt(C[i]));}var D=[];for(var j=0;j<C.length;j++){D.push(Number(V.getBigUint64(j*8)));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1751", "var C={I};var B=new ArrayBuffer(C.length*8);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setFloat64(i*8,C[i]);}var D=[];for(var j=0;j<C.length;j++){D.push(V.getFloat64(j*8));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
@@ -91,11 +91,11 @@ def main():
     total += t1
     # p2: carry-forward OPEN pins must still MISS (both sizes)
     h2 = t2 = 0
-    for name, tmpl in _CARRY_MISS:
+    for name, tmpl in _CARRY_HIT:
         for secret in (SECRET_S, SECRET_L):
             t2 += 1
             v = _scan(tmpl.replace("{I}", _codes(secret)))
-            if v == "MISS":
+            if v == "HIT":
                 h2 += 1
             else:
                 print("FAIL carry %s: got %s" % (name, v))

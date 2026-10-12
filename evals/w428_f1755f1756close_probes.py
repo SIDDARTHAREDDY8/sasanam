@@ -69,7 +69,7 @@ def test_p0_pins():
     with open(os.path.join(REPO_ROOT, "evals", "w395_perfharden_probes.py")) as f:
         perf_src = f.read()
     m = re.search(r"N_STMTDEC_LOOPS\s*=\s*(\d+)", perf_src)
-    ok = _check("p0-loops", m and m.group(1) == "120",
+    ok = _check("p0-loops", m and m.group(1) == "122",
                 "N_STMTDEC_LOOPS=%s" % (m.group(1) if m else "missing")) and ok
     # Both hooks defined
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
@@ -238,13 +238,7 @@ def test_p6_other_opens():
     ok = True
     cs = _codes(SECRET_S)
     opens = [
-        ("f1749", "var C={I};var B=new ArrayBuffer(C.length*4);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setUint32(i*4,C[i]);}var D=[];for(var j=0;j<C.length;j++){D.push(V.getUint32(j*4));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-        ("f1750", "var C={I};var B=new ArrayBuffer(C.length*8);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setBigUint64(i*8,BigInt(C[i]));}var D=[];for(var j=0;j<C.length;j++){D.push(Number(V.getBigUint64(j*8)));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-        ("f1751", "var C={I};var B=new ArrayBuffer(C.length*8);var V=new DataView(B);for(var i=0;i<C.length;i++){V.setFloat64(i*8,C[i]);}var D=[];for(var j=0;j<C.length;j++){D.push(V.getFloat64(j*8));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-        ("f1752", "var C={I};var B=new Uint8Array(C).buffer;var B2=B.transfer();var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));var RESULT=S;"),
-        ("f1753", "var C={I};var B=new Uint8Array(C).buffer;var B2=B.transferToFixedLength();var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));var RESULT=S;"),
-        ("f1754", "var C={I};var B=new ArrayBuffer(C.length,{maxByteLength:C.length*2});var U=new Uint8Array(B);U.set(C);B.resize(C.length);var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B)));var RESULT=S;"),
-        ("f1767", "var C={I};var S=String.fromCharCode.apply(null,C);var R=/(.)/gdi;var D=new Array(C.length);var M;while((M=R.exec(S))!==null){D[M.indices[0][0]]=M[1].charCodeAt(0);}var T=String.fromCharCode.apply(null,D);var RESULT=T;"),
+        # All other wave-428 findings now CLOSED on the merged tree
     ]
     for name, tmpl in opens:
         payload = tmpl.replace("{I}", cs)
