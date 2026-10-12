@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Wave-427 attack round 95 coverage battery: new F1749-F1756 pins (MISS) +
-F1735-F1748 carry-forward pins (MISS) + taxonomy/footer/no-paid-machinery.
+F1735-F1748 carry-forward pins (now CLOSED/HIT) + taxonomy/footer/no-paid-machinery.
 
 $0-spend-by-construction. Prints HELD counts.
 """
@@ -93,13 +93,13 @@ def main():
     print("p1 new pins: %d/%d HELD" % (h1, t1))
     held += h1
     total += t1
-    # p2: carry-forward MISS pins (both sizes)
+    # p2: carry-forward pins (both sizes) - now CLOSED by wave-427 lanes, expect HIT
     h2 = t2 = 0
     for name, tmpl in _CARRY_MISS:
         for secret in (SECRET_S, SECRET_L):
             t2 += 1
             v = _scan(tmpl.replace("{I}", _codes(secret)))
-            if v == "MISS":
+            if v == "HIT":
                 h2 += 1
             else:
                 print("FAIL carry %s: got %s" % (name, v))
