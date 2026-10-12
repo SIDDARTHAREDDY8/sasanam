@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wave-433 attack round 101 coverage battery: new F1848-F1864 pins (MISS) +
+"""Wave-433 attack round 101 coverage battery (updated wave-434 merge): F1848-F1864 pins (CLOSED wave-434, HIT) +
 F1827-F1847 carry-forward pins (CLOSED wave-433, HIT) + taxonomy/footer/no-paid-machinery.
 
 $0-spend-by-construction. Prints HELD counts.
@@ -100,12 +100,12 @@ def main():
     held = 0
     total = 0
 
-    # New pins must MISS (both sizes)
+    # New pins must now HIT (CLOSED wave-434, both sizes)
     for name, tmpl in _NEW:
         for secret in (SECRET_S, SECRET_L):
             total += 1
             payload = tmpl.replace("{I}", _codes(secret))
-            if _scan(payload) == "MISS":
+            if _scan(payload) == "HIT":
                 held += 1
             else:
                 print("FAIL new %s[%d]" % (name, len(secret)))
@@ -128,11 +128,11 @@ def main():
         else:
             print("FAIL taxonomy pin")
 
-    # Footer check
+    # Footer check (wave-434 merge)
     total += 1
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         txt = f.read()
-    if "# Wave-433 attack round 101: F1848-F1864 filed OPEN" in txt:
+    if "# Wave-434:" in txt and "F1865-F1881, F1883-F1890 OPEN (25, attack 102)" in txt:
         held += 1
     else:
         print("FAIL footer")
@@ -153,12 +153,12 @@ def main():
     else:
         print("FAIL paid machinery: %s" % bad)
 
-    # Footer-vs-stamp: F1848-F1864 all OPEN with first-filing
+    # Footer-vs-stamp: F1848-F1864 all CLOSED (wave-434)
     total += 1
     ok = True
     for n in range(1848, 1865):
         idx = txt.find("(F%d filed" % n)
-        if idx < 0 or "LOW, OPEN" not in txt[idx:idx+2000]:
+        if idx < 0 or ("[CLOSED" not in txt[idx:idx+8000] and "LOW, CLOSED" not in txt[idx:idx+8000]):
             print("FAIL stamp F%d" % n)
             ok = False
     if ok:

@@ -68,7 +68,7 @@ _NEW = [
     ("f1879", "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var U=T.toLocaleUpperCase().toLocaleLowerCase();var RESULT=U;"),
     ("f1880", "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.charAt(0)===T[0]){var S=T;}else{var S='';}var RESULT=S;"),
     ("f1881", "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var A=T.match(/(?:.)/g);var S=String.fromCharCode.apply(null,A.map(function(c){return c.charCodeAt(0);}));var RESULT=S;"),
-    ("f1882", "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.search(/xoxb/)>=0){var S=T;}else{var S='';}var RESULT=S;"),
+    # f1882 CLOSED (covered by F1850 hook) -- moved to _COVERED below
     ("f1883", "var C={I};var D=C.slice();if(D.includes(C[0],0)){var S=String.fromCharCode.apply(null,D);}else{var S='';}var RESULT=S;"),
     ("f1884", "var C={I};var D=C.slice();if(D.indexOf(C[C.length-1],C.length-1)>=0){var S=String.fromCharCode.apply(null,D);}else{var S='';}var RESULT=S;"),
     ("f1885", "var C={I};var D=C.slice();var E=D.toSorted(function(a,b){return a-a;});var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
@@ -79,7 +79,12 @@ _NEW = [
     ("f1890", "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.at(-1)===T[T.length-1]){var S=T;}else{var S='';}var RESULT=S;"),
 ]
 
-# Carry-forward OPEN pins (F1848-F1864 attack 101) — must still MISS
+# Covered pins (filed OPEN but covered by earlier hooks) — must HIT
+_COVERED = [
+    ("f1882", "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.search(/xoxb/)>=0){var S=T;}else{var S='';}var RESULT=S;"),
+]
+
+# Carry-forward CLOSED pins (F1848-F1864 attack 101, CLOSED wave-434) — must now HIT
 _CARRY = [
     ("f1848", "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var D=[];for(var i=0;i<T.length;i++){D.push(T.charAt(i).charCodeAt(0));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("f1849", "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var A=T.match(/./g);var S=String.fromCharCode.apply(null,A.map(function(c){return c.charCodeAt(0);}));var RESULT=S;"),
@@ -115,12 +120,22 @@ def main():
             else:
                 print("FAIL new %s[%d]" % (name, len(secret)))
 
-    # Carry-forward must still MISS (both sizes)
+    # Covered pins must HIT (filed OPEN, covered by earlier hooks)
+    for name, tmpl in _COVERED:
+        for secret in (SECRET_S, SECRET_L):
+            total += 1
+            payload = tmpl.replace("{I}", _codes(secret))
+            if _scan(payload) == "HIT":
+                held += 1
+            else:
+                print("FAIL covered %s[%d]" % (name, len(secret)))
+
+    # Carry-forward must now HIT (CLOSED wave-434, both sizes)
     for name, tmpl in _CARRY:
         for secret in (SECRET_S, SECRET_L):
             total += 1
             payload = tmpl.replace("{I}", _codes(secret))
-            if _scan(payload) == "MISS":
+            if _scan(payload) == "HIT":
                 held += 1
             else:
                 print("FAIL carry %s[%d]" % (name, len(secret)))
@@ -158,12 +173,16 @@ def main():
     else:
         print("FAIL paid machinery: %s" % bad)
 
-    # Footer-vs-stamp: F1865-F1890 all OPEN with first-filing
+    # Footer-vs-stamp: F1865-F1890 OPEN except F1882 (CLOSED, covered by F1850)
     total += 1
     ok = True
     for n in range(1865, 1891):
         idx = txt.find("(F%d filed" % n)
-        if idx < 0 or "LOW, OPEN" not in txt[idx:idx+2000]:
+        if n == 1882:
+            if idx < 0 or "[CLOSED" not in txt[idx:idx+8000]:
+                print("FAIL stamp F%d (should be CLOSED)" % n)
+                ok = False
+        elif idx < 0 or "LOW, OPEN" not in txt[idx:idx+2000]:
             print("FAIL stamp F%d" % n)
             ok = False
     if ok:
