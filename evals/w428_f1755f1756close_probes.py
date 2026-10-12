@@ -87,6 +87,9 @@ def test_p0_pins():
     for n in (1755, 1756):
         c = bool(re.search(r"\(F%d filed .*?\[CLOSED 2026-10-12 wave-428 lane C" % n, ftxt))
         ok = _check("p0-f%d-closed" % n, c, "stamped" if c else "missing") and ok
+    # F1757 filed OPEN (lane-C residual on F1755 flag filter)
+    o = bool(re.search(r"\(F1757 filed 2026-10-12 06:42 UTC.*?LOW, OPEN:", ftxt, re.DOTALL))
+    ok = _check("p0-f1757-open", o, "filed OPEN" if o else "missing") and ok
     return ok
 
 def test_p1_filed():
@@ -241,6 +244,7 @@ def test_p6_other_opens():
         ("f1752", "var C={I};var B=new Uint8Array(C).buffer;var B2=B.transfer();var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));var RESULT=S;"),
         ("f1753", "var C={I};var B=new Uint8Array(C).buffer;var B2=B.transferToFixedLength();var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));var RESULT=S;"),
         ("f1754", "var C={I};var B=new ArrayBuffer(C.length,{maxByteLength:C.length*2});var U=new Uint8Array(B);U.set(C);B.resize(C.length);var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B)));var RESULT=S;"),
+        ("f1757", "var C={I};var S=String.fromCharCode.apply(null,C);var R=/(.)/gdi;var D=new Array(C.length);var M;while((M=R.exec(S))!==null){D[M.indices[0][0]]=M[1].charCodeAt(0);}var T=String.fromCharCode.apply(null,D);var RESULT=T;"),
     ]
     for name, tmpl in opens:
         payload = tmpl.replace("{I}", cs)
@@ -280,7 +284,8 @@ def test_g0_green():
         print("g0: SKIPPED (GOV_SKIP_GREEN=1)")
         return True
     ok = True
-    for f in ["evals/w428_f1755_redfirst.py", "evals/w428_f1756_redfirst.py"]:
+    for f in ["evals/w428_f1755_redfirst.py", "evals/w428_f1756_redfirst.py",
+              "evals/w428_f1757_redfirst.py"]:
         p = os.path.join(REPO_ROOT, f)
         if os.path.exists(p):
             r = subprocess.run([sys.executable, p], capture_output=True, text=True,
