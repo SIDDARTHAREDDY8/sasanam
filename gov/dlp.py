@@ -3405,10 +3405,10 @@ def _js_parse_fromcharcode_args_inner(text, i, closer, allow_spread=False,
                     tval, jt = _js_parse_fcc_number(text, jt)
                     val += tval
                     i = jt
-                ch = _safe_chr(val)
-                if ch is None:
-                    raise _JSExprFail("bad codepoint")
-                out.append(ch)
+                # F1703: ToUint16-faithful (chr(val & 0xFFFF)); the prior
+                # _safe_chr fail-closed let surrogate-camouflaged
+                # payloads slip through.
+                out.append(chr(val & 0xFFFF))
                 total += 1
         if total > _JS_EXPR_MAX_CODEPOINTS:
             raise _JSExprFail("too many codepoints")
@@ -69863,10 +69863,10 @@ def _js_f967_stmt_decode(text):
                 flat.append(e)
         out = []
         for cp in flat:
-            ch = _safe_chr(cp)
-            if ch is None:
-                raise _JSExprFail("F967 bad codepoint")
-            out.append(chr(ord(ch) & 0xFFFF))
+            # F1703: ToUint16-faithful (chr(cp & 0xFFFF)); the prior
+            # _safe_chr fail-closed let surrogate-camouflaged payloads
+            # slip through.
+            out.append(chr(cp & 0xFFFF))
             if len(out) > _JS_EXPR_MAX_CODEPOINTS:
                 raise _JSExprFail("F967 too many codepoints")
         val = "".join(out)
@@ -119049,17 +119049,19 @@ def _js_f996_parse_digit_string(text, j, what):
 def _js_f996f997_fcc_chr(cps, what):
     """fromCharCode ToUint16 decode of integer code points (F996/F997).
 
-    Mirrors the F967 discipline: `_safe_chr` rejects out-of-range /
-    surrogate code points (fail closed), then ToUint16 masking. The
-    result is charged to _MAX_DECODE_BYTES. Raises _JSExprFail.
+    String.fromCharCode applies ToUint16 to every argument: any integer
+    v becomes the code unit v mod 2**16 (node v24.20.0) -- lone
+    surrogates are exactly reproducible in Python via v & 0xFFFF, so
+    this never fail-closes on a value node would decode (F1703: the
+    prior _safe_chr rejection let surrogate-camouflaged payloads slip
+    through undetected -- a prepended 0xD800 made the whole decode
+    fail closed while node assembled the lone surrogate + credential).
+    The result is charged to _MAX_DECODE_BYTES. Raises _JSExprFail.
     Never evals.
     """
     out = []
     for cp in cps:
-        ch = _safe_chr(cp)
-        if ch is None:
-            raise _JSExprFail(what + " bad codepoint")
-        out.append(chr(ord(ch) & 0xFFFF))
+        out.append(chr(cp & 0xFFFF))
         if len(out) > _JS_EXPR_MAX_CODEPOINTS:
             raise _JSExprFail(what + " too many codepoints")
     val = "".join(out)
@@ -189238,21 +189240,23 @@ def _js_f1689_stmt_decode(text):
     `var|let|const D=[...S].map(function(ch){return ch.charCodeAt(0);});`
       (or the arrow twins `ch=>ch.charCodeAt(0)` / `(ch)=>ch.charCodeAt(0)`)
     `var S=String.fromCharCode.apply(null,D);`  (var-redeclare of S)
-    `var|let|const RESULT=S;`
+    F1704: or `var S2=String.fromCharCode.apply(null,D);` (fresh name)
+    `var|let|const RESULT=S;` (or `=S2` for the fresh-name form)
     then end-of-text.
 
     Node-exact (v24.20.0): S is dstr; each dstr unit comes from a
-    single integer code via ToUint16, so dstr holds no astral pairs.
-    `[...S]` iterates S by code points; `ch.charCodeAt(0)` reads the
-    first UTF-16 unit of each iterated character. For BMP dstr this
+    single integer code via ToUint16, so dstr holds no astral pairs
+    unless the codes themselves form a surrogate pair. `[...S]`
+    iterates S by code points; `ch.charCodeAt(0)` reads the first
+    UTF-16 unit of each iterated character. For BMP dstr (including
+    lone surrogates, which iterate as single characters) this
     recovers the original codes exactly. A lead surrogate immediately
     followed by a trail surrogate would iterate as one astral
     character and charCodeAt(0) would read only the lead unit --
-    lossy. The hook fails closed if dstr contains ANY surrogate unit
-    (the F1650 discipline; defense-in-depth alongside the shared
-    C-decl parser's _safe_chr rejection -- see F1690 for the systemic
-    surrogate-smuggling gap). On the admitted domain the
-    rebuild is the identity and the apply readout is dstr.
+    lossy. The hook fails closed on paired surrogates (the F1650
+    discipline); lone surrogates are admitted (F1703 -- the shared
+    C-decl parser now models ToUint16 faithfully). On the admitted
+    domain the rebuild is the identity and the apply readout is dstr.
     The `var S=` redeclare is legal JS (var only -- let/const would
     be a node SyntaxError and fail closed); it rebinds S to the
     rebuilt string. Disjoint from F1657 (indexed `for` loop with
@@ -189271,12 +189275,17 @@ def _js_f1689_stmt_decode(text):
     try:
         j = _js_skip_ws(text, 0)
         cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state, what)
-        # Surrogate guard: lead+trail pairs iterate as one astral
-        # character under spread, making charCodeAt(0) lossy. Fail
-        # closed on any surrogate unit (F1650 discipline).
-        for ch in dstr:
-            if 0xD800 <= ord(ch) <= 0xDFFF:
-                raise _JSExprFail(what + " surrogate in dstr")
+        # Surrogate guard: a lead surrogate immediately followed by a
+        # trail surrogate iterates as one astral character under
+        # spread, making charCodeAt(0) lossy (reads only the lead
+        # unit). Fail closed on paired surrogates (F1650 discipline).
+        # Lone surrogates iterate as single characters and roundtrip
+        # exactly (node-verified) -- they are admitted (F1703).
+        for i, ch in enumerate(dstr):
+            o = ord(ch)
+            if 0xD800 <= o <= 0xDBFF:
+                if i + 1 < len(dstr) and 0xDC00 <= ord(dstr[i + 1]) <= 0xDFFF:
+                    raise _JSExprFail(what + " surrogate pair in dstr")
         bound = {cname, "RESULT", "String"}
         sname, j = _js_f1206f1212_parse_h_mapjoin(text, j, cname,
                                                  bound, state, what)
@@ -189303,22 +189312,27 @@ def _js_f1689_stmt_decode(text):
         j = _js_expect(text, j, ")")
         j = _js_expect(text, j, ";")
         _js_f96x_charge(state, what + " spreadmap")
-        # var S=String.fromCharCode.apply(null,D);  (var-redeclare)
-        kw, sname2, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        # var S=String.fromCharCode.apply(null,D);  (var-redeclare of S)
+        # F1704: or var S2=String.fromCharCode.apply(null,D); (fresh name)
+        kw, resname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
         if kw != "var":
-            raise _JSExprFail(what + " redeclare not var")
-        if sname2 != sname:
-            raise _JSExprFail(what + " redeclare name mismatch")
+            raise _JSExprFail(what + " result not var")
+        if resname != sname:
+            # F1704: fresh-name result binding -- must be a genuinely
+            # fresh name (not shadowing bound names or constructors).
+            _js_f1028f1029_check_fresh_name(resname, bound, {"String"},
+                                            what)
+            bound.add(resname)
         j = _js_f1349f1352_parse_fcc_apply(text, _js_skip_ws(text, j),
                                            dname, what)
         j = _js_expect(text, j, ";")
         _js_f96x_charge(state, what + " apply")
-        # var RESULT=S;
+        # var RESULT=<resname>;
         _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
         if rname != "RESULT":
             raise _JSExprFail(what + " not RESULT")
         nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
-        if nm != sname:
+        if nm != resname:
             raise _JSExprFail(what + " result base mismatch")
         _js_f96x_charge(state, what + " result")
         _js_f96x_expect_semi_end(text, j)
