@@ -14085,3 +14085,5 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 # Wave-437 lane B: F1916-F1924 CLOSED (9); F1907-F1915, F1925-F1938, F1940-F1943 OPEN (27); next free F1944
 # Wave-437 lane C: F1925-F1933 CLOSED (9); F1907-F1924, F1934-F1938, F1940-F1943 OPEN (27); next free F1944
 # Wave-437 lane D: F1934-F1938, F1940-F1943 CLOSED (9); F1974-F1975 filed OPEN (2, spec-review residuals renumbered from F1944/F1945: attack 105 filed F1944-F1973 at 16:09 UTC, wave-272 rule, first-filing 2026-10-12 16:40 UTC, $0 model spend); F1907-F1933 OPEN (27); next free F1946
+
+# Wave-437: F1907-F1938, F1940-F1943 CLOSED (36); F1944-F1973 OPEN (30, attack 105, first-filing 2026-10-12 16:09 UTC, $0 model spend); F1974-F1975 OPEN (2, lane D spec-review residuals renumbered from F1944/F1945 per wave-272 rule, first-filing 2026-10-12 16:40 UTC); next free F1976
