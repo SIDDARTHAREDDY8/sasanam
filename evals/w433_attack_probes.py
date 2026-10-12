@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Wave-433 attack round 101 coverage battery: new F1848-F1864 pins (MISS) +
-F1827-F1847 carry-forward pins (still OPEN, MISS) + taxonomy/footer/no-paid-machinery.
+F1827-F1847 carry-forward pins (CLOSED wave-433, HIT) + taxonomy/footer/no-paid-machinery.
 
 $0-spend-by-construction. Prints HELD counts.
 NOTE: scanner pins were verified empirically by the 17 red-first
@@ -110,12 +110,12 @@ def main():
             else:
                 print("FAIL new %s[%d]" % (name, len(secret)))
 
-    # Carry-forward must still MISS (both sizes)
+    # Carry-forward must now HIT (CLOSED wave-433, both sizes)
     for name, tmpl in _CARRY:
         for secret in (SECRET_S, SECRET_L):
             total += 1
             payload = tmpl.replace("{I}", _codes(secret))
-            if _scan(payload) == "MISS":
+            if _scan(payload) == "HIT":
                 held += 1
             else:
                 print("FAIL carry %s[%d]" % (name, len(secret)))

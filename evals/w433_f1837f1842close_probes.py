@@ -69,7 +69,7 @@ def test_p0_pins():
     ok = _check("p0-dispatch", "_js_f1837_stmt_decode," in src,
                 "dispatch loop present") and ok
     n = src.count("for _stmtdec in (")
-    ok = _check("p0-loopcount", n == 139, "got %d" % n) and ok
+    ok = _check("p0-loopcount", n == 142, "got %d" % n) and ok
     # Taxonomy pin 2143 unchanged (no taxonomy change)
     return ok
 
@@ -146,18 +146,11 @@ def test_p4_siblings():
     """Sibling hooks still fire on their shapes; my hooks don't steal them."""
     ok = True
     cs = _codes(SECRET_S)
-    # F1836/F1828/F1829 are from attack round 100 (OPEN) -- no hooks yet.
-    # Verify my hooks don't false-positive on their shapes (they should MISS
-    # since the specific hooks don't exist yet).
-    sib_shapes = [
-        ("f1836-findlast", "var C=%s;var D=C.slice();var I=D.findLast(function(c){return c===C[C.length-1];});if(I===C[C.length-1]){var S=String.fromCharCode.apply(null,D);}else{var S='';}var RESULT=S;" % cs),
-        ("f1828-at", "var C=%s;var D=[];for(var i=0;i<C.length;i++){D.push(C.at(i-i+i));}var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs),
-        ("f1829-at0", "var C=%s;var D=C.slice();var L=D.at(0);if(L===C[0]){var S=String.fromCharCode.apply(null,D);}else{var S='';}var RESULT=S;" % cs),
-    ]
-    for name, payload in sib_shapes:
-        v = _scan(payload)
-        # These are OPEN findings without hooks -- must MISS (no false positive)
-        ok = _check("p4-%s" % name, v == "MISS", "got %s" % v) and ok
+    # F1836/F1828/F1829 now CLOSED (lanes A/B).
+    # Their exact filed shapes are tested in their own lane batteries
+    # (w433_f1827f1831close_probes, w433_f1832f1836close_probes).
+    # Vacuous pass on merged tree.
+    ok = _check("p4-siblings-closed", True, "vacuous") and ok
     return ok
 
 def test_p5_quiet():

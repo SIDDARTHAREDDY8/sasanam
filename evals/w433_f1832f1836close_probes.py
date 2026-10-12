@@ -67,10 +67,10 @@ def test_p0_pins():
         ok = _check("p0-%s" % h, ("def %s(" % h) in src, "defined") and ok
     ok = _check("p0-dispatch", "_js_f1832_stmt_decode," in src,
                 "dispatch loop present") and ok
-    # N_STMTDEC_LOOPS: base 138 + 1 new dispatch loop = 139
+    # N_STMTDEC_LOOPS: base 138 + 4 dispatch loops (merged) = 142
     loops = re.findall(r"for _stmtdec in \(", src)
-    ok = _check("p0-loops", len(loops) == 139,
-                "%d loops (expect 139)" % len(loops)) and ok
+    ok = _check("p0-loops", len(loops) == 142,
+                "%d loops (expect 142)" % len(loops)) and ok
     return ok
 
 def test_p1_filed():
@@ -142,10 +142,10 @@ def test_p4_siblings():
     p = "var C=%s;var D=C.with(C.length-C.length,C[C.length-C.length]);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs
     v = _scan(p)
     ok = _check("p4-f1772-still-hit", v == "HIT", "got %s" % v) and ok
-    # F1831 (D.with literal 0) should still MISS (still OPEN, Lane A)
+    # F1831 (D.with literal 0) now HIT (CLOSED wave-433 lane A)
     p = "var C=%s;var D=C.slice();var E=D.with(0,D[0]);var S=String.fromCharCode.apply(null,E);var RESULT=S;" % cs
     v = _scan(p)
-    ok = _check("p4-f1831-still-miss", v == "MISS", "got %s" % v) and ok
+    ok = _check("p4-f1831-now-hit", v == "HIT", "got %s" % v) and ok
     # F1811 (lastIndexOf guard) should still HIT
     p = "var C=%s;var D=C.slice();if(D.lastIndexOf(C[0])>=0){var S=String.fromCharCode.apply(null,D);}else{var S='';}var RESULT=S;" % cs
     v = _scan(p)

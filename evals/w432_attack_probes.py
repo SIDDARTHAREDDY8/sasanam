@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wave-432 attack round 100 coverage battery: new F1827-F1847 pins (MISS) +
+"""Wave-432 attack round 100 coverage battery: new F1827-F1847 pins (HIT, closed wave-433) +
 F1805-F1821, F1823-F1826 carry-forward pins (CLOSED wave-432, HIT) + taxonomy/footer/no-paid-machinery.
 
 $0-spend-by-construction. Prints HELD counts.
@@ -50,7 +50,7 @@ def _codes(s):
     return "[" + ",".join(str(ord(c)) for c in s) + "]"
 
 
-# New round-100 pins: (name, template) — MISS on open tree
+# New round-100 pins: (name, template) — HIT on merged tree (CLOSED wave-433)
 _NEW = [
     ("f1827", "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var U=(T+' '.repeat(C.length-C.length+2)).trimEnd();var RESULT=U;"),
     ("f1828", "var C={I};var D=[];for(var i=0;i<C.length;i++){D.push(C.at(i-i+i));}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
@@ -104,17 +104,17 @@ _CARRY = [
 def main():
     held = 0
     total = 0
-    # p1: new pins must MISS (both sizes)
+    # p1: new pins must HIT (CLOSED wave-433)
     h1 = t1 = 0
     for name, tmpl in _NEW:
         for secret in (SECRET_S, SECRET_L):
             t1 += 1
             payload = tmpl.replace("{I}", _codes(secret))
-            if _scan(payload) == "MISS":
+            if _scan(payload) == "HIT":
                 h1 += 1
             else:
                 print("FAIL new pin %s" % name)
-    print("p1 new pins (MISS): %d/%d" % (h1, t1))
+    print("p1 new pins (HIT): %d/%d" % (h1, t1))
     held += h1
     total += t1
     # p2: carry-forward pins must HIT (CLOSED wave-432)
@@ -166,13 +166,13 @@ def main():
     print("p5 no-paid: %d/%d" % (h5, t5))
     held += h5
     total += t5
-    # p6: stamps present for F1827-F1847
+    # p6: CLOSED stamps present for F1827-F1847 (closed wave-433)
     t6 = 0
     h6 = 0
     for n in range(1827, 1848):
         t6 += 1
         idx = txt.find("(F%d filed" % n)
-        if idx >= 0 and "LOW, OPEN" in txt[idx:idx+2000]:
+        if idx >= 0 and "[CLOSED 2026-10-12 wave-433 lane" in txt[idx:idx+8000]:
             h6 += 1
         else:
             print("FAIL stamp F%d" % n)
