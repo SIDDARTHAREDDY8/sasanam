@@ -13461,6 +13461,17 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 
 (F1748 filed 2026-10-12 04:38 UTC, wave-426 attack round 94 (local node validation, $0.00 model spend (0 paid calls); node v24.20.0; LOW, [CLOSED 2026-10-12 wave-427 lane D: _js_f1748_stmt_decode models D.fill(<int>,<zero>,<zero>) (literal 0 or X.length-X.length self-subtraction) node-exactly; fill(v,0,0) is an empty range (no-op for any v); red-first verified BREAK->HIT; honest text unaffected]: Array.prototype.fill with empty computed range -- `var C={I};var D=C.slice();D.fill(0,C.length-C.length,C.length-C.length);var S=String.fromCharCode.apply(null,D);var RESULT=S;` -- fill with start==end modifies nothing (identity). Node-exact (v24.20.0), scanner MISSES. No filed finding covers fill. Close-when: decoder models the shape node-exactly such that find_credential flags it, red-first verified, honest text unaffected.; red-first: evals/w426_f1748_redfirst.py prints BREAK on the open tree)
 
+# Wave-426 attack round 94: F1735-F1748 filed OPEN (14, first-filing 2026-10-12 04:38 UTC, $0 model spend); next free F1749
+
+
+# Wave-426: F1376-F1734 CLOSED (359); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1735-F1748 OPEN (14); next free F1749
+
+
+# Wave-427 lane A: F1735-F1738 CLOSED (4); F1739-F1748 OPEN (10); next free F1749
+# Wave-427 lane B: F1739-F1742 CLOSED (4); F1735-F1738, F1743-F1748 OPEN (10); next free F1749
+# Wave-427 lane C: F1743-F1746 CLOSED (4); F1735-F1742, F1747-F1748 OPEN (10); next free F1749
+# Wave-427 lane D: F1747-F1748 CLOSED (2); F1735-F1746 OPEN (12); next free F1749
+
 (F1749 filed 2026-10-12 05:34 UTC, wave-427 attack round 95 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: DataView setUint32/getUint32 in statement form -- F742 (CLOSED) models only the u8 IIFE shape; F1740 (filed round 94) covers the u8 statement form; F1746 (filed round 94) covers u16. The 32-bit width is unmodeled. Assembles node-exactly (node v24.20.0); find_credential MISSES in a fresh process. Controls: direct fromCharCode.apply twin HITs; junk-quiet passes. Close-when: the decoder models DataView u32 width node-exactly (or refuses the laundering code) such that find_credential flags them, red-first verified, honest text unaffected; red-first: evals/w427_f1749_redfirst.py
 
 
@@ -13485,13 +13496,4 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 (F1756 filed 2026-10-12 05:34 UTC, wave-427 attack round 95 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: DataView setUint32/getUint32 in IIFE form -- F742 (CLOSED) models only the u8 IIFE shape. The 32-bit width in IIFE form is unmodeled (twin of F1749's statement form). Assembles node-exactly (node v24.20.0); find_credential MISSES in a fresh process. Controls: direct fromCharCode.apply twin HITs; junk-quiet passes. Close-when: the decoder models DataView u32 IIFE form node-exactly (or refuses the laundering code) such that find_credential flags them, red-first verified, honest text unaffected; red-first: evals/w427_f1756_redfirst.py
 
 # Wave-427 attack round 95: F1749-F1756 filed OPEN (8, first-filing 2026-10-12 05:34 UTC, $0 model spend); next free F1757
-# Wave-426 attack round 94: F1735-F1748 filed OPEN (14, first-filing 2026-10-12 04:38 UTC, $0 model spend); next free F1749
-
-
-# Wave-426: F1376-F1734 CLOSED (359); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1735-F1748 OPEN (14); next free F1749
-
-
-# Wave-427 lane A: F1735-F1738 CLOSED (4); F1739-F1748 OPEN (10); next free F1749
-# Wave-427 lane B: F1739-F1742 CLOSED (4); F1735-F1738, F1743-F1748 OPEN (10); next free F1749
-# Wave-427 lane C: F1743-F1746 CLOSED (4); F1735-F1742, F1747-F1748 OPEN (10); next free F1749
-# Wave-427 lane D: F1747-F1748 CLOSED (2); F1735-F1746 OPEN (12); next free F1749
+# Wave-427: F1376-F1748 CLOSED (373); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1749-F1756 OPEN (8); next free F1757
