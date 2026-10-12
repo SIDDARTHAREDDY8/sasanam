@@ -205279,6 +205279,488 @@ def _js_f1826_stmt_decode(text):
         return None
 
 
+
+
+def _js_f1832_stmt_decode(text):
+    """Decode F1832 D.with computed-last-index (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.slice();`
+    `var|let|const E=D.with(D.length-1,D[D.length-1]);`
+    `var|let|const S=String.fromCharCode.apply(null,E);`
+    then optional `var RESULT=S;` and end-of-text.
+
+    Node-exact (v24.20.0): `D.length-1` is the last index; `D[D.length-1]`
+    is the last element, so `D.with(last,D[last])` replaces the last
+    element with itself -- the identity copy (same admitted domain as
+    F1772/F1542). E is the code array and the apply readout is dstr
+    (ToUint16 discipline, same as _js_f1124f1130_parse_c_decl).
+    Disjoint from F1772 (C.with zero-expr `C.length-C.length` on C --
+    here slice-copy D with `D.length-1`) and F1831 (literal `0`/`D[0]`
+    -- here the computed `D.length-1` form is required) by grammar --
+    the filed shape BREAKs on the open tree. Anything else fails
+    closed: a miss, never a mis-decode. Returns the decoded string, or
+    None. Never evals.
+    """
+    if ".with(" not in text or ".slice()" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1832"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        # var D=C.slice();
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " slice base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " slice")
+        # var E=D.with(D.length-1,D[D.length-1]);
+        _, ename, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(ename, bound, {"String"},
+                                        what)
+        bound.add(ename)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " with base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "with")
+        if m is None:
+            raise _JSExprFail(what + " not with")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " with idx base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail(what + " not length")
+        j = _js_skip_ws(text, m)
+        if j >= len(text) or text[j] != "-":
+            raise _JSExprFail(what + " with idx not minus")
+        j = _js_skip_ws(text, j + 1)
+        v, j = _js_parse_fcc_number(text, j)
+        if v != 1:
+            raise _JSExprFail(what + " with idx not 1")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " with arg base mismatch")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " with arg idx base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "length")
+        if m is None:
+            raise _JSExprFail(what + " not length")
+        j = _js_skip_ws(text, m)
+        if j >= len(text) or text[j] != "-":
+            raise _JSExprFail(what + " with arg idx not minus")
+        j = _js_skip_ws(text, j + 1)
+        v, j = _js_parse_fcc_number(text, j)
+        if v != 1:
+            raise _JSExprFail(what + " with arg idx not 1")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " with")
+        # var S=String.fromCharCode.apply(null,E);
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, _js_skip_ws(text, j),
+                                           ename, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " apply")
+        j = _js_f181x_parse_opt_result(text, j, sname, state, what)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1833_stmt_decode(text):
+    """Decode F1833 replaceAll absent-char identity (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.replaceAll(String.fromCharCode(0),String.fromCharCode(1));`
+    then optional `var RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): T is the credential string (dstr). The search
+    char (fromCharCode(0) = NUL) is absent from the credential, so
+    replaceAll is the identity and U=T. If the search char were present
+    in T, the hook fails closed (a miss, never a mis-decode).
+    Disjoint from F1834 (computed string pattern `'~'.repeat(0)+'~'` --
+    here fromCharCode args) by grammar -- the filed shape BREAKs on the
+    open tree. Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if ".replaceAll(" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1833"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        tname, j = _js_f1297_parse_t_decl(text, j, cname, bound, state,
+                                          what)
+        _js_f96x_charge(state, what + " t decl")
+        # var U=T.replaceAll(String.fromCharCode(0),String.fromCharCode(1));
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " replaceAll base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "replaceAll")
+        if m is None:
+            raise _JSExprFail(what + " not replaceAll")
+        j = _js_expect(text, m, "(")
+        m2 = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m2 is None:
+            raise _JSExprFail(what + " not String")
+        search, j = _js_parse_fromcharcode(text, _js_skip_ws(text, j))
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        m2 = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m2 is None:
+            raise _JSExprFail(what + " not String")
+        _, j = _js_parse_fromcharcode(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " replaceAll")
+        # The search char must be absent from T for the identity;
+        # otherwise fail closed.
+        if search in dstr:
+            raise _JSExprFail(what + " search present")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1834_stmt_decode(text):
+    """Decode F1834 replaceAll computed-pattern identity (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.replaceAll('~'.repeat(0)+'~','~');`
+    then optional `var RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): `'~'.repeat(0)` is `''`, so `''+'~'` is `'~'`;
+    `T.replaceAll('~','~')` replaces the search string with itself --
+    always the identity, regardless of T's content. U=T=dstr.
+    Disjoint from F1833 (fromCharCode args -- here the computed
+    `'~'.repeat(0)+'~'` pattern is required) by grammar -- the filed
+    shape BREAKs on the open tree. Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None. Never
+    evals.
+    """
+    if ".replaceAll(" not in text or ".repeat(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1834"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        tname, j = _js_f1297_parse_t_decl(text, j, cname, bound, state,
+                                          what)
+        _js_f96x_charge(state, what + " t decl")
+        # var U=T.replaceAll('~'.repeat(0)+'~','~');
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " replaceAll base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "replaceAll")
+        if m is None:
+            raise _JSExprFail(what + " not replaceAll")
+        j = _js_expect(text, m, "(")
+        # '~'.repeat(0)
+        s1, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ".")
+        m2 = _js_match_kw(text, j, "repeat")
+        if m2 is None:
+            raise _JSExprFail(what + " not repeat")
+        j = _js_expect(text, m2, "(")
+        v, j = _js_parse_fcc_number(text, _js_skip_ws(text, j))
+        if v != 0:
+            raise _JSExprFail(what + " repeat not 0")
+        j = _js_expect(text, j, ")")
+        # +'~'
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "+":
+            raise _JSExprFail(what + " not concat")
+        s2, j = _js_f99x_parse_str(text, _js_skip_ws(text, j + 1))
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        # ,'~'
+        s3, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " replaceAll")
+        # Node-exact: s1.repeat(0) is '', so search = s2; the search
+        # must equal the replacement for the identity.
+        if s1 * 0 + s2 != s3:
+            raise _JSExprFail(what + " not identity")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1835_stmt_decode(text):
+    """Decode F1835 toSpliced computed-index identity (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.toSpliced(C.length-C.length,0);`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    then optional `var RESULT=S;` and end-of-text.
+
+    Node-exact (v24.20.0): `C.length-C.length` is 0 for any array, so
+    `C.toSpliced(0,0)` removes 0 elements at index 0 and inserts nothing
+    -- the identity copy (same admitted domain as F1773). D is the code
+    array and the apply readout is dstr (ToUint16 discipline, same as
+    _js_f1124f1130_parse_c_decl). Disjoint from F1773
+    (`D.splice(D.length,0)` -- here `toSpliced` with the zero-expr is
+    required) by grammar -- the filed shape BREAKs on the open tree.
+    Anything else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if ".toSpliced(" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1835"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        # var D=C.toSpliced(C.length-C.length,0);
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " toSpliced base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "toSpliced")
+        if m is None:
+            raise _JSExprFail(what + " not toSpliced")
+        j = _js_expect(text, m, "(")
+        # C.length-C.length
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " toSpliced idx base mismatch")
+        j = _js_expect(text, j, ".")
+        m2 = _js_match_kw(text, j, "length")
+        if m2 is None:
+            raise _JSExprFail(what + " not length")
+        j = _js_skip_ws(text, m2)
+        if j >= len(text) or text[j] != "-":
+            raise _JSExprFail(what + " toSpliced idx not minus")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j + 1))
+        if nm != cname:
+            raise _JSExprFail(what + " toSpliced idx rhs mismatch")
+        j = _js_expect(text, j, ".")
+        m2 = _js_match_kw(text, j, "length")
+        if m2 is None:
+            raise _JSExprFail(what + " not length")
+        j = _js_expect(text, _js_skip_ws(text, m2), ",")
+        v, j = _js_parse_fcc_number(text, j)
+        if v != 0:
+            raise _JSExprFail(what + " toSpliced deleteCount not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " toSpliced")
+        # var S=String.fromCharCode.apply(null,D);
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, _js_skip_ws(text, j),
+                                           dname, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " apply")
+        j = _js_f181x_parse_opt_result(text, j, sname, state, what)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1836_stmt_decode(text):
+    """Decode F1836 findLast guard before readout (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.slice();`
+    `var|let|const L=D.findLast(function(c){return true;});`
+    `if(L===C[C.length-1]){var|let|const S=String.fromCharCode.apply(null,D);}else{var|let|const S='';}`
+    then optional `var RESULT=S;` and end-of-text.
+
+    Node-exact (v24.20.0): D is an exact copy of the non-empty C, so
+    `D.findLast(c=>true)` is the last element of D, which equals
+    `C[C.length-1]`; the guard is always true and the taken branch
+    reads out the credential; the else branch (S='') is dead for the
+    parsed grammar but must be present. Disjoint from F1811
+    (lastIndexOf guard -- here findLast) and F1837 (findLastIndex --
+    still OPEN, different method) by grammar -- the filed shape BREAKs
+    on the open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if ".findLast(" not in text or ".slice()" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    # findLastIndex is a different method (F1837, still OPEN); the
+    # pre-check must not fire on it.
+    if ".findLastIndex(" in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1836"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String"}
+        # var D=C.slice();
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " slice base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " slice")
+        # var L=D.findLast(function(c){return true;});
+        _, lname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(lname, bound, {"String"},
+                                        what)
+        bound.add(lname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != dname:
+            raise _JSExprFail(what + " findLast base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "findLast")
+        if m is None:
+            raise _JSExprFail(what + " not findLast")
+        j = _js_expect(text, m, "(")
+        m2 = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m2 is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m2, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, bound, {"String"},
+                                        what)
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m2 = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m2 is None:
+            raise _JSExprFail(what + " no return")
+        m2 = _js_match_kw(text, _js_skip_ws(text, m2), "true")
+        if m2 is None:
+            raise _JSExprFail(what + " not true")
+        j = _js_expect(text, m2, ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " findLast")
+        # if(L===C[C.length-1]){
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != lname:
+            raise _JSExprFail(what + " guard lhs mismatch")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("===", j):
+            raise _JSExprFail(what + " guard op not ===")
+        j = _js_skip_ws(text, j + 3)
+        nm, j = _js_parse_ident(text, j)
+        if nm != cname:
+            raise _JSExprFail(what + " guard rhs base mismatch")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " guard idx base mismatch")
+        j = _js_expect(text, j, ".")
+        m2 = _js_match_kw(text, j, "length")
+        if m2 is None:
+            raise _JSExprFail(what + " not length")
+        j = _js_skip_ws(text, m2)
+        if j >= len(text) or text[j] != "-":
+            raise _JSExprFail(what + " guard idx not minus")
+        j = _js_skip_ws(text, j + 1)
+        v, j = _js_parse_fcc_number(text, j)
+        if v != 1:
+            raise _JSExprFail(what + " guard idx not 1")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "{")
+        _js_f96x_charge(state, what + " guard")
+        # var S=String.fromCharCode.apply(null,D);
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, j, dname, what)
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        # else{var S='';}
+        m = _js_match_kw(text, _js_skip_ws(text, j), "else")
+        if m is None:
+            raise _JSExprFail(what + " not else")
+        j = _js_expect(text, _js_skip_ws(text, m), "{")
+        _, sn2, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if sn2 != sname:
+            raise _JSExprFail(what + " else name mismatch")
+        sv, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sv != "":
+            raise _JSExprFail(what + " else not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " branches")
+        j = _js_f181x_parse_opt_result(text, j, sname, state, what)
+        # D is an exact slice-copy of the non-empty C, so findLast
+        # (always-true predicate) yields the last element, which equals
+        # C[C.length-1]; the guard is always true and the taken branch
+        # is the apply readout -- node-exact.
+        return dstr
+    except _JSExprFail:
+        return None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -208158,6 +208640,30 @@ def _decode_layer(text):
             _add(_sdec)
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
+
+    # F1832/F1833/F1834/F1835/F1836: D.with computed-last-index,
+    # replaceAll absent-char identity, replaceAll computed-pattern
+    # identity, toSpliced computed-index identity, and findLast guard
+    # before readout. Each parses a strict whole-text grammar; every
+    # filed shape BREAKs on the open tree, so no earlier production
+    # decoded them and the pre-existing variant order (F441) is
+    # preserved. Disjoint from F1772 (C.with zero-expr on C -- here
+    # slice-copy D with D.length-1), F1831 (literal 0/D[0] -- here
+    # computed, still OPEN), F1773 (D.splice -- here toSpliced), F1811
+    # (lastIndexOf guard -- here findLast), and F1837 (findLastIndex --
+    # still OPEN) by grammar (documented per hook). Additive, in
+    # F-number order.
+    for _stmtdec in (_js_f1832_stmt_decode,
+                     _js_f1833_stmt_decode,
+                     _js_f1834_stmt_decode,
+                     _js_f1835_stmt_decode,
+                     _js_f1836_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
 
 
     # F953/F954/F955/F956: top-level statement-sequence decode --
