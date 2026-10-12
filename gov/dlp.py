@@ -221670,10 +221670,38 @@ def _js_f2028_stmt_decode(text):
         return None
     state = {"ops": 0, "parts": 0}
     what = "F2028"
+
+
+def _js_f2038_stmt_decode(text):
+    """Decode F2038 String.prototype.concat.call(T,'') (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=String.prototype.concat.call(T,'');`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): String.prototype.concat.call(T,'')
+    invokes concat on T with empty string arg; T is a string, so
+    the result is T+'' === dstr. Disjoint from F1989-F1993
+    (concat variants -- here .call form on String.prototype) by
+    grammar -- the filed shape BREAKs on the open tree. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "String.prototype.concat.call" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2038"
     try:
         j = _js_skip_ws(text, 0)
         cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
                                                      what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
         bound = {cname, "RESULT", "String"}
         _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
         _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
@@ -221704,23 +221732,33 @@ def _js_f2028_stmt_decode(text):
         _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
                                         what)
         bound.add(uname)
+        # String.prototype.concat.call(T,'')
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "prototype")
+        if m is None:
+            raise _JSExprFail(what + " not prototype")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "concat")
+        if m is None:
+            raise _JSExprFail(what + " not concat")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "call")
+        if m is None:
+            raise _JSExprFail(what + " not call")
+        j = _js_expect(text, m, "(")
         nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
         if nm != tname:
-            raise _JSExprFail(what + " toString base mismatch")
-        j = _js_expect(text, _js_skip_ws(text, j), "[")
-        j = _js_skip_ws(text, j)
-        s, j = _js_f99x_parse_str(text, j)
-        if s != "toString":
-            raise _JSExprFail(what + " not toString bracket")
-        j = _js_expect(text, _js_skip_ws(text, j), "]")
-        j = _js_expect(text, j, "(")
-        j = _js_skip_ws(text, j)
-        if j >= len(text) or text[j] != "2":
-            raise _JSExprFail(what + " radix not 2")
-        j += 1
+            raise _JSExprFail(what + " receiver mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        sv, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sv != "":
+            raise _JSExprFail(what + " arg not empty")
         j = _js_expect(text, j, ")")
         j = _js_expect(text, _js_skip_ws(text, j), ";")
-        _js_f96x_charge(state, what + " toString")
+        _js_f96x_charge(state, what + " concat call")
         j = _js_f181x_parse_opt_result(text, j, uname, state, what)
         if len(dstr) > _MAX_DECODE_BYTES:
             raise _JSExprFail(what + " result too long")
@@ -221753,10 +221791,38 @@ def _js_f2029_stmt_decode(text):
         return None
     state = {"ops": 0, "parts": 0}
     what = "F2029"
+
+
+def _js_f2039_stmt_decode(text):
+    """Decode F2039 T.concat.apply(T,[]) (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.concat.apply(T,[]);`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): T.concat.apply(T,[]) invokes concat on
+    T with empty args array; T is a string, so the result is T
+    === dstr. Disjoint from F1989-F1993 (concat variants -- here
+    .apply form with empty array) by grammar -- the filed shape
+    BREAKs on the open tree. Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".concat.apply" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2039"
     try:
         j = _js_skip_ws(text, 0)
         cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
                                                      what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
         bound = {cname, "RESULT", "String"}
         _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
         _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
@@ -221787,9 +221853,575 @@ def _js_f2029_stmt_decode(text):
         _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
                                         what)
         bound.add(uname)
+        # T.concat.apply(T,[])
         nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
         if nm != tname:
-            raise _JSExprFail(what + " bind base mismatch")
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "concat")
+        if m is None:
+            raise _JSExprFail(what + " not concat")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "apply")
+        if m is None:
+            raise _JSExprFail(what + " not apply")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " receiver mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " concat apply")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2040_stmt_decode(text):
+    """Decode F2040 ''.concat(...[T]) spread (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=''.concat(...[T]);`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): ...[T] spreads the single-element array
+    into concat's args, so ''.concat(...[T]) is ''+T === dstr.
+    Disjoint from F1989-F1993 (concat variants -- here spread
+    single element) by grammar -- the filed shape BREAKs on the
+    open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if ".concat(" not in text or "..." not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2040"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        # ''.concat(...[T])
+        sv, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sv != "":
+            raise _JSExprFail(what + " base not empty")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "concat")
+        if m is None:
+            raise _JSExprFail(what + " not concat")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail(what + " not spread")
+        j = _js_skip_ws(text, j + 3)
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " elem mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " concat spread")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2041_stmt_decode(text):
+    """Decode F2041 T.concat('').valueOf() (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.concat('').valueOf();`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): T.concat('') is T; .valueOf() on a
+    string returns the string itself, so U === dstr. Disjoint from
+    F1989-F1993 (concat variants -- here concat then valueOf) by
+    grammar -- the filed shape BREAKs on the open tree. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if ".concat(" not in text or ".valueOf(" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2041"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        # T.concat('').valueOf()
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "concat")
+        if m is None:
+            raise _JSExprFail(what + " not concat")
+        j = _js_expect(text, m, "(")
+        sv, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sv != "":
+            raise _JSExprFail(what + " arg not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "valueOf")
+        if m is None:
+            raise _JSExprFail(what + " not valueOf")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " concat valueOf")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2042_stmt_decode(text):
+    """Decode F2042 ''+((T+'')) doubly-grouped additive (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=''+((T+''));`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): parentheses do not change the value;
+    (T+'') is T, ((T+'')) is T, ''+T is the string-additive
+    identity, so U === dstr. Disjoint from F1994 (''+(T+'') --
+    here doubly-grouped ((T+''))) by grammar -- the filed shape
+    BREAKs on the open tree. Anything else fails closed: a miss,
+    never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "''+((" not in text and '""+((' not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2042"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        # ''+((T+''))
+        sv, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sv != "":
+            raise _JSExprFail(what + " left not empty")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "+":
+            raise _JSExprFail(what + " not additive")
+        j = _js_expect(text, _js_skip_ws(text, j + 1), "(")
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " inner mismatch")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "+":
+            raise _JSExprFail(what + " inner not additive")
+        j = _js_skip_ws(text, j + 1)
+        sv, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sv != "":
+            raise _JSExprFail(what + " inner right not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " additive")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2043_stmt_decode(text):
+    """Decode F2043 String('')+T (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=String('')+T;`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): String('') is ''; ''+T is the
+    string-additive identity, so U === dstr. Disjoint from
+    F1994-F1997 (additive variants -- here String('') on left) by
+    grammar -- the filed shape BREAKs on the open tree. Anything
+    else fails closed: a miss, never a mis-decode. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "String('')" not in text and 'String("")' not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2043"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        # String('')+T
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = _js_expect(text, m, "(")
+        sv, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sv != "":
+            raise _JSExprFail(what + " String arg not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "+":
+            raise _JSExprFail(what + " not additive")
+        j = _js_skip_ws(text, j + 1)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " rhs mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " additive")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2044_stmt_decode(text):
+    """Decode F2044 ''+`${T}` template additive (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=''+`${T}`;`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): `${T}` is T (single substitution);
+    ''+T is the string-additive identity, so U === dstr.
+    Disjoint from F1994-F1997 (additive variants -- here empty
+    string plus template) by grammar -- the filed shape BREAKs on
+    the open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "`${" not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2044"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        # ''+`${T}`
+        sv, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sv != "":
+            raise _JSExprFail(what + " left not empty")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "+":
+            raise _JSExprFail(what + " not additive")
+        j = _js_skip_ws(text, j + 1)
+        j = _js_expect(text, j, "`")
+        j = _js_expect(text, j, "$")
+        j = _js_expect(text, j, "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " template var mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, j, "`")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " additive")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2045_stmt_decode(text):
+    """Decode F2045 (''+(T)) parenthesized additive (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=(''+(T));`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): parentheses do not change the value;
+    ''+(T) is ''+T, the string-additive identity, so U === dstr.
+    Disjoint from F1994 (''+(T+'') -- here (''+(T)) with the whole
+    additive parenthesized) by grammar -- the filed shape BREAKs
+    on the open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "(''+(" not in text and '(""+(' not in text:
+        return None
+    if ".map(function(c)" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2045"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        # (''+(T))
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        sv, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sv != "":
+            raise _JSExprFail(what + " left not empty")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "+":
+            raise _JSExprFail(what + " not additive")
+        j = _js_expect(text, _js_skip_ws(text, j + 1), "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " inner mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " additive")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2046_stmt_decode(text):
+    """Decode F2046 Reflect.apply(String.prototype.valueOf,T,[]) (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Reflect.apply(String.prototype.valueOf,T,[]);`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): Reflect.apply(String.prototype.valueOf,
+    T, []) invokes T.valueOf() with no args; T is a string, so
+    the result is T === dstr. Disjoint from F1998
+    (Reflect.apply(String.prototype.toString -- here valueOf) and
+    F1999 (Reflect.apply(String -- here String.prototype.valueOf)
+    by grammar -- the filed shape BREAKs on the open tree.
+    Anything else fails closed: a miss, never a mis-decode.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "Reflect.apply" not in text:
+        return None
+    if "String.prototype.valueOf" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    # Disjoint from Reflect.construct / Reflect.get hooks.
+    if "Reflect.construct" in text or "Reflect.get" in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2046"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String", "Reflect"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        # Reflect.apply(String.prototype.valueOf,T,[])
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Reflect")
+        if m is None:
+            raise _JSExprFail(what + " not Reflect")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "apply")
+        if m is None:
+            raise _JSExprFail(what + " not apply")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "prototype")
+        if m is None:
+            raise _JSExprFail(what + " not prototype")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "valueOf")
+        if m is None:
+            raise _JSExprFail(what + " not valueOf")
+        j = _js_expect(text, m, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " receiver mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " reflect apply")
+        j = _js_f181x_parse_opt_result(text, j, uname, state, what)
+        # T.valueOf() === T for string T.
+        if len(dstr) > _MAX_DECODE_BYTES:
+            raise _JSExprFail(what + " result too long")
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f2047_stmt_decode(text):
+    """Decode F2047 Reflect.apply(T.toString.bind(T),T,[]) (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Reflect.apply(T.toString.bind(T),T,[]);`
+    then optional `var|let|const RESULT=U;` and end-of-text.
+
+    Node-exact (v24.20.0): T.toString.bind(T) is the bound
+    toString; Reflect.apply invokes it with T as receiver and no
+    args; T is a string, so the result is T === dstr. Disjoint
+    from F1998 (Reflect.apply(String.prototype.toString -- here
+    bound T.toString) and F1999 (Reflect.apply(String -- here
+    bound method) by grammar -- the filed shape BREAKs on the
+    open tree. Anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "Reflect.apply" not in text:
+        return None
+    if ".toString.bind(" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    # Disjoint from Reflect.construct / Reflect.get hooks.
+    if "Reflect.construct" in text or "Reflect.get" in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2047"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        _js_f1028f1029_check_fresh_name(cname, set(), {"String"},
+                                        what)
+        bound = {cname, "RESULT", "String", "Reflect"}
+        _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(tname, bound, {"String"},
+                                        what)
+        bound.add(tname)
+        j = _js_f1896f1900_parse_mapjoin(text, j, cname, state, what)
+        _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(uname, bound, {"String"},
+                                        what)
+        bound.add(uname)
+        # Reflect.apply(T.toString.bind(T),T,[])
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Reflect")
+        if m is None:
+            raise _JSExprFail(what + " not Reflect")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "apply")
+        if m is None:
+            raise _JSExprFail(what + " not apply")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
         j = _js_expect(text, j, ".")
         m = _js_match_kw(text, j, "toString")
         if m is None:
@@ -230550,22 +231182,28 @@ def _decode_layer(text):
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
 
-    # F2028/F2029/F2030: toString variants (bracket access, bind, apply)
-    # F2031-F2036: template-literal variants (triple-empty, sliced,
-    # padStart, substr, substring, split-join)
-    # F2037: triple concat chain.
-    # Additive, in F-number order. Disjoint from siblings by grammar
-    # (documented per hook).
-    for _stmtdec in (_js_f2028_stmt_decode,
-                     _js_f2029_stmt_decode,
-                     _js_f2030_stmt_decode,
-                     _js_f2031_stmt_decode,
-                     _js_f2032_stmt_decode,
-                     _js_f2033_stmt_decode,
-                     _js_f2034_stmt_decode,
-                     _js_f2035_stmt_decode,
-                     _js_f2036_stmt_decode,
-                     _js_f2037_stmt_decode):
+
+    # F2038-F2047 (wave-440 lane C): concat .call/.apply/spread,
+    # additive doubly-grouped/String('')/template/parenthesized,
+    # and Reflect.apply valueOf/bound-toString decoders. Each parses
+    # a strict whole-text grammar; every filed shape BREAKs on the
+    # open tree, so no earlier production decoded them and the
+    # pre-existing variant order (F441) is preserved. Disjoint from
+    # F1989-F1993 (concat -- here .call/.apply/spread/valueOf),
+    # F1994-F1997 (additive -- here doubly-grouped/String('')/
+    # template/parenthesized), F1998-F1999 (Reflect.apply -- here
+    # valueOf/bound toString) by grammar (documented per hook).
+    # Additive, in F-number order.
+    for _stmtdec in (_js_f2038_stmt_decode,
+                     _js_f2039_stmt_decode,
+                     _js_f2040_stmt_decode,
+                     _js_f2041_stmt_decode,
+                     _js_f2042_stmt_decode,
+                     _js_f2043_stmt_decode,
+                     _js_f2044_stmt_decode,
+                     _js_f2045_stmt_decode,
+                     _js_f2046_stmt_decode,
+                     _js_f2047_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
