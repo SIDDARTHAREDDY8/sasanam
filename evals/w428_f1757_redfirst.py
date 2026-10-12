@@ -12,7 +12,7 @@ import sys
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 os.environ.setdefault("GOV_LOG_KEY", "00" * 32)
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
