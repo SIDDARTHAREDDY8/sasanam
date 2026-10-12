@@ -112,11 +112,11 @@ def test_p0_pins():
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    if len(loops) != 102:
+    if len(loops) != 105:  # merge: 101 base + 4 lanes
         ok = False
-        details.append("loops=%d want 102" % len(loops))
+        details.append("loops=%d want 105" % len(loops))
     else:
-        details.append("loops=102")
+        details.append("loops=105")
     rc = len(re.findall(r"re\.compile\(", dsrc))
     if rc != 29:
         ok = False

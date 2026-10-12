@@ -117,7 +117,7 @@ def test_p0_pins():
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (len(loops) == 102)
+    ok = (len(loops) == 105)  # merge: 101 base + 4 lanes
     notes.append("loops=%d (want 102: 101 base +1 this lane)" % len(loops))
     # taxonomy pin 2143 (repo convention: the attack-probes battery pins it)
     with open(os.path.join(REPO_ROOT, "evals",

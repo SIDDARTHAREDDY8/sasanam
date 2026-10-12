@@ -116,7 +116,7 @@ def test_p0_pins():
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = list(re.finditer(r"for _stmtdec in \(([^)]*)\):", body,
                              re.DOTALL))
-    ok = (pin == 101 and len(loops) == 102)
+    ok = (pin == 101 and len(loops) == 105)  # merge: 101 base + 4 lanes
     notes.append("loops=%d pin(base)=%d lane=102" % (len(loops), pin))
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         ftxt = f.read()

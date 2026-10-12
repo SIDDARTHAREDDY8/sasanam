@@ -104,7 +104,7 @@ def test_p0_pins():
     dm = re.search(r"def _decode_layer\(text\):", dsrc)
     body = dsrc[dm.end():dsrc.find("\ndef ", dm.end())]
     loops = re.findall(r"for _stmtdec in \(", body)
-    ok = (len(loops) == 102)
+    ok = (len(loops) == 105)  # merge: 101 base + 4 lanes
     notes.append("loops=%d (expect 102)" % len(loops))
     # new loop present with tail guard
     has_new = "_js_f1686_stmt_decode, _js_f1687_stmt_decode," in body
