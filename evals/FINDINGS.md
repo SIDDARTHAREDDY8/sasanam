@@ -13380,4 +13380,31 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 # Wave-425 lane B: F1708-F1711 CLOSED (4); F1703, F1705-F1707, F1712-F1714 OPEN (7); next free F1715
 # Wave-425 lane C: F1712-F1714 CLOSED (3); F1703, F1705-F1711 OPEN (8); F1725 OPEN (1); next free F1726
 # Wave-425 attack round 93: F1715-F1724 filed OPEN (10, first-filing 2026-10-12 03:19 UTC, $0 model spend); next free F1725
-# Wave-425: F1376-F1714 CLOSED (339); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1715-F1724 OPEN (10); F1725 OPEN (1, lane-C residual); next free F1726
+(F1726 filed 2026-10-12 04:15 UTC, wave-425 merge spec review S1 (local node validation, $0.00 model spend (0 paid calls); node v24.20.0; LOW, OPEN: F1705 residual: Object.assign with 3 sources -- `var C={I};var D=Object.assign([],C,C,C);var S=String.fromCharCode.apply(null,D);var RESULT=S;` -- 3-source form; filed F1705 covers exactly 2 sources. Node-exact (v24.20.0), scanner MISSES. Close-when: decoder models the shape node-exactly such that find_credential flags it, red-first verified, honest text unaffected.)
+
+
+(F1727 filed 2026-10-12 04:15 UTC, wave-425 merge spec review S1 (local node validation, $0.00 model spend (0 paid calls); node v24.20.0; LOW, OPEN: F1560/F1705 residual: Object.assign single-source with apply readout -- `var C={I};var D=Object.assign([],C);var S=String.fromCharCode.apply(null,D);var RESULT=S;` -- F1560's hook covers only the map/join readout, not the apply readout. Node-exact, scanner MISSES. Close-when: decoder models the shape node-exactly such that find_credential flags it, red-first verified, honest text unaffected.)
+
+
+(F1728 filed 2026-10-12 04:15 UTC, wave-425 merge spec review S1 (local node validation, $0.00 model spend (0 paid calls); node v24.20.0; LOW, OPEN: F1706 residual: template literal with static text -- `var C={I};var S=String.fromCharCode.apply(null,C);var T=`x${S}`;var RESULT=T;` -- template with static prefix; filed F1706 covers pure identity `${S}`. Node-exact, scanner MISSES. Close-when: decoder models the shape node-exactly such that find_credential flags it, red-first verified, honest text unaffected.)
+
+
+(F1729 filed 2026-10-12 04:15 UTC, wave-425 merge spec review S1 (local node validation, $0.00 model spend (0 paid calls); node v24.20.0; LOW, OPEN: F1708 residual: flatMap 2-param callback with null thisArg -- `var C={I};var D=C.flatMap(function(c,i){return [c];},null);var S=String.fromCharCode.apply(null,D);var RESULT=S;` -- 2-param callback (node ignores extra param); filed F1708 covers 1-param. Node-exact, scanner MISSES. Close-when: decoder models the shape node-exactly such that find_credential flags it, red-first verified, honest text unaffected.)
+
+
+(F1730 filed 2026-10-12 04:15 UTC, wave-425 merge spec review S1 (local node validation, $0.00 model spend (0 paid calls); node v24.20.0; LOW, OPEN: F1708 residual: flatMap with object thisArg -- `var C={I};var D=C.flatMap(function(c){return [c];},{});var S=String.fromCharCode.apply(null,D);var RESULT=S;` -- object thisArg; filed F1708 covers null thisArg. Node-exact, scanner MISSES. Close-when: decoder models the shape node-exactly such that find_credential flags it, red-first verified, honest text unaffected.)
+
+
+(F1731 filed 2026-10-12 04:15 UTC, wave-425 merge spec review S1 (local node validation, $0.00 model spend (0 paid calls); node v24.20.0; LOW, OPEN: F1709 residual: map 3-param callback with null thisArg -- `var C={I};var D=C.map(function(c,i,a){return c;},null);var S=String.fromCharCode.apply(null,D);var RESULT=S;` -- 3-param callback with null thisArg; filed F1709 covers 1-param. Node-exact, scanner MISSES. Close-when: decoder models the shape node-exactly such that find_credential flags it, red-first verified, honest text unaffected.)
+
+
+(F1732 filed 2026-10-12 04:15 UTC, wave-425 merge spec review S1 (local node validation, $0.00 model spend (0 paid calls); node v24.20.0; LOW, OPEN: F1710 residual: Array.from 2-param callback with null thisArg -- `var C={I};var D=Array.from(C,function(c,i){return c;},null);var S=String.fromCharCode.apply(null,D);var RESULT=S;` -- 2-param callback; filed F1710 covers 1-param. Node-exact, scanner MISSES. Close-when: decoder models the shape node-exactly such that find_credential flags it, red-first verified, honest text unaffected.)
+
+
+(F1733 filed 2026-10-12 04:15 UTC, wave-425 merge spec review S1 (local node validation, $0.00 model spend (0 paid calls); node v24.20.0; LOW, OPEN: F1712 residual: splice on C with readout from D -- `var C={I};var D=C.slice();C.splice(0,0);var S=String.fromCharCode.apply(null,D);var RESULT=S;` -- splice applied to C, readout from D (full copy); filed F1712 covers splice on D. Node-exact, scanner MISSES. Close-when: decoder models the shape node-exactly such that find_credential flags it, red-first verified, honest text unaffected.)
+
+
+(F1734 filed 2026-10-12 04:15 UTC, wave-425 merge spec review S1 (local node validation, $0.00 model spend (0 paid calls); node v24.20.0; LOW, OPEN: F1714 residual: trailing surrogate camouflage -- `var C=[{CODES},0xD800];var S=String.fromCharCode.apply(null,C);var RESULT=S;` -- surrogate at trailing index; filed F1714 covers prepend-only (index 0). Node-exact, scanner MISSES. Close-when: decoder models the shape node-exactly such that find_credential flags it, red-first verified, honest text unaffected.)
+
+
+# Wave-425: F1376-F1714 CLOSED (339); F1517 CLOSED (1, incidental); F1574 CLOSED (1, incidental); F1611 CLOSED (1, incidental); F1715-F1724 OPEN (10); F1725 OPEN (1, lane-C residual); F1726-F1734 OPEN (9, spec-review S1 residuals); next free F1735
