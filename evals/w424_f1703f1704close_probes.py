@@ -91,17 +91,17 @@ def test_p0_pins():
     # re.compile = 29
     ok = _check("p0-recompile", src.count("re.compile(") == 29,
                 "%d" % src.count("re.compile(")) and ok
-    # footer: F1704 stamped CLOSED; F1703 OPEN (partial); F1705 OPEN (new)
+    # footer: F1704 stamped CLOSED; F1703 OPEN (partial); F1714 OPEN (new)
     with open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")) as f:
         ftxt = f.read()
     c1704 = bool(re.search(r"\(F1704 filed .*?\[CLOSED", ftxt, re.DOTALL))
     o1703 = bool(re.search(r"\(F1703 filed .*?LOW, OPEN", ftxt))
-    o1705 = bool(re.search(r"\(F1705 filed", ftxt))
+    o1705 = bool(re.search(r"\(F1714 filed", ftxt))
     ok = _check("p0-f1704-closed", c1704, "stamped" if c1704 else "missing") and ok
     ok = _check("p0-f1703-open", o1703, "open" if o1703 else "wrong") and ok
     ok = _check("p0-f1705-open", o1705, "filed" if o1705 else "missing") and ok
     ok = _check("p0-footer", c1704 and o1703 and o1705,
-                "F1704 closed, F1703/F1705 open") and ok
+                "F1704 closed, F1703/F1714 open") and ok
     return ok
 
 
