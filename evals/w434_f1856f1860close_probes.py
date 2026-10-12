@@ -71,7 +71,7 @@ def test_p0_pins():
     ok = _check("p0-dispatch", "_js_f1856_stmt_decode," in src,
                 "dispatch loop present") and ok
     n = src.count("for _stmtdec in (")
-    ok = _check("p0-loopcount", n == 143, "got %d" % n) and ok
+    ok = _check("p0-loopcount", n == 146, "got %d" % n) and ok
     pins = set(re.findall(r"_PIN\s*=\s*(\d+)", src))
     ok = _check("p0-pin2143", pins == {"2143"} or not pins,
                 "pins=%s" % pins) and ok
@@ -209,7 +209,7 @@ def test_p7_green():
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
                        env=env, cwd=REPO_ROOT)
     out = (r.stdout or "") + (r.stderr or "")
-    # Extract failures; allow only p0-loopcount (expected: 142->143)
+    # Extract failures; wave-434 merge updated pins to 146, so no exceptions expected
     fails = [l for l in out.split("\n") if l.startswith("FAIL ")]
     unexpected = [f for f in fails if "p0-loopcount" not in f]
     ok = _check("p7-green-w433d", not unexpected,

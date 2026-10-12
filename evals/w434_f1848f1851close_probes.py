@@ -65,10 +65,10 @@ def test_p0_pins():
         ok = _check("p0-%s" % h, ("def %s(" % h) in src, "defined") and ok
     ok = _check("p0-dispatch", "_js_f1848_stmt_decode," in src,
                 "dispatch loop present") and ok
-    # N_STMTDEC_LOOPS: base 142 + 1 dispatch loop = 143
+    # N_STMTDEC_LOOPS: wave-434 merge (142 base + 4 lanes) = 146
     loops = re.findall(r"for _stmtdec in \(", src)
-    ok = _check("p0-loops", len(loops) == 143,
-                "%d loops (expect 143)" % len(loops)) and ok
+    ok = _check("p0-loops", len(loops) == 146,
+                "%d loops (expect 146)" % len(loops)) and ok
     # pin 2143 holds
     pins = re.findall(r"_PIN\s*=\s*(\d+)", src)
     ok = _check("p0-pin2143", all(p == "2143" for p in pins),

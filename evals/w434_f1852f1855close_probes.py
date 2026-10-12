@@ -74,10 +74,10 @@ def test_p0_pins():
         ok = _check("p0-%s" % h, ("def %s(" % h) in src, "defined") and ok
     ok = _check("p0-dispatch", "_js_f1852_stmt_decode," in src,
                 "dispatch loop present") and ok
-    # N_STMTDEC_LOOPS: base 142 + 1 new dispatch loop = 143
+    # N_STMTDEC_LOOPS: wave-434 merge (142 base + 4 lanes) = 146
     loops = re.findall(r"for _stmtdec in \(", src)
-    ok = _check("p0-loops", len(loops) == 143,
-                "%d loops (expect 143)" % len(loops)) and ok
+    ok = _check("p0-loops", len(loops) == 146,
+                "%d loops (expect 146)" % len(loops)) and ok
     return ok
 
 
@@ -171,14 +171,15 @@ def test_p4_siblings():
     p = "var C=%s;var D=C.toReversed();D.reverse();var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs
     v = _scan(p)
     ok = _check("p4-f1742-still-hit", v == "HIT", "got %s" % v) and ok
-    # F1851 (includes guard, lane A, still OPEN) should still MISS
+    # F1851 (includes guard, lane A, CLOSED) -- lane B hooks must not catch it (disjointness)
     p = "var C=%s;var D=C.slice();if(D.includes(D[0])){var S=String.fromCharCode.apply(null,D);}else{var S='';}var RESULT=S;" % cs
-    v = _scan(p)
-    ok = _check("p4-f1851-still-miss", v == "MISS", "got %s" % v) and ok
-    # F1856 (slice computed, lane C, still OPEN) should still MISS
+    # Test lane B's hooks directly for disjointness (find_credential HITs via lane A's hook, which is correct)
+    disjoint = all(_hook(n)(p) is None for n in ("f1852", "f1853", "f1854", "f1855"))
+    ok = _check("p4-f1851-disjoint", disjoint, "lane B hooks miss F1851 shape") and ok
+    # F1856 (slice computed, lane C, CLOSED) -- lane B hooks must not catch it (disjointness)
     p = "var C=%s;var D=C.slice(C.length-C.length,C.length);var S=String.fromCharCode.apply(null,D);var RESULT=S;" % cs
-    v = _scan(p)
-    ok = _check("p4-f1856-still-miss", v == "MISS", "got %s" % v) and ok
+    disjoint = all(_hook(n)(p) is None for n in ("f1852", "f1853", "f1854", "f1855"))
+    ok = _check("p4-f1856-disjoint", disjoint, "lane B hooks miss F1856 shape") and ok
     return ok
 
 
@@ -232,11 +233,9 @@ def _green_check():
     )
     out = (r.stdout or "") + (r.stderr or "")
     fails = [l for l in out.split("\n") if l.startswith("FAIL new")]
-    # Expected flips: f1852/f1853/f1854/f1855 x [20]/[40]
+    # Wave-434 merge: w433_attack_probes.py was updated to expect HIT for
+    # F1848-F1864 (closed), so no FAIL new lines are expected.
     expected = set()
-    for n in ("f1852", "f1853", "f1854", "f1855"):
-        for ln in (20, 40):
-            expected.add("FAIL new %s[%d]" % (n, ln))
     unexpected = [l for l in fails if l not in expected]
     missing = [e for e in expected if e not in fails]
     if unexpected:
@@ -249,7 +248,7 @@ def _green_check():
         for l in missing:
             print("  " + l)
         return False
-    print("GREENCHECK: only the 8 expected F1852-F1855 flips (merge flips them)")
+    print("GREENCHECK: no unexpected failures (w433 pins flipped to HIT at merge)")
     return True
 
 
