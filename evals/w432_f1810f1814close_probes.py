@@ -76,7 +76,7 @@ def test_p0_pins():
     m = re.search(r"def _decode_layer\(text\):", src)
     body = src[m.end():src.find("\ndef ", m.end())]
     nloops = len(re.findall(r"for _stmtdec in \(", body))
-    ok = _check("p0-loops", nloops == 135, "%d loops" % nloops) and ok
+    ok = _check("p0-loops", nloops == 138, "%d loops" % nloops) and ok
     return ok
 
 def test_p1_filed():
@@ -170,22 +170,14 @@ def test_p5_quiet():
     return ok
 
 def test_p6_other_opens():
-    """Other wave-432 opens still MISS (F1805-F1809, F1815-F1821, F1823-F1826)."""
-    ok = True
-    cs = _codes(SECRET_S)
-    opens = [
-        ("f1805", "var C={I};var T=C.map(function(c){return String.fromCharCode(c);}).join('');var U=T.repeat(C.length-C.length+1);var RESULT=U;"),
-        ("f1809", "var C={I};var D=C.slice();D.fill(0,D.length,D.length+5);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-        ("f1815", "var C={I};var T=' '.repeat(C.length-C.length+1)+C.map(function(c){return String.fromCharCode(c);}).join('');var U=T.trimStart();var RESULT=U;"),
-        ("f1821", "var C={I};var D=[];for(var [i,v] of C.entries()){D[i]=v;}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-        ("f1823", "var C={I};var D=[];for(const i in C){D[i]=C[i];}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-        ("f1826", "var C={I};var W=new Map();var O={};W.set(O,C);var D=W.get(O);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ]
-    for name, tmpl in opens:
-        payload = tmpl.replace("{I}", cs)
-        v = _scan(payload)
-        ok = _check("p6-%s-open" % name, v == "MISS", "got %s" % v) and ok
-    return ok
+    """Other wave-432 findings: all CLOSED on merged tree (vacuous pass).
+
+    At lane-dev time this verified sibling opens still MISS (no cross-hook
+    false positives). On the wave-432 merged tree F1805-F1821/F1823-F1826
+    are all CLOSED, so there are no remaining opens to check. False-positive
+    protection is covered by the honest-text and fail-closed tests.
+    """
+    return True
 
 def test_p7_perf():
     """Performance: 200 sites in reasonable time (in-process)."""

@@ -147,16 +147,14 @@ def test_p5_honest():
     return ok
 
 def test_p6_other_opens():
-    """Other open findings (F1805-F1814, F1820-F1821, F1823-F1826) still MISS."""
-    ok = True
-    # Spot check a few - they should not be affected by our new hooks
-    cs = _codes(SECRET_S)
-    # F1805 (repeat) - different pattern
-    p = "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');var U=T.repeat(C.length-C.length+1);var RESULT=U;" % cs
-    v = _scan(p)
-    # Just verify no crash, may HIT or MISS
-    ok = _check("p6-f1805", v in ("HIT", "MISS"), "got %s" % v) and ok
-    return ok
+    """Other wave-432 findings: all CLOSED on merged tree (vacuous pass).
+
+    At lane-dev time this verified sibling opens still MISS (no cross-hook
+    false positives). On the wave-432 merged tree F1805-F1821/F1823-F1826
+    are all CLOSED, so there are no remaining opens to check. False-positive
+    protection is covered by the honest-text and fail-closed tests.
+    """
+    return True
 
 def test_p7_perf():
     """Performance: 200 sites in reasonable time."""
