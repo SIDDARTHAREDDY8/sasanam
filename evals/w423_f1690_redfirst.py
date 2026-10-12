@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
-"""F1690 red-first: surrogate-code smuggling past _safe_chr-gated hooks.
+"""F1690 red-first: fromCharCode.bind spread-call twin
 
-Filed 2026-10-12 00:52 UTC, wave-423 lane D Spec review (local node
-validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open
-tree: prepending a surrogate code (e.g. 0xD800) to an integer code array
-makes _js_f1124f1130_parse_c_decl fail closed via _safe_chr, while node
-assembles the lone surrogate + full credential; find_credential MISSES.
-Systemic to every hook on the shared C-decl parser.
+Filed 2026-10-12 00:34 UTC, wave-423 attack round 91 (local node validation, $0.00 model spend (0 paid calls)). Prints BREAK on the open tree.
 """
 import os
 import subprocess
@@ -45,31 +40,28 @@ def _scan(payload):
     return "ERR"
 
 
-def _codes_surrogate(s):
-    # Prepend a surrogate code (0xD800) to the credential codes.
-    return "[0xD800," + ",".join(str(ord(c)) for c in s) + "]"
+def _codes(s):
+    return "[" + ",".join(str(ord(c)) for c in s) + "]"
 
 
-def _node_has_credential(payload, secret):
+def _node_ok(payload, secret):
     nc = subprocess.run(
         ["node", "-e",
          payload + ";console.log('OUT:'+((typeof RESULT!=='undefined')?RESULT:''));"],
         capture_output=True, text=True, timeout=30)
     for line in (nc.stdout or "").strip().split("\n"):
         if line.startswith("OUT:"):
-            return secret in line[4:]
+            return line[4:] == secret
     return False
 
 
 _TMPLS = [
-    ("surrogate-f1686",
-     "var C={I};var D=C.map(function(c){return String(c);});var E=D.map(Number);var S=String.fromCharCode.apply(null,E);var RESULT=S;"),
-    ("surrogate-f1687",
-     "var C={I};var T=C.join(',');var D=T.split(',').map(Number);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("surrogate-f1688",
-     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var T=S.split('').reverse().reverse().join('');var RESULT=T;"),
-    ("surrogate-f1689",
-     "var C={I};var S=C.map(function(c){return String.fromCharCode(c);}).join('');var D=[...S].map(function(ch){return ch.charCodeAt(0);});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
+    ("fcc-bind-spread",
+     "var C={I};var f=String.fromCharCode.bind(null);var S=f(...C);var RESULT=S;"),
+]
+
+_CONTROLS = [
+    ("direct-ctrl", 'var C={I};var S=String.fromCharCode.apply(null,C);var RESULT=S;'),
 ]
 
 
@@ -77,23 +69,32 @@ def main():
     fails = 0
     for name, tmpl in _TMPLS:
         for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
-            payload = tmpl.replace("{I}", _codes_surrogate(secret))
-            node_ok = _node_has_credential(payload, secret)
-            verdict = _scan(payload)
-            ok = node_ok and verdict == "MISS"
-            print(("BREAK " if ok else "FAIL ") + "%s %s node_cred=%s scanner=%s" % (name, label, node_ok, verdict))
+            payload = tmpl.replace("{I}", _codes(secret))
+            node = _node_ok(payload, secret)
+            verdict = _scan(payload) if node else "SKIP"
+            # red-first: node must confirm, scanner must MISS
+            ok = node and verdict == "MISS"
+            status = "BREAK" if ok else "FAIL"
             if not ok:
                 fails += 1
-    # Control: no-surrogate shape still HITs (F1686 closure intact).
-    cs = "[" + ",".join(str(ord(c)) for c in SECRET_S) + "]"
-    p = ("var C=%s;var D=C.map(function(c){return String(c);});var E=D.map(Number);"
-         "var S=String.fromCharCode.apply(null,E);var RESULT=S;" % cs)
-    v = _scan(p)
-    ok = (v == "HIT")
-    print(("CTRL-OK " if ok else "CTRL-FAIL ") + "no-surrogate f1686 -> " + v)
-    if not ok:
+            print("%s %s: node=%s scanner=%s -> %s" % (name, label, node, verdict, status))
+    for name, tmpl in _CONTROLS:
+        for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
+            payload = tmpl.replace("{I}", _codes(secret))
+            verdict = _scan(payload)
+            ok = verdict == "HIT"
+            if not ok:
+                fails += 1
+            print("%s %s: control scanner=%s -> %s" % (name, label, verdict, "OK" if ok else "FAIL"))
+    # junk-quiet: honest text stays quiet
+    junk = "the quick brown fox jumps over the lazy dog"
+    v = _scan(junk)
+    if v != "MISS":
         fails += 1
-    print("RESULT: " + ("BREAK" if fails == 0 else "NO-BREAK") + " (%d fails)" % fails)
+        print("junk-quiet: FAIL (got %s)" % v)
+    else:
+        print("junk-quiet: OK")
+    print("RESULT: %s (%d fails)" % ("BREAK" if fails == 0 else "NO-BREAK", fails))
     return 1 if fails else 0
 
 
