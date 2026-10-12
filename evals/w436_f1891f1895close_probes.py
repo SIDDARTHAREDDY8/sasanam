@@ -165,7 +165,7 @@ def main():
     # 8. Pins
     dlp_txt = open(os.path.join(REPO, "gov", "dlp.py")).read()
     loops = re.findall(r"for _stmtdec in \(([^)]+)\):", dlp_txt)
-    ok = check("stmtdec loops=%d (expect 151)" % len(loops), len(loops) == 151) and ok
+    ok = check("stmtdec loops=%d (expect 153)" % len(loops), len(loops) == 153) and ok
     ok = check("re.compile count=%d (expect 29)" % dlp_txt.count("re.compile("), dlp_txt.count("re.compile(") == 29) and ok
     findings = open(os.path.join(REPO, "evals", "FINDINGS.md")).read()
     ok = check("footer has wave-435 line", "# Wave-435:" in findings) and ok
@@ -178,7 +178,4 @@ def main():
 
 
 if __name__ == "__main__":
-    if os.environ.get("GOV_SKIP_GREEN") == "1":
-        print("SKIP: green check (GOV_SKIP_GREEN=1)")
-        sys.exit(0)
     sys.exit(main())

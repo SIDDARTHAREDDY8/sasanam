@@ -71,7 +71,7 @@ def test_p0_pins():
     ok = _check("p0-dispatch", "_js_f1896_stmt_decode," in src,
                 "dispatch loop present") and ok
     n = src.count("for _stmtdec in (")
-    ok = _check("p0-loopcount", n == 151, "got %d" % n) and ok
+    ok = _check("p0-loopcount", n == 153, "got %d" % n) and ok
     pins = set(re.findall(r"_PIN\s*=\s*(\d+)", src))
     ok = _check("p0-pin2143", pins == {"2143"} or not pins,
                 "pins=%s" % pins) and ok

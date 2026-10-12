@@ -74,7 +74,7 @@ def test_p0_pins():
     ok = _check("p0-dispatch", "_js_f1901_stmt_decode," in src,
                 "dispatch loop present") and ok
     n = src.count("for _stmtdec in (")
-    ok = _check("p0-loopcount", n == 151, "got %d" % n) and ok
+    ok = _check("p0-loopcount", n == 153, "got %d" % n) and ok
     nrc = src.count("re.compile(")
     ok = _check("p0-recompile", nrc == 29, "got %d" % nrc) and ok
     return ok

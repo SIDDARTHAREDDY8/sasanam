@@ -13981,3 +13981,4 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 # Wave-436 lane B: F1896-F1900 CLOSED (5); F1891-F1895, F1901-F1904, F1906 OPEN (10); next free F1907
 # Wave-436 lane C: F1901-F1904, F1906 CLOSED (5); F1891-F1900 OPEN (10); next free F1907
 # Wave-436 attack round 104: F1907-F1943 filed OPEN (37, first-filing 2026-10-12 15:09 UTC, $0 model spend); next free F1944
+# Wave-436: F1891-F1904, F1906 CLOSED (15); F1907-F1943 OPEN (37, attack 104); next free F1944
