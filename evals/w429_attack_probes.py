@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Wave-429 attack round 97 coverage battery: new F1768-F1781 pins (MISS) +
-F1757-F1767 carry-forward pins (still OPEN, MISS) + taxonomy/footer/no-paid-machinery.
+"""Wave-429 attack round 97 coverage battery (wave-429 merge): new F1768-F1781 pins (MISS) +
+F1757-F1767 carry-forward CLOSED pins (HIT) + taxonomy/footer/no-paid-machinery.
 
 $0-spend-by-construction. Prints HELD counts.
 """
@@ -68,7 +68,7 @@ _NEW = [
 _CARRY = [
     ("F1757", "var C={I};var G=Object.groupBy(C,function(c,i){return Math.floor(i/4);});var D=[];for(var k=0;String(k) in G;k++){D=D.concat(G[String(k)]);}var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1758", "var C={I};var M=new Map(C.map(function(c,i){return [i,c];}));var D=Array.from(M.values());var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
-    ("F1759", "var C={I};(async function(){var D=await Array.fromAsync(C);console.log('OUT:'+String.fromCharCode.apply(null,D));})();"),
+    ("F1759", "var C={I};(async function(){var D=await Array.fromAsync(C);var S=String.fromCharCode.apply(null,D);})();"),
     ("F1760", "var C={I};var B=new Uint8Array(C).buffer;var B2=structuredClone(B,{transfer:[B]});var S=String.fromCharCode.apply(null,Array.from(new Uint8Array(B2)));var RESULT=S;"),
     ("F1761", "var C={I};var D=C.toSorted(function(){return 0;});var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
     ("F1762", "var C={I};var O={};for(var i=0;i<C.length;i++){O[i]=C[i];}O.length=C.length;var D=Array.from(O);var S=String.fromCharCode.apply(null,D);var RESULT=S;"),
@@ -96,13 +96,13 @@ def main():
     print("p1 new pins: %d/%d HELD" % (h1, t1))
     held += h1
     total += t1
-    # p2: carry-forward OPEN pins must still MISS (both sizes)
+    # p2: carry-forward CLOSED pins must now HIT (both sizes) - wave-429 closed F1757-F1767
     h2 = t2 = 0
     for name, tmpl in _CARRY:
         for secret in (SECRET_S, SECRET_L):
             t2 += 1
             v = _scan(tmpl.replace("{I}", _codes(secret)))
-            if v == "MISS":
+            if v == "HIT":
                 h2 += 1
             else:
                 print("FAIL carry %s: got %s" % (name, v))

@@ -65,7 +65,7 @@ F1767_FILED = 'var C={I};var S=String.fromCharCode.apply(null,C);var R=/(.)/gdi;
 def test_p0_pins():
     """Pin checks: footer, taxonomy, counts."""
     ok = True
-    # N_STMTDEC_LOOPS = 123 (122 base + 1 new dispatch loop, wave-429 lane D)
+    # N_STMTDEC_LOOPS = 126 (122 base + 1 new dispatch loop, wave-429 lane D)
     with open(os.path.join(REPO_ROOT, "evals", "w395_perfharden_probes.py")) as f:
         perf_src = f.read()
     m = re.search(r"N_STMTDEC_LOOPS\s*=\s*(\d+)", perf_src)

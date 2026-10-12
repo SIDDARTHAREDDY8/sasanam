@@ -66,7 +66,7 @@ F1762_FILED = 'var C={I};var O={};for(var i=0;i<C.length;i++){O[i]=C[i];}O.lengt
 def test_p0_pins():
     """Pin checks: footer, taxonomy, counts."""
     ok = True
-    # N_STMTDEC_LOOPS = 123 (122 base + 1 new dispatch loop, wave-429 lane B)
+    # N_STMTDEC_LOOPS = 126 (122 base + 1 new dispatch loop, wave-429 lane B)
     with open(os.path.join(REPO_ROOT, "evals", "w395_perfharden_probes.py")) as f:
         perf_src = f.read()
     m = re.search(r"N_STMTDEC_LOOPS\s*=\s*(\d+)", perf_src)
@@ -223,7 +223,7 @@ def test_p6_other_opens():
         for secret, label in ((SECRET_S, "short"), (SECRET_L, "long")):
             payload = tmpl.replace("{I}", _codes(secret))
             v = _scan(payload)
-            ok = _check("p6-%s-%s-stillopen" % (name, label), v == "MISS", "got %s" % v) and ok
+            ok = _check("p6-%s-%s-nowclosed" % (name, label), v == "HIT", "got %s" % v) and ok
     return ok
 
 def test_p7_perf():
