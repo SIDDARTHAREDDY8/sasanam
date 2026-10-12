@@ -357,7 +357,7 @@ def c_sibling_disjointness():
 # Wave-411 merge: lanes 1-4 loops merged (61 base + 4) -> 65 (real code-count change, wave-385; asserted by count).
 # Wave-418 merge: lanes 1-4 loops merged (84 base + 4) -> 88 (real code-count change, wave-385; asserted by count).
 # Wave-419 merge: lanes 1-4 loops merged (88 base + 4) -> 92 (real code-count change, wave-385; asserted by count).
-N_STMTDEC_LOOPS = 110  # wave-425 merge: lanes A+B +1 each (108 base + 2) -> 110 (real code-count change, wave-385; asserted by count).
+N_STMTDEC_LOOPS = 111  # wave-425 merge: lanes A+B+C +1 each (108 base + 3) -> 111 (real code-count change, wave-385; asserted by count).
 
 def d_tail_guards():
     """Every per-wave `_stmtdec` dispatch loop in _decode_layer keeps
