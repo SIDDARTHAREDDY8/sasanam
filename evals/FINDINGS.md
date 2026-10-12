@@ -14243,4 +14243,4 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 # Wave-438 attack round 106: F1976-F2016 filed OPEN (41, first-filing 2026-10-12 18:19 UTC, $0 model spend); next free F2017
 # Wave-438: F1944-F1975 CLOSED (32); F1976-F2016 OPEN (41, attack 106, first-filing 2026-10-12 18:19 UTC, $0 model spend); F2017 OPEN (1, lane-B spec-review residual renumbered from F1976 per wave-272 rule); next free F2018
 
-# Wave-440 lanes A-F: F2018-F2077 CLOSED (60); next free F2078
+# Wave-440: F2018-F2077 CLOSED (60, 6 lanes); F2078-F2095 OPEN (18, attack 108, first-filing 2026-10-12 22:56 UTC, $0 model spend); next free F2096
