@@ -4,7 +4,7 @@
 Pins the closures. F1973 (provenance seam, script application/foo) is
 covered by the F1943 detector (verified HELD on the base tree) -- no
 dlp.py hook needed. All assertions must HOLD on the fixed tree.
-N_STMTDEC_LOOPS 157 -> 158 (real code-count change: one new dispatch
+N_STMTDEC_LOOPS 157 -> 161 (real code-count change: one new dispatch
 loop); re.compile( 29 in gov/dlp.py unchanged.
 """
 import os
@@ -108,8 +108,8 @@ def test_p0_pins():
     body = src[m.end():src.find("\ndef ", m.end())]
     loops = list(re.finditer(r"for _stmtdec in \(([^)]*)\):", body,
                              re.DOTALL))
-    ok = _check("p0-loopcount", len(loops) == 158,
-                "%d loops (pin 158)" % len(loops)) and ok
+    ok = _check("p0-loopcount", len(loops) == 161,
+                "%d loops (pin 161)" % len(loops)) and ok
     # re.compile count unchanged
     ok = _check("p0-recompile", src.count("re.compile(") == 29,
                 "%d" % src.count("re.compile(")) and ok

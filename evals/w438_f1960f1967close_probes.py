@@ -2,7 +2,7 @@
 """Wave-438 lane C close battery: F1960-F1967.
 
 Pins the closures. All assertions must HOLD on the fixed tree.
-N_STMTDEC_LOOPS 157 -> 158 (real code-count change: one new dispatch
+N_STMTDEC_LOOPS 157 -> 161 (real code-count change: one new dispatch
 loop); re.compile( 29 in gov/dlp.py unchanged.
 """
 import os
@@ -77,7 +77,7 @@ def test_p0_pins():
     ok = _check("p0-dispatch", "_js_f1960_stmt_decode," in src,
                 "dispatch loop present") and ok
     n = src.count("for _stmtdec in (")
-    ok = _check("p0-loopcount", n == 158, "got %d" % n) and ok
+    ok = _check("p0-loopcount", n == 161, "got %d" % n) and ok
     nrc = src.count("re.compile(")
     ok = _check("p0-recompile", nrc == 29, "got %d" % nrc) and ok
     return ok

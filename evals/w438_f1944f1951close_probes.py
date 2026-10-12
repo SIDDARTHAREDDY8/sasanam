@@ -2,7 +2,7 @@
 """Wave-438 lane A close battery: F1944-F1951.
 
 Pins the closures. All assertions must HOLD on the fixed tree.
-N_STMTDEC_LOOPS 157 -> 158 (real code-count change: one new dispatch
+N_STMTDEC_LOOPS 157 -> 161 (real code-count change: one new dispatch
 loop); re.compile( 29 unchanged.
 """
 import os
@@ -76,13 +76,13 @@ def test_p0_pins():
         ok = _check("p0-%s" % h, ("def %s(" % h) in src, "defined") and ok
     ok = _check("p0-dispatch", "_js_f1944_stmt_decode," in src,
                 "dispatch loop present") and ok
-    # Loop count: 157 base + 1 new = 158
+    # Loop count: 157 base + 4 new = 161
     m = re.search(r"def _decode_layer\(text\):", src)
     body = src[m.end():src.find("\ndef ", m.end())]
     loops = list(re.finditer(r"for _stmtdec in \(([^)]*)\):", body,
                              re.DOTALL))
-    ok = _check("p0-loopcount", len(loops) == 158,
-                "%d loops (pin 158)" % len(loops)) and ok
+    ok = _check("p0-loopcount", len(loops) == 161,
+                "%d loops (pin 161)" % len(loops)) and ok
     # re.compile count unchanged
     ok = _check("p0-recompile", src.count("re.compile(") == 29,
                 "%d" % src.count("re.compile(")) and ok

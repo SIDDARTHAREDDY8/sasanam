@@ -104,7 +104,7 @@ def test_p0_pins():
     ok = _check("p0-dispatch", "_js_f1934_stmt_decode," in src,
                 "dispatch loop present") and ok
     n = src.count("for _stmtdec in (")
-    ok = _check("p0-loopcount", n == 154, "got %d" % n) and ok
+    ok = _check("p0-loopcount", n == 161, "got %d" % n) and ok  # wave-438 merge: 154 + 4 dispatch loops (lanes A/B/C/D)
     nrc = src.count("re.compile(")
     ok = _check("p0-recompile", nrc == 29, "got %d" % nrc) and ok
     with open(os.path.join(REPO_ROOT, "gov",
@@ -185,14 +185,14 @@ def test_p3_failclosed():
         ("f1934-pos5", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.indexOf('xoxb',5)>=0){var U=T;}else{var U='';}var RESULT=U;" % cs, "MISS"),
         # F1935: absent literal -> MISS
         ("f1935-absent", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.indexOf('zzzz')!==-1){var U=T;}else{var U='';}var RESULT=U;" % cs, "MISS"),
-        # F1935: loose != -> narrow grammar -> MISS
-        ("f1935-loose", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.indexOf('xoxb')!=-1){var U=T;}else{var U='';}var RESULT=U;" % cs, "MISS"),
+        # F1935: loose != -> now HIT via F1974 (wave-438 lane D closed the loose form)
+        ("f1935-loose", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.indexOf('xoxb')!=-1){var U=T;}else{var U='';}var RESULT=U;" % cs, "HIT"),
         # F1936: slice start != 0 -> narrow grammar -> MISS
         ("f1936-start1", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.startsWith(T.slice(1,4))){var U=T;}else{var U='';}var RESULT=U;" % cs, "MISS"),
         # F1937: non-prefix literal -> MISS
         ("f1937-nonprefix", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.toLowerCase().startsWith('zzzz')){var U=T;}else{var U='';}var RESULT=U;" % cs, "MISS"),
-        # F1938: length+ (not minus) -> narrow grammar -> MISS
-        ("f1938-plus", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.endsWith(T.substring(T.length+6))){var U=T;}else{var U='';}var RESULT=U;" % cs, "MISS"),
+        # F1938: length+ (not minus) -> now HIT via F1975 (wave-438 lane D closed the past-end form)
+        ("f1938-plus", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');if(T.endsWith(T.substring(T.length+6))){var U=T;}else{var U='';}var RESULT=U;" % cs, "HIT"),
         # F1940: wrong base -> MISS
         ("f1940-wrongbase", "var C=%s;var T=C.map(function(c){return String.fromCharCode(c);}).join('');var U=Array.from(C).join('');var RESULT=U;" % cs, "MISS"),
         # F1941: non-empty template sep -> MISS

@@ -81,7 +81,7 @@ def _f2016_payloads():
     return [("f2016-t-then-u", "var C=%s;%s%svar RESULT=U;" % (ci, t_asm, u_asm)),
             ("f2016-u-then-t", "var C=%s;%s%svar RESULT=T;" % (ci, u_asm, t_asm))]
 
-# Carry-forward: F1944-F1972, F1974-F1975 decoder pins (still OPEN, MISS).
+# Carry-forward: F1944-F1972, F1974-F1975 decoder pins (now CLOSED by wave-438 lanes, HIT).
 # F1973 is a provenance pin: on this tree it FLAGs (F1943 hook now built),
 # so it is carried under _PROV_FLAG instead.
 _CARRY = (["w437_f%d_redfirst" % n for n in range(1944, 1973)]
@@ -128,7 +128,7 @@ def main():
     for mod in _CARRY:
         total += 1
         v = _scan(_redfirst_payload(mod))
-        if v == "MISS":
+        if v == "HIT":
             held += 1
         else:
             bad.append((mod, v))
@@ -172,7 +172,7 @@ def main():
     print("w438_attack_probes: %d/%d HELD" % (held, total))
     for name, v in bad:
         print("  NOT-HELD: %s -> %s" % (name, v))
-    print("footer: F1976-F2016 OPEN (41, round 106); next free F2017; pin %d" % TAXONOMY_PIN)
+    print("footer: F1976-F2016 OPEN (41, round 106); F2017 OPEN (1, lane-B renumber); next free F2018; pin %d" % TAXONOMY_PIN)
     return 0 if held == total else 1
 
 
