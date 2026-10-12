@@ -13982,3 +13982,94 @@ Next free finding: **F1323**. **F988-F1288 CLOSED (302, wave-393 lanes 1-5 + wav
 # Wave-436 lane C: F1901-F1904, F1906 CLOSED (5); F1891-F1900 OPEN (10); next free F1907
 # Wave-436 attack round 104: F1907-F1943 filed OPEN (37, first-filing 2026-10-12 15:09 UTC, $0 model spend); next free F1944
 # Wave-436: F1891-F1904, F1906 CLOSED (15); F1939 CLOSED (1, covered by F1904 hook); F1907-F1938, F1940-F1943 OPEN (36, attack 104); next free F1944
+
+
+(F1944 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: trimStart with tab pad. Beyond F1907-F1910. -- `('\\t'+T).trimStart()` with tab leading pad returns T intact (node-verified); find_credential MISSES on open tree Close-when: the trimStart hook covers non-space whitespace pads, red-first verified; red-first: evals/w437_f1944_redfirst.py prints BREAK on the open tree)
+
+
+(F1945 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: chained trimLeft().trimRight(). Beyond F1907-F1910. -- `(' '+T).trimLeft().trimRight()` chained trims return T intact (node-verified); find_credential MISSES on open tree Close-when: the trim hook covers chained trim calls, red-first verified; red-first: evals/w437_f1945_redfirst.py prints BREAK on the open tree)
+
+
+(F1946 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: toString with radix 16. Beyond F1911. -- `T.toString(16)` with explicit radix 16 returns T intact for credential strings (node-verified); find_credential MISSES on open tree Close-when: the toString hook covers explicit radix args beyond 10, red-first verified; red-first: evals/w437_f1946_redfirst.py prints BREAK on the open tree)
+
+
+(F1947 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: toString via bind. Beyond F1911-F1913. -- `T.toString.bind(T)()` bound call returns T intact (node-verified); find_credential MISSES on open tree Close-when: the toString hook covers .bind() call form, red-first verified; red-first: evals/w437_f1947_redfirst.py prints BREAK on the open tree)
+
+
+(F1948 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: valueOf via .call. Beyond F1913. -- `String.prototype.valueOf.call(T)` call form returns T intact (node-verified); find_credential MISSES on open tree Close-when: the valueOf hook covers .call form, red-first verified; red-first: evals/w437_f1948_redfirst.py prints BREAK on the open tree)
+
+
+(F1949 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: double toString. Beyond F1915. -- `T.toString().toString()` chained returns T intact (node-verified); find_credential MISSES on open tree Close-when: the toString hook covers chained toString, red-first verified; red-first: evals/w437_f1949_redfirst.py prints BREAK on the open tree)
+
+
+(F1950 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: template with three substitutions. Beyond F1916. -- `${''}${T}${''}` three-substitution template returns T intact (node-verified); find_credential MISSES on open tree Close-when: the template-literal hook covers 3+ substitutions, red-first verified; red-first: evals/w437_f1950_redfirst.py prints BREAK on the open tree)
+
+
+(F1951 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: nested template literal. Beyond F1916-F1918. -- `${`${T}`}` nested template returns T intact (node-verified); find_credential MISSES on open tree Close-when: the template-literal hook covers nested templates, red-first verified; red-first: evals/w437_f1951_redfirst.py prints BREAK on the open tree)
+
+
+(F1952 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: template with toString(radix) inside. Beyond F1917. -- `${T.toString(10)}` call-with-arg inside template returns T intact (node-verified); find_credential MISSES on open tree Close-when: the template-literal hook covers call expressions with args, red-first verified; red-first: evals/w437_f1952_redfirst.py prints BREAK on the open tree)
+
+
+(F1953 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: template chained with slice. Beyond F1918. -- `${T}`.slice(0)` template chained with slice returns T intact (node-verified); find_credential MISSES on open tree Close-when: the template-literal hook covers chained slice, red-first verified; red-first: evals/w437_f1953_redfirst.py prints BREAK on the open tree)
+
+
+(F1954 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: concat with three args. Beyond F1919. -- `''.concat('',T,'')` three-arg concat returns T intact (node-verified); find_credential MISSES on open tree Close-when: the concat hook covers 3+ args, red-first verified; red-first: evals/w437_f1954_redfirst.py prints BREAK on the open tree)
+
+
+(F1955 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: concat plus slice. Beyond F1920. -- `T.concat('x').slice(0,-1)` concat with appended char plus slice returns T intact (node-verified); find_credential MISSES on open tree Close-when: the concat hook covers chained slice, red-first verified; red-first: evals/w437_f1955_redfirst.py prints BREAK on the open tree)
+
+
+(F1956 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: concat via apply. Beyond F1919-F1920. -- `''.concat.apply('',[T])` apply form returns T intact (node-verified); find_credential MISSES on open tree Close-when: the concat hook covers .apply form, red-first verified; red-first: evals/w437_f1956_redfirst.py prints BREAK on the open tree)
+
+
+(F1957 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: parenthesized additive. Beyond F1921. -- `(''+T)` parenthesized empty-left returns T intact (node-verified); find_credential MISSES on open tree Close-when: the additive hook covers parenthesized forms, red-first verified; red-first: evals/w437_f1957_redfirst.py prints BREAK on the open tree)
+
+
+(F1958 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: triple empty additive. Beyond F1923. -- `''+''+T` triple-empty left returns T intact (node-verified); find_credential MISSES on open tree Close-when: the additive hook covers 3-operand chains, red-first verified; red-first: evals/w437_f1958_redfirst.py prints BREAK on the open tree)
+
+
+(F1959 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: String() left additive. Beyond F1922. -- `String()+T` String() empty call on left returns T intact (node-verified); find_credential MISSES on open tree Close-when: the additive hook covers String() on left, red-first verified; red-first: evals/w437_f1959_redfirst.py prints BREAK on the open tree)
+
+
+(F1960 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: Reflect.construct plus toString. Beyond F1926. -- `Reflect.construct(String,[T]).toString()` construct plus toString returns T intact (node-verified); find_credential MISSES on open tree Close-when: the Reflect hook covers construct+toString chain, red-first verified; red-first: evals/w437_f1960_redfirst.py prints BREAK on the open tree)
+
+
+(F1961 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: Reflect.get. Beyond F1924-F1927. -- `Reflect.get({v:T},'v')` property read returns T intact (node-verified); find_credential MISSES on open tree Close-when: the Reflect hook covers Reflect.get, red-first verified; red-first: evals/w437_f1961_redfirst.py prints BREAK on the open tree)
+
+
+(F1962 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: find with comparison predicate. Beyond F1929-F1930. -- `D.find(function(c){return c>0;})` guard with comparison predicate; readout via fromCharCode.apply (node-verified); find_credential MISSES on open tree Close-when: the find hook covers comparison predicates, red-first verified; red-first: evals/w437_f1962_redfirst.py prints BREAK on the open tree)
+
+
+(F1963 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: findIndex with comparison predicate. Beyond F1931-F1932. -- `D.findIndex(function(c){return c<1000;})` guard with comparison predicate; readout via fromCharCode.apply (node-verified); find_credential MISSES on open tree Close-when: the findIndex hook covers comparison predicates, red-first verified; red-first: evals/w437_f1963_redfirst.py prints BREAK on the open tree)
+
+
+(F1964 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: every guard. Beyond F1928-F1932. -- `D.every(function(c){return c>0;})` guard; readout via fromCharCode.apply (node-verified); find_credential MISSES on open tree Close-when: the array-predicate hook covers every(), red-first verified; red-first: evals/w437_f1964_redfirst.py prints BREAK on the open tree)
+
+
+(F1965 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: some guard. Beyond F1928-F1932. -- `D.some(function(c){return c===C[0];})` guard; readout via fromCharCode.apply (node-verified); find_credential MISSES on open tree Close-when: the array-predicate hook covers some(), red-first verified; red-first: evals/w437_f1965_redfirst.py prints BREAK on the open tree)
+
+
+(F1966 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: negated includes guard. Beyond F1933. -- `if(!T.includes('zzz'))` negated includes guard passes for credential (node-verified); find_credential MISSES on open tree Close-when: the includes hook covers negated form, red-first verified; red-first: evals/w437_f1966_redfirst.py prints BREAK on the open tree)
+
+
+(F1967 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: indexOf strict-equality guard. Beyond F1934-F1935. -- `if(T.indexOf('xoxb')===0)` strict-equality guard passes for credential (node-verified); find_credential MISSES on open tree Close-when: the indexOf hook covers ===0 form, red-first verified; red-first: evals/w437_f1967_redfirst.py prints BREAK on the open tree)
+
+
+(F1968 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: negated startsWith guard. Beyond F1936-F1937. -- `if(!T.startsWith('zzz'))` negated startsWith guard passes for credential (node-verified); find_credential MISSES on open tree Close-when: the startsWith hook covers negated form, red-first verified; red-first: evals/w437_f1968_redfirst.py prints BREAK on the open tree)
+
+
+(F1969 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: charAt guard. Beyond F1933-F1938. -- `if(T.charAt(0)==='x')` charAt guard passes for credential (node-verified); find_credential MISSES on open tree Close-when: the string-guard hook covers charAt, red-first verified; red-first: evals/w437_f1969_redfirst.py prints BREAK on the open tree)
+
+
+(F1970 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: match guard. Beyond F1933-F1938. -- `if(T.match(/xoxb/))` match guard passes for credential (node-verified); find_credential MISSES on open tree Close-when: the string-guard hook covers match(), red-first verified; red-first: evals/w437_f1970_redfirst.py prints BREAK on the open tree)
+
+
+(F1971 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: Array.from with map fn. Beyond F1940. -- `Array.from(T,function(c){return c;}).join('')` with map fn returns T intact (node-verified); find_credential MISSES on open tree Close-when: the Array.from hook covers map-fn form, red-first verified; red-first: evals/w437_f1971_redfirst.py prints BREAK on the open tree)
+
+
+(F1972 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Decoder: spread toString split-join. Beyond F1940-F1942. -- `[...T].toString().split(',').join('')` spread via toString returns T intact (node-verified); find_credential MISSES on open tree Close-when: the spread hook covers toString-split-join, red-first verified; red-first: evals/w437_f1972_redfirst.py prints BREAK on the open tree)
+
+
+(F1973 filed 2026-10-12 16:09 UTC, wave-437 attack round 105 (local node validation, $0.00 model spend (0 paid calls), short + 40-char split credentials); LOW, OPEN: Provenance: script with application/foo type. Beyond F1943. -- `<script type="application/foo">PROSE</script>` with prose-shaped neutral content returns QUIET from instruction_shaped (break-first, neutralized prose, no imperatives) while the covered script types FLAG by construction; non-executable script blocks are never rendered and never executed, so prose there is hidden from the human reader (F1024/F1073 rationale). Beyond F1943 (text/unknown, text/foo, application/json). Close-when: the script data-block detector covers all non-executable types (or inverts to an executable-type denylist), red-first verified; red-first: evals/w437_f1973_redfirst.py prints BREAK on the open tree)
+# Wave-437 attack round 105: F1944-F1973 filed OPEN (30, first-filing 2026-10-12 16:09 UTC, $0 model spend); next free F1974
