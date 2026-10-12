@@ -197988,6 +197988,268 @@ def _js_f1767_stmt_decode(text):
 
 
 
+def _js_f1768_stmt_decode(text):
+    """Decode F1768 new Array spread-construction assigned (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=new Array(...C);`
+    `var|let|const S=String.fromCharCode.apply(null,D);` OR
+    `var|let|const S=String.fromCharCode(...D);`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `new Array(...C)` spreads the code array
+    into a fresh array (identity copy); the apply readout
+    (`String.fromCharCode.apply(null,D)`) and the spread-call readout
+    (`String.fromCharCode(...D)`) both decode via ToUint16 discipline
+    (same as _js_f1124f1130_parse_c_decl). Disjoint from F1131
+    (CLOSED: `...new Array(...C)` as a direct spread-call readout --
+    here the assigned-construction form `var D=new Array(...C)`) by
+    grammar -- the filed shapes BREAK on the open tree. Fail-closed:
+    the spread arg must name exactly the code array; the readout
+    array must name the constructed D; anything else fails closed: a
+    miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "new Array(" not in text or "..." not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1768"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "Array"}
+        # var D=new Array(...C);
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Array")
+        if m is None:
+            raise _JSExprFail(what + " not Array")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail(what + " not spread")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        if nm != cname:
+            raise _JSExprFail(what + " spread base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " new-array")
+        # var S=String.fromCharCode.apply(null,D); OR
+        # var S=String.fromCharCode(...D);
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        # var S=String.fromCharCode.apply(null,D); OR
+        # var S=String.fromCharCode(...D);
+        # We need the position of "String" to use _js_f1349f1352_parse_fcc_apply
+        # for the apply form.
+        str_pos = _js_skip_ws(text, j)
+        m = _js_match_kw(text, str_pos, "String")
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, j, "fromCharCode")
+        if m is None:
+            raise _JSExprFail(what + " not fcc")
+        j = _js_skip_ws(text, m)
+        if j < len(text) and text[j] == ".":
+            # apply readout: .apply(null,D)
+            j = _js_f1349f1352_parse_fcc_apply(text, str_pos, dname,
+                                               what)
+        elif j < len(text) and text[j] == "(":
+            # spread-call readout: (...D)
+            j = _js_expect(text, j, "(")
+            j = _js_skip_ws(text, j)
+            if not text.startswith("...", j):
+                raise _JSExprFail(what + " not spread-call")
+            nm, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+            if nm != dname:
+                raise _JSExprFail(what + " spread-call base mismatch")
+            j = _js_expect(text, j, ")")
+        else:
+            raise _JSExprFail(what + " bad readout")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " readout")
+        # var RESULT=S;
+        _, resname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if resname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1769_stmt_decode(text):
+    """Decode F1769 rest-destructuring copy (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const [...D]=C;`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `var [...D]=C` rest-destructures the code
+    array into D (identity copy); the apply readout decodes via
+    ToUint16 discipline (same as _js_f1124f1130_parse_c_decl).
+    Disjoint from F1208 (CLOSED: `[...C]` array-literal spread copy --
+    here true rest destructuring in a var declaration) by grammar --
+    the filed shape BREAKs on the open tree. Fail-closed: the rest
+    target must be a fresh name; the source must name exactly the
+    code array; anything else fails closed: a miss, never a
+    mis-decode. Returns the decoded string, or None. Never evals.
+    """
+    if "[..." not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1769"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "Array"}
+        # var [...D]=C;
+        m = _js_match_kw(text, _js_skip_ws(text, j), "var")
+        if m is None:
+            m = _js_match_kw(text, _js_skip_ws(text, j), "let")
+        if m is None:
+            m = _js_match_kw(text, _js_skip_ws(text, j), "const")
+        if m is None:
+            raise _JSExprFail(what + " not decl")
+        j = _js_skip_ws(text, m)
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail(what + " not rest")
+        dname, j = _js_parse_ident(text, _js_skip_ws(text, j + 3))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " rest source mismatch")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " rest")
+        # var S=String.fromCharCode.apply(null,D);
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, _js_skip_ws(text, j),
+                                           dname, what)
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " apply")
+        # var RESULT=S;
+        _, resname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if resname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
+def _js_f1770_stmt_decode(text):
+    """Decode F1770 chained slice+reverse+reverse (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const D=C.slice(0).reverse().reverse();`
+    `var|let|const S=String.fromCharCode.apply(null,D);`
+    `var|let|const RESULT=S;`
+    then end-of-text.
+
+    Node-exact (v24.20.0): `C.slice(0)` copies the code array;
+    `.reverse()` reverses in place; the second `.reverse()` reverses
+    back -- net identity. The apply readout decodes via ToUint16
+    discipline (same as _js_f1124f1130_parse_c_decl). Disjoint from
+    F820 (CLOSED: reverse reads) and F1742 (CLOSED: toReversed+reverse
+    composition -- here the chained slice+reverse+reverse production)
+    by grammar -- the filed shape BREAKs on the open tree.
+    Fail-closed: the slice arg must be exactly 0; both reverses must
+    be zero-arg; the chain base must name exactly the code array;
+    anything else fails closed: a miss, never a mis-decode. Returns
+    the decoded string, or None. Never evals.
+    """
+    if ".slice(0)" not in text or ".reverse()" not in text:
+        return None
+    if "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F1770"
+    try:
+        j = _js_skip_ws(text, 0)
+        cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                     what)
+        bound = {cname, "RESULT", "String", "Array"}
+        # var D=C.slice(0).reverse().reverse();
+        _, dname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(dname, bound, {"String"},
+                                        what)
+        bound.add(dname)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != cname:
+            raise _JSExprFail(what + " chain base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, j, "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        j = _js_skip_ws(text, j)
+        if j >= len(text) or text[j] != "0":
+            raise _JSExprFail(what + " slice arg not 0")
+        j = _js_expect(text, j + 1, ")")
+        for _ in range(2):
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, j, "reverse")
+            if m is None:
+                raise _JSExprFail(what + " not reverse")
+            j = _js_expect(text, m, "(")
+            j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " chain")
+        # var S=String.fromCharCode.apply(null,D);
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound, {"String"},
+                                        what)
+        bound.add(sname)
+        j = _js_f1349f1352_parse_fcc_apply(text, _js_skip_ws(text, j),
+                                           dname, what)
+        j = _js_expect(text, j, ";")
+        _js_f96x_charge(state, what + " apply")
+        # var RESULT=S;
+        _, resname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        if resname != "RESULT":
+            raise _JSExprFail(what + " not RESULT")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " result base mismatch")
+        _js_f96x_charge(state, what + " result")
+        _js_f96x_expect_semi_end(text, j)
+        return dstr
+    except _JSExprFail:
+        return None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -200611,6 +200873,24 @@ def _decode_layer(text):
             _add(_sdec)
             if len(variants) >= _MAX_CANDIDATES:
                 return variants
+    # F1768/F1769/F1770: new Array spread-construction, rest
+    # destructuring, and chained slice+reverse+reverse. Each parses a
+    # strict whole-text grammar; every filed shape BREAKs on the open
+    # tree, so no earlier production decoded them and the pre-existing
+    # variant order (F441) is preserved. Disjoint from F1131 (direct
+    # spread-call readout -- here assigned construction), F1208
+    # (array-literal spread -- here rest destructuring), F820/F1742
+    # (reverse variants -- here the chained production) by grammar
+    # (documented per hook). Additive, in F-number order.
+    for _stmtdec in (_js_f1768_stmt_decode,
+                     _js_f1769_stmt_decode,
+                     _js_f1770_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
 
 
 
