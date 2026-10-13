@@ -718,11 +718,196 @@ _MEMORY_WRITE = re.compile(
     r"|\balways remember this\b"
     r"|\blearn (?:this |it )by heart\b"
     r"|\bmemorize by heart\b"
-    r"|\bremember by heart\b")
+    r"|\bremember by heart\b"
     # F3456 (wave-452 lane B): "put in memory" stays OPEN by design.
     # The wave-451 lane B set/put guard (REQUIRED this/it) is kept:
     # bare "put in memory" occurs in honest technical prose. No
     # branch added.
+    # F3466-F3644 (wave-452 lane C): deep-link carriers (179).
+    # Case-sensitive param names per established convention
+    # ((?-i:...) inside the (?i) regex): each case variant is
+    # an explicit branch, never IGNORECASE.
+    # New lowercase query params (?word=). The [?&#] class
+    # also covers the 10 hash-lower #word= findings.
+    r"|[?&#](?-i:albums)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:anthologies)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:archives)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:banks)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:brains)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:bygone)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:bygones)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:chronicles)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:deposits)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:diaries)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:dockets)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:flashback)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:flashbacks)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:heirloom)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:heirlooms)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:heritage)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:histories)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:imprints)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:inventories)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:journals)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:keepsake)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:keepsakes)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:ledgers)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:legacy)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:logbooks)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:memento)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:mementos)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:memoirs)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:memorabilia)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:minds)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:nostalgia)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:notebooks)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:pasts)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:pigeonholes)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:recollection)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:recollections)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:registers)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:registries)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:relic)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:relics)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:remembrances)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:reminiscences)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:retentions)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:retro)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:scrapbooks)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:souvenir)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:souvenirs)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:stockpiles)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:traces)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:vintage)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:yesteryear)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # Uppercase query params (?WORD=). The [?&#] class
+    # also covers the 5 hash-UPPER #WORD= findings.
+    r"|[?&#](?-i:ALBUM)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:ANECDOTE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:ANECDOTES)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:ANTHOLOGY)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:ARCHIVE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:BRAIN)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:CHRONICLE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:COLLECTION)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:EPISODE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:EPISODES)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:EXPERIENCE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:EXPERIENCES)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:FLASHBACK)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:HERITAGE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:HISTORY)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:KEEPSAKE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:LEDGER)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:LEGACY)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:MEMENTO)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:MEMOIR)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:MEMORIES)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:MEMORY)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:MIND)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:MOMENT)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:MOMENTS)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:NOSTALGIA)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:NOTEBOOK)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:PAST)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:RECOLLECTION)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:RECORD)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:RECORDS)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:RELIC)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:REMEMBRANCE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:REMINISCENCE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:RETENTION)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:SCRAPBOOK)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:SOUVENIR)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:STASH)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:STORIES)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:STORY)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:TALE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:TALES)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:THOUGHT)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:THOUGHTS)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:VAULT)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # Capitalized query params (?Word=).
+    r"|[?&#](?-i:Brain)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:Mind)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:Stash)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:Vault)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # Mixed-case query params (?wOrD=).
+    r"|[?&#](?-i:bRaIn)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:mEmOrY)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:mInD)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:sTaSh)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:vAuLt)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # Matrix params (;word=).
+    r"|;(?-i:archives)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:flashback)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:histories)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:keepsake)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:legacy)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:memento)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:memory)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:nostalgia)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:recollection)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:record)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:relic)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:souvenir)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # Uppercase matrix params (;WORD=).
+    r"|;(?-i:BRAIN)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:MEMORY)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:MIND)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:STASH)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:VAULT)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # No-equals deep-link (?word, #word). The negative
+    # lookahead keeps each disjoint from its = branch
+    # (and ?memory disjoint from ?memories=, ?record
+    # disjoint from ?records=). The [?&#] class also
+    # covers the 12 hashnoeq #word findings.
+    # `memory` excludes % from its lookahead: a % after
+    # `memory` signals percent-encoded content, which is
+    # the encoded-equals branch's job below -- so
+    # `?memory%3D` (empty value) stays QUIET like the
+    # empty-value `?memory=` shape, while
+    # `?memory%3DExampleBrand` FLAGs via that branch.
+    # The other words keep the standard lookahead
+    # (fail-closed on % continuations, which have no
+    # dedicated branch).
+    r"|[?&#]!?(?-i:archives)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:flashback)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:histories)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:keepsake)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:legacy)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:memento)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:memory)(?![=a-zA-Z0-9%])"
+    r"|[?&#]!?(?-i:nostalgia)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:recollection)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:record)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:relic)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:souvenir)(?![=a-zA-Z0-9])"
+    # Path segments (URL context required to avoid prose
+    # false positives; trailing slash required).
+    r"|://[^/\s]+/(?-i:archives)/"
+    r"|://[^/\s]+/(?-i:flashback)/"
+    r"|://[^/\s]+/(?-i:histories)/"
+    r"|://[^/\s]+/(?-i:keepsake)/"
+    r"|://[^/\s]+/(?-i:legacy)/"
+    r"|://[^/\s]+/(?-i:memento)/"
+    r"|://[^/\s]+/(?-i:nostalgia)/"
+    r"|://[^/\s]+/(?-i:recollection)/"
+    r"|://[^/\s]+/(?-i:record)/"
+    r"|://[^/\s]+/(?-i:relic)/"
+    r"|://[^/\s]+/(?-i:souvenir)/"
+    # Uppercase path segments.
+    r"|://[^/\s]+/(?-i:BRAIN)/"
+    r"|://[^/\s]+/(?-i:MEMORY)/"
+    r"|://[^/\s]+/(?-i:MIND)/"
+    r"|://[^/\s]+/(?-i:STASH)/"
+    r"|://[^/\s]+/(?-i:VAULT)/"
+    # URL-encoded equals (?memory%3D / ?memory%3d). The
+    # `memory` no-equals branch above deliberately excludes
+    # % from its lookahead, so these FLAG only via this
+    # branch (empty-value `?memory%3D` stays QUIET).
+    r"|[?&#](?-i:memory)%3[Dd][a-zA-Z][a-zA-Z0-9]+\b"
+)
 
 
 def _strip_zero_width(text):
