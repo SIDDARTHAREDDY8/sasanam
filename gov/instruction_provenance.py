@@ -364,12 +364,20 @@ _ZW_CHARS = "\u200b\u200c\u200d\ufeff"
 # F2095 (wave-441): deep-link carrier with remember param and entity
 # value (no authority claim needed -- the URL parameter itself is the
 # memory-write instruction).
+# F2145-F2152 (wave-443): additional memory-write verbs/phrasings
+# ("log to memory", "record in memory", "persist in memory",
+# "archive to memory", "keep this in memory", "memory banks",
+# "jot down in memory", "in your memory" declarative).
+# F2153-F2155 (wave-443): deep-link carriers (remember_for=, memory=
+# query params; #!remember= hashbang).
 _MEMORY_WRITE = re.compile(
-    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference|retain in memory|cache in memory|write to memory|update your memory)\b"
+    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference|retain in memory|cache in memory|write to memory|update your memory|log (?:this |it )?to memory|record in memory|persist in memory|archive to memory|keep this in memory|memory banks|jot down in memory|in your memory)\b"
     r"[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\b"
     r"|\b(?:authoritative|trusted|canonical|official)\s+source\b"
-    r"[^.]{0,80}?\b(?:remember|store|save|memorize|retain|cache|write|update)\b"
-    r"|[?&#](?-i:remember)=(?-i:[A-Z])[a-zA-Z0-9]+\b"
+    r"[^.]{0,80}?\b(?:remember|store|save|memorize|retain|cache|write|update|log|record|persist|archive|jot)\b"
+    r"|[?&#]!?(?-i:remember)=(?-i:[A-Z])[a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:remember_for)=(?-i:[A-Z])[a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:memory)=(?-i:[A-Z])[a-zA-Z0-9]+\b"
     r"|/(?-i:remember)/(?-i:[A-Z])[a-zA-Z0-9]+\b")
 
 
