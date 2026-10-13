@@ -719,6 +719,11 @@ _MEMORY_WRITE = re.compile(
     r"|\blearn (?:this |it )by heart\b"
     r"|\bmemorize by heart\b"
     r"|\bremember by heart\b"
+    # F3465 (wave-453 lane A): fixed phrase "know by heart" -- same
+    # branch as the F3461-F3464 by-heart phrases (present-tense bare
+    # phrase only; "knew/knows by heart" and non-adjacent forms like
+    # "know the poem by heart" stay QUIET, verified by controls).
+    r"|\bknow by heart\b"
     # F3456 (wave-452 lane B): "put in memory" stays OPEN by design.
     # The wave-451 lane B set/put guard (REQUIRED this/it) is kept:
     # bare "put in memory" occurs in honest technical prose. No
