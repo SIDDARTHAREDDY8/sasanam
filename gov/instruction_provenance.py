@@ -559,7 +559,81 @@ _MEMORY_WRITE = re.compile(
     r"|[?&#]!?(?-i:stash)(?![=a-zA-Z0-9])"
     r"|[?&#]!?(?-i:vault)(?![=a-zA-Z0-9])"
     r"|[?&#]!?(?-i:note)(?![=a-zA-Z0-9])"
-    r"|[?&#]!?(?-i:save)(?![=a-zA-Z0-9])")
+    r"|[?&#]!?(?-i:save)(?![=a-zA-Z0-9])"
+    # F2995-F3021 (wave-451 lane C): new deep-link query params.
+    r"|[?&#](?-i:album)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:anecdote)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:anecdotes)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:anthology)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:brain)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:collection)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:episode)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:episodes)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:experience)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:experiences)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:history)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:memories)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:mind)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:moment)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:moments)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:past)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:records)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:remembrance)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:reminiscence)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:retention)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:scrapbook)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:stories)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:story)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:tale)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:tales)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:thought)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:thoughts)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # F3022-F3031 (wave-451 lane C): new deep-link path segments (URL
+    # context required to avoid prose false positives).
+    r"|://[^/\s]+/(?-i:brain)/"
+    r"|://[^/\s]+/(?-i:history)/"
+    r"|://[^/\s]+/(?-i:memories)/"
+    r"|://[^/\s]+/(?-i:mind)/"
+    r"|://[^/\s]+/(?-i:past)/"
+    r"|://[^/\s]+/(?-i:remembrance)/"
+    r"|://[^/\s]+/(?-i:reminiscence)/"
+    r"|://[^/\s]+/(?-i:retention)/"
+    r"|://[^/\s]+/(?-i:scrapbook)/"
+    r"|://[^/\s]+/(?-i:thought)/"
+    # F3032/F3034/F3036-F3043 (wave-451 lane C): deep-link hash fragments.
+    # Covered by the [?&#] query-param branches above (# is in the
+    # [?&#] class); no separate branches needed. F3033/F3035 were
+    # already CLOSED incidental in wave-450 (chronicle/memoir hash
+    # forms matched the wave-450 lane B [?&#] branches).
+    # F3044-F3055 (wave-451 lane C): new matrix params.
+    r"|;(?-i:brain)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:chronicle)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:history)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:memoir)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:memories)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:mind)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:past)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:remembrance)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:reminiscence)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:retention)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:scrapbook)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:thought)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # F3056-F3079 (wave-451 lane C): no-equals deep-link (?word, #word).
+    # The negative lookahead keeps each disjoint from its = branch
+    # (and ?memories disjoint from ?memories=, ?thought disjoint from
+    # ?thoughts=, ?mind disjoint from ?mind=).
+    r"|[?&#]!?(?-i:brain)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:chronicle)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:history)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:memoir)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:memories)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:mind)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:past)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:remembrance)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:reminiscence)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:retention)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:scrapbook)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:thought)(?![=a-zA-Z0-9])")
 
 
 def _strip_zero_width(text):
