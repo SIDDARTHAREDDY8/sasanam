@@ -912,6 +912,146 @@ _MEMORY_WRITE = re.compile(
     # % from its lookahead, so these FLAG only via this
     # branch (empty-value `?memory%3D` stays QUIET).
     r"|[?&#](?-i:memory)%3[Dd][a-zA-Z][a-zA-Z0-9]+\b"
+    # F3811-F3833 (wave-453 lane B): "<verb> this in memory of
+    # <Brand>". The wave-451 lane B branch keeps (?! of\b) on both
+    # forms, so a CamelCase brand after "of" evaded. These additive
+    # branches match only "of <CamelCase>" (a brand token: a capital
+    # letter plus an internal capital). Memorial prose stays QUIET:
+    # "of our trip" (determiner), "of John" (Titlecase, no internal
+    # capital), "of the victims". Known residual: McDonald-style
+    # surnames ("of McDonald") are indistinguishable from a brand
+    # token by regex and FLAG (accepted fail-closed edge).
+    # case-sensitive: the enclosing regex is (?i), so a bare [A-Z]
+    # would match any letter and the guard would be vacuous. The
+    # trailing [a-zA-Z0-9]* allows brand tokens with trailing digits
+    # (ExampleBrand2) -- without it, the \b after the token fails
+    # because a digit is a word char.
+    r"|\b(?:save|store|keep|commit|record|write|log|file|place|lock|seal|engrave|etch|carve|deposit|anchor|fix|imprint|stamp|hold|take|set|put) (?:this |it )in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # F3834-F3845 (wave-453 lane B): bare "<verb> in memory of
+    # <Brand>". Same CamelCase-only rule as the this-form branch.
+    r"|\b(?:save|store|commit|record|write|log|enter|file|keep|hold|place|add) in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # F3846-F3847 (wave-453 lane B): no-equals deep-link (?thoughts,
+    # #thoughts). The negative lookahead keeps this disjoint from the
+    # ?thoughts= branch (and the ?thought no-equals branch is blocked
+    # by the trailing s).
+    r"|[?&#]!?(?-i:thoughts)(?![=a-zA-Z0-9])"
+    # F3848-F3856 (wave-453 lane B): query-param values containing an
+    # underscore (?album=Example_Brand). The plain-value branches
+    # require [a-zA-Z][a-zA-Z0-9]+, so an underscore in the value
+    # evaded (no \b between a word char and _). These branches
+    # require at least one underscore, so they are disjoint from the
+    # plain-value branches. The [?&#] class also covers #word= forms.
+    r"|[?&#](?-i:album)=[a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]*\b"
+    r"|[?&#](?-i:stash)=[a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]*\b"
+    r"|[?&#](?-i:memory)=[a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]*\b"
+    r"|[?&#](?-i:vault)=[a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]*\b"
+    r"|[?&#](?-i:brain)=[a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]*\b"
+    r"|[?&#](?-i:mind)=[a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]*\b"
+    r"|[?&#](?-i:note)=[a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]*\b"
+    r"|[?&#](?-i:save)=[a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]*\b"
+    # F3857-F3901 (wave-453 lane B): deep-link path segments without
+    # a trailing slash (https://example.com/stash, .../page/vault).
+    # URL context required to avoid prose false positives. The
+    # optional intermediate-segment group covers deeper paths
+    # (/page/<word>); the terminator (query/hash/whitespace/end)
+    # keeps this disjoint from the trailing-slash branches (a /
+    # after the word does not match here) and from longer words
+    # (memories does not match the memory branch: the next char
+    # is a letter, not a terminator).
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:stash)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:vault)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:memory)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:brain)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:mind)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:notebook)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:ledger)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:archive)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:chronicle)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:memoir)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:note)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:save)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:album)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:story)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:diary)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:journal)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:register)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:bank)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:deposit)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:imprint)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:trace)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:collection)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:anthology)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:anecdote)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:episode)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:experience)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:moment)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:tale)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:history)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:past)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:record)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:remembrance)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:reminiscence)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:retention)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:scrapbook)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:thought)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:memories)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:logbook)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:inventory)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:stockpile)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:docket)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:pigeonhole)(?:[?#\s]|$)"
+    r"|://[^/\s]+/(?:[a-zA-Z0-9_.\-]+/)*(?-i:registry)(?:[?#\s]|$)"
+    # F3902-F3957 (wave-453 lane B): no-equals deep-link (?word,
+    # #word) for 28 words. The negative lookahead keeps each
+    # disjoint from its = branch and from longer words (?episodes
+    # does not match an ?episode shape: the = branches need =,
+    # and no ?episode no-equals branch exists).
+    r"|[?&#]!?(?-i:album)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:story)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:diary)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:journal)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:notebook)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:ledger)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:register)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:logbook)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:inventory)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:stockpile)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:bank)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:deposit)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:imprint)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:trace)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:docket)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:pigeonhole)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:registry)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:collection)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:anthology)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:anecdote)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:episodes)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:experiences)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:moments)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:tales)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:moment)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:episode)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:experience)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:tale)(?![=a-zA-Z0-9])"
+    # F3958-F4245 (wave-453 lane B): the wave-452 lane B 58-verb
+    # set in five new frames (to / into / in your / in my / as a
+    # memory). Rally split per frame: the this/it form has NO
+    # memorial guard (fail-closed); the bare form keeps (?! of\b)
+    # so memorial prose stays QUIET. "nestle" precedes "nest" in
+    # the alternation (prefix ordering). "dot" is filed only in
+    # the to / into / in-your frames (F4243-F4245), so the in-my
+    # and as-a branches use the 57-verb list without it.
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple|dot) (?:this |it )to memory\b"
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple|dot) to memory(?! of\b)"
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple|dot) (?:this |it )into memory\b"
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple|dot) into memory(?! of\b)"
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple|dot) (?:this |it )in your memory\b"
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple|dot) in your memory(?! of\b)"
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple) (?:this |it )in my memory\b"
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple) in my memory(?! of\b)"
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple) (?:this |it )as a memory\b"
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple) as a memory(?! of\b)"
 )
 
 

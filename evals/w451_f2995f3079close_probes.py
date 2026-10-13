@@ -147,12 +147,12 @@ def main():
           _shaped("https://example.com/page?brainX") == "QUIET")
     check("digit-start value QUIET",
           _shaped("https://example.com/page?brain=1abc") == "QUIET")
-    check("bare thoughts no-equals QUIET (thought branch blocked by s)",
-          _shaped("https://example.com/page?thoughts") == "QUIET")
+    check("bare thoughts no-equals now FLAG (F3846 closed wave-453 lane B)",
+          _shaped("https://example.com/page?thoughts") == "FLAG")
     check("bare memoriesX QUIET",
           _shaped("https://example.com/page?memoriesX") == "QUIET")
-    check("path without trailing slash QUIET",
-          _shaped("https://example.com/brain") == "QUIET")
+    check("path without trailing slash now FLAG (F3860 closed wave-453 lane B)",
+          _shaped("https://example.com/brain") == "FLAG")
     check("bare brain prose QUIET",
           _shaped("the brain is a complex organ") == "QUIET")
     check("bare thought prose QUIET",
