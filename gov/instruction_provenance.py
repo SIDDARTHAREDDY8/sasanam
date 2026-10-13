@@ -387,8 +387,11 @@ _ZW_CHARS = "\u200b\u200c\u200d\ufeff"
 # (?MEMORIZE=, ?Memory=).
 # F2378 was already covered by the existing (?-i:save) branch
 # (incidental; stamped CLOSED in wave-446).
+# F2418-F2436 (wave-447): memory-write verb variants ("append/add/file/
+# stock/archive/list/print/scribe/dictate/save/keep/commit/note/log/
+# write/take/set/put/mark in memory").
 _MEMORY_WRITE = re.compile(
-    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference|retain in memory|cache in memory|write to memory|update your memory|log (?:this |it )?to memory|record in memory|persist in memory|archive to memory|keep this in memory|memory banks|jot down in memory|in your memory|register in memory|stash in memory|deposit in memory|imprint on memory|plant in memory|seed your memory|instill in memory|ingrain in memory|internalize|bear in mind|hold in memory|lock in memory|take down in memory|write down in memory|burn into memory|carve into memory|encode in memory|push to memory|bank in memory|shelve in memory|pocket in memory|absorb into memory|fix in memory|anchor in memory|impress upon memory|set down in memory|put into memory|place in memory|cement in memory|file away in memory|stockpile in memory|warehouse in memory|soak into memory|etch into memory|engrave in memory|inscribe in memory|chronicle in memory|document in memory|transcribe into memory|preserve in memory|seal in memory|stamp into memory|entrust to memory|consign to memory|catalog in memory|index in memory|enroll in memory|put down in memory|mark down in memory|enter into memory)\b"
+    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference|retain in memory|cache in memory|write to memory|update your memory|log (?:this |it )?to memory|record in memory|persist in memory|archive to memory|keep this in memory|memory banks|jot down in memory|in your memory|register in memory|stash in memory|deposit in memory|imprint on memory|plant in memory|seed your memory|instill in memory|ingrain in memory|internalize|bear in mind|hold in memory|lock in memory|take down in memory|write down in memory|burn into memory|carve into memory|encode in memory|push to memory|bank in memory|shelve in memory|pocket in memory|absorb into memory|fix in memory|anchor in memory|impress upon memory|set down in memory|put into memory|place in memory|cement in memory|file away in memory|stockpile in memory|warehouse in memory|soak into memory|etch into memory|engrave in memory|inscribe in memory|chronicle in memory|document in memory|transcribe into memory|preserve in memory|seal in memory|stamp into memory|entrust to memory|consign to memory|catalog in memory|index in memory|enroll in memory|put down in memory|mark down in memory|enter into memory|append in memory|add in memory|file in memory|stock in memory|archive in memory|list in memory|print in memory|scribe in memory|dictate in memory|save in memory|keep in memory|commit in memory|note in memory|log in memory|write in memory|take in memory|set in memory|put in memory|mark in memory)\b"
     r"[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\b"
     r"|\b(?:authoritative|trusted|canonical|official)\s+source\b"
     r"[^.]{0,80}?\b(?:remember|store|save|memorize|retain|cache|write|update|log|record|persist|archive|jot|know|burn|register|stash|etch|preserve|entrust)\b"
@@ -423,11 +426,27 @@ _MEMORY_WRITE = re.compile(
     r"|[?&#](?-i:rem)=[a-zA-Z][a-zA-Z0-9]+\b"
     r"|[?&#](?-i:MEMORIZE)=[a-zA-Z][a-zA-Z0-9]+\b"
     r"|[?&#](?-i:Memory)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # F2437-F2441 (wave-447): deep-link query params (recall/recollect/
+    # remind/mem/memo).
+    r"|[?&#](?-i:recall)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:recollect)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:remind)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:mem)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:memo)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # F2442-F2445 (wave-447): deep-link param-name case bypasses
+    # (?STORE=, ?Write=, ?LOG=, ?REMEMBER=).
+    r"|[?&#](?-i:STORE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:Write)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:LOG)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:REMEMBER)=[a-zA-Z][a-zA-Z0-9]+\b"
     r"|/(?-i:remember)/[a-zA-Z][a-zA-Z0-9]+\b"
     r"|/(?-i:memorize)/[a-zA-Z][a-zA-Z0-9]+\b"
     r"|/(?-i:memory)/(?-i:[A-Z])[a-zA-Z0-9]+\b"
     r"|/(?-i:note)/(?-i:[A-Z])[a-zA-Z0-9]+\b"
-    r"|/(?-i:store)/(?-i:[A-Z])[a-zA-Z0-9]+\b")
+    r"|/(?-i:store)/(?-i:[A-Z])[a-zA-Z0-9]+\b"
+    # F2446-F2447 (wave-447): deep-link path segments (/recall/, /mem/).
+    r"|/(?-i:recall)/[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|/(?-i:mem)/[a-zA-Z][a-zA-Z0-9]+\b")
 
 
 def _strip_zero_width(text):

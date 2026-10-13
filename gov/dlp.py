@@ -2374,6 +2374,28 @@ def _js_skip_ws(text, i):
     return i
 
 
+def _js_has_ws_sentinel(text, before, after):
+    """True if text contains `before` + optional whitespace + `after`.
+
+    F2450-F2454 (wave-447): fast-path sentinels were whitespace-narrow
+    (e.g. `"=escape("` missed `"= escape("`). The decoders' grammars
+    already accept the whitespace via _js_skip_ws; this widens only the
+    fast-path check. Returns False on no match (fail-closed: caller
+    returns None). Never evals.
+    """
+    idx = text.find(before)
+    blen = len(before)
+    n = len(text)
+    while idx != -1:
+        j = idx + blen
+        while j < n and text[j] in " \t\n\r":
+            j += 1
+        if text.startswith(after, j):
+            return True
+        idx = text.find(before, idx + 1)
+    return False
+
+
 def _js_skip_ws_comments(text, i):
     """Skip whitespace and JS comments (F918).
 
@@ -244444,7 +244466,8 @@ def _js_f2325_stmt_decode(text):
     Anything else fails closed: a miss, never a mis-decode.
     Returns the decoded string, or None. Never evals.
     """
-    if "=escape(" not in text:
+    # F2450 (wave-447): sentinel widened for whitespace variant "= escape("
+    if not _js_has_ws_sentinel(text, "=", "escape("):
         return None
     if ".map(function(c)" not in text or "fromCharCode" not in text:
         return None
@@ -244626,7 +244649,8 @@ def _js_f2327_stmt_decode(text):
     Anything else fails closed: a miss, never a mis-decode.
     Returns the decoded string, or None. Never evals.
     """
-    if "Reflect.apply(String.prototype.concat" not in text:
+    # F2451 (wave-447): sentinel widened for whitespace variant "Reflect.apply( String..."
+    if not _js_has_ws_sentinel(text, "Reflect.apply(", "String.prototype.concat"):
         return None
     if ".map(function(c)" not in text or "fromCharCode" not in text:
         return None
@@ -244824,7 +244848,8 @@ def _js_f2329_stmt_decode(text):
     Anything else fails closed: a miss, never a mis-decode.
     Returns the decoded string, or None. Never evals.
     """
-    if ",eval)(" not in text:
+    # F2452 (wave-447): sentinel widened for whitespace variant ",eval )("
+    if not _js_has_ws_sentinel(text, ",eval", ")("):
         return None
     if ".map(function(c)" not in text or "fromCharCode" not in text:
         return None
@@ -245422,7 +245447,8 @@ def _js_f2335_stmt_decode(text):
     Anything else fails closed: a miss, never a mis-decode.
     Returns the decoded string, or None. Never evals.
     """
-    if ",undefined)" not in text:
+    # F2453 (wave-447): sentinel widened for whitespace variant ",undefined )"
+    if not _js_has_ws_sentinel(text, ",undefined", ")"):
         return None
     if ".map(function(c)" not in text or "fromCharCode" not in text:
         return None
@@ -245889,7 +245915,14 @@ def _js_f2340_stmt_decode(text):
     Anything else fails closed: a miss, never a mis-decode.
     Returns the decoded string, or None. Never evals.
     """
-    if ".length>0?" not in text:
+    # F2454 (wave-447): sentinel widened for whitespace variant ".length > 0 ?"
+    # (whitespace can appear between .length/>/0/?; helper handles one gap,
+    # so chain for the multi-gap shape).
+    if ".length>0?" not in text and not (
+        _js_has_ws_sentinel(text, ".length", ">")
+        and _js_has_ws_sentinel(text, ">", "0")
+        and _js_has_ws_sentinel(text, "0", "?")
+    ):
         return None
     if ".map(function(c)" not in text or "fromCharCode" not in text:
         return None
