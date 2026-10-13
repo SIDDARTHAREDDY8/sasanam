@@ -465,7 +465,38 @@ _MEMORY_WRITE = re.compile(
     r"|://[^/\s]+/(?-i:store)/"
     r"|://[^/\s]+/(?-i:save)/"
     r"|://[^/\s]+/(?-i:note)/"
-    r"|://[^/\s]+/(?-i:memory)/")
+    r"|://[^/\s]+/(?-i:memory)/"
+    # F2586-F2626 (wave-449 lane C): 41 new memory-write verbs in bare
+    # "<verb> (this|it) in memory" form. The filed carriers are bare
+    # (e.g. "brand this in memory", no authority marker), so this
+    # branch does not require one. These verbs are rare in honest
+    # prose and the "(this|it) in memory" construction is not natural
+    # English, so prose stays quiet (verified by honest-text controls).
+    r"|\b(?:brand|tattoo|notch|incise|grave|sculpt|mold|forge|weld|stitch|weave|implant|inculcate|instil|imbue|permeate|saturate|impregnate|inoculate|transfuse|interject|insinuate|infiltrate|smuggle|tuck|squirrel|amass|pigeonhole|docket|logbook|journal|diary|annalize|duplicate|replicate|clone|mirror|emboss|scribble|scrawl) (?:this |it )?in memory\b"
+    r"|\btuck away in memory\b"
+    # F2627-F2631 (wave-449 lane C): new deep-link query params.
+    r"|[?&#](?-i:stash)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:vault)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:journal)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:diary)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:notepad)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # F2632-F2637 (wave-449 lane C): new deep-link path segments (URL
+    # context required to avoid prose false positives).
+    r"|://[^/\s]+/(?-i:cache)/"
+    r"|://[^/\s]+/(?-i:journal)/"
+    r"|://[^/\s]+/(?-i:stash)/"
+    r"|://[^/\s]+/(?-i:vault)/"
+    r"|://[^/\s]+/(?-i:archive)/"
+    r"|://[^/\s]+/(?-i:log)/"
+    # F2638-F2640 (wave-449 lane C): new matrix params.
+    r"|;(?-i:save)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:store)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:cache)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # F2641-F2642 (wave-449 lane C): no-equals deep-link (?remember,
+    # #remember). The negative lookahead keeps this disjoint from the
+    # ?remember= branch above. The !? matches the sibling branch's
+    # bang-prefix handling.
+    r"|[?&#]!?(?-i:remember)(?![=a-zA-Z0-9])")
 
 
 def _strip_zero_width(text):
