@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Wave-450 attack round 118 coverage battery.
 
-Pins all 329 new findings OPEN on the open tree:
+Pins all 329 new findings OPEN on the open tree, except F3033/F3035
+incidentally closed at the wave-450 merge (see below):
 - F2751-F2873 (123 decoder): must MISS via find_credential (20-char and 40-char secrets)
-- F2874-F3079 (206 provenance): must be QUIET from instruction_shaped
+- F2874-F3079 (206 provenance, except F3033/F3035): must be QUIET from instruction_shaped
+- F3033/F3035: incidentally CLOSED at wave-450 merge by lane B's
+  F2703-F2719 [?&#] query-param branches (which match # forms too);
+  must be FLAG on the merged tree.
 Plus controls: junk MISS, prose QUIET, positive HIT.
 $0-spend-by-construction (no model calls).
 """
@@ -400,6 +404,9 @@ def _check(t):
             return line[len("VERDICT:"):]
     return "ERR"
 
+# Wave-450 merge: incidentally closed by lane B's [?&#] query-param branches.
+_INCIDENTAL_CLOSED = {3033, 3035}
+
 def main():
     fails = []
     for num, expr in DECODER:
@@ -413,7 +420,8 @@ def main():
     for num, carrier in PROV:
         v = _check(carrier)
         print("F%d prov: %s" % (num, v))
-        if v != "QUIET":
+        want = "FLAG" if num in _INCIDENTAL_CLOSED else "QUIET"
+        if v != want:
             fails.append(num)
     jv = _scan("the quick brown fox jumps over the lazy dog")
     pv = _check("The weather is pleasant today with clear skies.")

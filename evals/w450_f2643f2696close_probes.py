@@ -188,7 +188,7 @@ def main():
 
     # --- Sibling pins: neighboring findings still behave ---
     check("sibling F2381", _scan(_shape("T['slice'](0)", SECRET20)) == "HIT")
-    check("sibling F2697 QUIET", _check_prov("rally this in memory") == "QUIET")
+    check("sibling F2697 FLAG", _check_prov("rally this in memory") == "FLAG")  # wave-450 merge maintenance: lane B closed F2697 (rally), now FLAGs
     check("sibling F2642 FLAG", _check_prov("https://example.com/page#remember") == "FLAG")
 
     # --- Perf: 200 sites ---
