@@ -368,18 +368,38 @@ _ZW_CHARS = "\u200b\u200c\u200d\ufeff"
 # ("log to memory", "record in memory", "persist in memory",
 # "archive to memory", "keep this in memory", "memory banks",
 # "jot down in memory", "in your memory" declarative).
-# F2153-F2155 (wave-443): deep-link carriers (remember_for=, memory=
-# query params; #!remember= hashbang).
+# F2343-F2359 (wave-446): additional memory-write verbs/phrasings
+# ("etch into memory", "engrave in memory", "inscribe in memory",
+# "chronicle in memory", "document in memory", "transcribe into memory",
+# "preserve in memory", "seal in memory", "stamp into memory",
+# "entrust to memory", "consign to memory", "catalog in memory",
+# "index in memory", "enroll in memory", "put down in memory",
+# "mark down in memory", "enter into memory").
+# F2360-F2362 (wave-446): reverse forms ("authoritative source; etch/
+# preserve/entrust it ...").
+# F2363-F2365 (wave-446): declarative forms ("please note:",
+# "keep a record:", "authoritative note:").
+# F2366-F2373 (wave-446): deep-link query params (store/write/update/
+# log/record/keep/learn/rem).
+# F2374-F2376 (wave-446): deep-link path segments (/memory/, /note/,
+# /store/).
+# F2379-F2380 (wave-446): deep-link param-name case bypasses
+# (?MEMORIZE=, ?Memory=).
+# F2378 was already covered by the existing (?-i:save) branch
+# (incidental; stamped CLOSED in wave-446).
 _MEMORY_WRITE = re.compile(
-    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference|retain in memory|cache in memory|write to memory|update your memory|log (?:this |it )?to memory|record in memory|persist in memory|archive to memory|keep this in memory|memory banks|jot down in memory|in your memory|register in memory|stash in memory|deposit in memory|imprint on memory|plant in memory|seed your memory|instill in memory|ingrain in memory|internalize|bear in mind|hold in memory|lock in memory|take down in memory|write down in memory|burn into memory|carve into memory|encode in memory|push to memory|bank in memory|shelve in memory|pocket in memory|absorb into memory|fix in memory|anchor in memory|impress upon memory|set down in memory|put into memory|place in memory|cement in memory|file away in memory|stockpile in memory|warehouse in memory|soak into memory)\b"
+    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference|retain in memory|cache in memory|write to memory|update your memory|log (?:this |it )?to memory|record in memory|persist in memory|archive to memory|keep this in memory|memory banks|jot down in memory|in your memory|register in memory|stash in memory|deposit in memory|imprint on memory|plant in memory|seed your memory|instill in memory|ingrain in memory|internalize|bear in mind|hold in memory|lock in memory|take down in memory|write down in memory|burn into memory|carve into memory|encode in memory|push to memory|bank in memory|shelve in memory|pocket in memory|absorb into memory|fix in memory|anchor in memory|impress upon memory|set down in memory|put into memory|place in memory|cement in memory|file away in memory|stockpile in memory|warehouse in memory|soak into memory|etch into memory|engrave in memory|inscribe in memory|chronicle in memory|document in memory|transcribe into memory|preserve in memory|seal in memory|stamp into memory|entrust to memory|consign to memory|catalog in memory|index in memory|enroll in memory|put down in memory|mark down in memory|enter into memory)\b"
     r"[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\b"
     r"|\b(?:authoritative|trusted|canonical|official)\s+source\b"
-    r"[^.]{0,80}?\b(?:remember|store|save|memorize|retain|cache|write|update|log|record|persist|archive|jot|know|burn|register|stash)\b"
+    r"[^.]{0,80}?\b(?:remember|store|save|memorize|retain|cache|write|update|log|record|persist|archive|jot|know|burn|register|stash|etch|preserve|entrust)\b"
     r"|\bknow that\b[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\s+source\b"
     r"|\b(?:authoritative|trusted|canonical|official)\b[^.]{0,40}?\bremember that\b"
     r"|\byour memory should hold\b[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\b"
     r"|\bfor the record\b[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\b"
     r"|\bbe advised\b[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\b"
+    r"|\bplease note\b[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\s+source\b"
+    r"|\bkeep a record\b[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\b"
+    r"|\bauthoritative note\b[^.]{0,80}?\bis the source\b"
     r"|\b(?:authoritative|trusted|canonical|official)\s+source\s+is\b"
     r"|\bremains\s+the\s+(?:authoritative|trusted|canonical|official)\s+source\b"
     r"|[?&#]!?(?-i:remember)=[a-zA-Z][a-zA-Z0-9]+\b"
@@ -393,8 +413,21 @@ _MEMORY_WRITE = re.compile(
     r"|[?&#](?-i:commit)=[a-zA-Z][a-zA-Z0-9]+\b"
     r"|[?&#](?-i:retain)=[a-zA-Z][a-zA-Z0-9]+\b"
     r"|[?&#](?-i:cache)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:store)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:write)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:update)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:log)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:record)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:keep)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:learn)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:rem)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:MEMORIZE)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:Memory)=[a-zA-Z][a-zA-Z0-9]+\b"
     r"|/(?-i:remember)/[a-zA-Z][a-zA-Z0-9]+\b"
-    r"|/(?-i:memorize)/[a-zA-Z][a-zA-Z0-9]+\b")
+    r"|/(?-i:memorize)/[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|/(?-i:memory)/(?-i:[A-Z])[a-zA-Z0-9]+\b"
+    r"|/(?-i:note)/(?-i:[A-Z])[a-zA-Z0-9]+\b"
+    r"|/(?-i:store)/(?-i:[A-Z])[a-zA-Z0-9]+\b")
 
 
 def _strip_zero_width(text):
