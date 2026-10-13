@@ -19,7 +19,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 # Pin checks
-N_STMTDEC_LOOPS = 193  # 192 + 1 (F2455-F2467 dispatch loop)
+N_STMTDEC_LOOPS = 194  # 192 + 1 (lane A) + 1 (lane B F2496-F2503), merged tree
 VERIFIER_PIN = 2143
 
 PASS = 0
