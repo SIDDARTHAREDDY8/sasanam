@@ -559,7 +559,32 @@ _MEMORY_WRITE = re.compile(
     r"|[?&#]!?(?-i:stash)(?![=a-zA-Z0-9])"
     r"|[?&#]!?(?-i:vault)(?![=a-zA-Z0-9])"
     r"|[?&#]!?(?-i:note)(?![=a-zA-Z0-9])"
-    r"|[?&#]!?(?-i:save)(?![=a-zA-Z0-9])")
+    r"|[?&#]!?(?-i:save)(?![=a-zA-Z0-9])"
+    # F2874-F2994 (wave-451 lane B): 121 memory-write verbs/phrases in
+    # bare form (no authority marker). The filed carriers are all
+    # "<verb> this in memory" (e.g. "absorb this in memory") plus four
+    # fixed phrases ("commit to long-term memory", "save to your
+    # memory", "take note in memory", "learn by heart"). These are
+    # bare (no authority claim), so this branch does not require one.
+    # The (?! of\b) guard preserves memorial prose ("keep this in
+    # memory of our trip", existing w450 lane B control): a
+    # "<verb> this in memory of X" shape is memorial-ambiguous and
+    # asserts no authority, so it stays QUIET. Residual evasion
+    # ("<verb> this in memory of Brand") is documented, not hidden.
+    # Multi-word verbs (file away, mark down, put down, take down,
+    # set down, write down, back up) precede their single-word
+    # prefixes where one exists in the same alternation (file,
+    # mark, take, write); "instill" is the American spelling; the
+    # wave-449 branch covers "instil".
+    # "set"/"put" are past==present, so bare "set in memory" /
+    # "put in memory" occur in honest technical prose ("The
+    # configuration is set in memory"); they get their own branch
+    # with REQUIRED this/it, while every other verb keeps the
+    # optional form. Authority-marker forms ("set in memory:
+    # ... authoritative ...") still FLAG via the first branch.
+    r"|\b(?:file away|mark down|put down|take down|set down|write down|back up|absorb|anchor|bank|burn|carve|catalog|cement|chronicle|consign|deposit|document|encode|engrave|enroll|enter|entrust|etch|fix|hold|impress|imprint|index|ingrain|inscribe|instill|internalize|lock|place|plant|pocket|preserve|push|register|seal|seed|shelve|soak|stamp|stash|stockpile|transcribe|warehouse|type|input|feed|load|import|inject|insert|append|add|file|stock|archive|list|print|scribe|dictate|save|keep|commit|note|log|write|take|mark|buffer|pin|chisel|hoard|accumulate|download|infuse|prepend|enumerate|store|remember|memorize|retain|record|lodge|cache|hide|conceal|bury|fasten|secure|jot|pen|sketch|trace|outline|draft|snapshot|sync|learn|assimilate|digest|safeguard|compile|inventory|photograph|film|tape|photocopy|summarize|guard|protect) (?:this |it )?in memory(?! of\b)\b"
+    r"|\b(?:set|put) (?:this |it )in memory(?! of\b)\b"
+    r"|\b(?:commit to long-term memory|save to your memory|take note in memory|learn by heart)\b")
 
 
 def _strip_zero_width(text):
