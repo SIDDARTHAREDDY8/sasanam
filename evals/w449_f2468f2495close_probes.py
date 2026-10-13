@@ -23,7 +23,7 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 # Pin checks
-N_STMTDEC_LOOPS = 195  # 194 (wave-448) + 1 (F2468-F2495), real code-count change
+N_STMTDEC_LOOPS = 196  # 194 (wave-448) + 1 (lane A F2468-F2495) + 1 (lane B F2538-F2585), real code-count change; merge maintenance
 VERIFIER_PIN = 2143
 RE_COMPILE_PIN = 29
 
@@ -173,12 +173,15 @@ def main():
         total = 0
         for n in range(2468, 2496):
             total += 1
+            rf_path = os.path.join(REPO_ROOT, "evals", "w449_f%d_redfirst.py" % n)
             code = (
                 "import os,sys; os.environ['GOV_SKIP_GREEN']='1';"
+                "__file__=%r;"
                 "sys.path.insert(0,%r);"
-                "exec(open(%r).read())" % (
+                "exec(compile(open(%r).read(), %r, 'exec'))" % (
+                    rf_path,
                     os.path.join(REPO_ROOT, "evals"),
-                    os.path.join(REPO_ROOT, "evals", "w449_f%d_redfirst.py" % n))
+                    rf_path, rf_path)
             )
             r = subprocess.run([sys.executable, "-c", code],
                                capture_output=True, text=True, timeout=120,

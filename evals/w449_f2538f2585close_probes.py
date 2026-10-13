@@ -58,12 +58,12 @@ def check(name, cond):
     print(("PASS " if cond else "FAIL ") + name, flush=True)
 
 def main():
-    # --- Pin: N_STMTDEC_LOOPS = 195 ---
+    # --- Pin: N_STMTDEC_LOOPS = 196 (merge maintenance: 194 + 2) ---
     import gov.dlp as dlp_mod
     import inspect
     src = inspect.getsource(dlp_mod)
     nloops = src.count("for _stmtdec in (")
-    check("pin N_STMTDEC_LOOPS==195", nloops == 195)
+    check("pin N_STMTDEC_LOOPS==196", nloops == 196)
     # --- Pin: re.compile count = 29 ---
     nre = len(re.findall(r"re\.compile\(", src))
     check("pin re.compile==29", nre == 29)

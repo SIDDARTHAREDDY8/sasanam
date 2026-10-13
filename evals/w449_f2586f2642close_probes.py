@@ -91,7 +91,7 @@ def main():
     # 1. Pin checks (provenance work must not change dlp.py pins)
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("N_STMTDEC_LOOPS=194", loops == 194)
+    check("N_STMTDEC_LOOPS=196", loops == 196)  # merge maintenance: 194 + 2 (lanes A+B)
     import re as _re
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("re.compile=29 in dlp", dlp_re == 29)
