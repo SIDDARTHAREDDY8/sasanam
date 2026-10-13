@@ -9,6 +9,11 @@ Design notes (see gov/instruction_provenance.py comments):
   ("keep this in memory of our trip", existing w450 lane B control)
   stays QUIET. Residual "<verb> this in memory of Brand" evasion is
   memorial-ambiguous (no authority claim) and documented.
+  Wave-453 lane B closed the CamelCase-brand variant (F3811-F3845):
+  "take this in memory of ExampleBrand" now FLAGs via the
+  additive of-CamelCase branches in gov/instruction_provenance.py;
+  memorial prose ("keep this in memory of our trip", "of John")
+  stays QUIET.
 - "set"/"put" are past==present, so bare "set in memory" / "put in
   memory" occur in honest technical prose ("The configuration is set
   in memory"); they get a REQUIRED-this/it branch. Authority-marker
@@ -210,8 +215,8 @@ def main():
           _shaped("keep this in memory of our trip") == "QUIET")
     check("memorial set prose QUIET",
           _shaped("set this in memory of our trip") == "QUIET")
-    check("memorial take prose QUIET (documented residual)",
-          _shaped("take this in memory of ExampleBrand") == "QUIET")
+    check("memorial take prose now FLAG (F3831 closed wave-453 lane B: of-CamelCase)",
+          _shaped("take this in memory of ExampleBrand") == "FLAG")
     check("memorial rally prose QUIET",
           _shaped("a rally in memory of the victims") == "QUIET")
     check("rally this-form still FLAG (own branch, no guard)",
