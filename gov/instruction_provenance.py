@@ -359,11 +359,17 @@ _ZW_CHARS = "\u200b\u200c\u200d\ufeff"
 # attacker-chosen state. The patterns are narrow (require both a
 # memory-write verb and an authority claim) so honest prose stays
 # quiet.
+# F2090/F2092/F2093 (wave-441): additional memory-write verbs/phrasings
+# ("commit to memory", "keep in mind", "note for future reference").
+# F2095 (wave-441): deep-link carrier with remember param and entity
+# value (no authority claim needed -- the URL parameter itself is the
+# memory-write instruction).
 _MEMORY_WRITE = re.compile(
-    r"(?i)\b(?:remember|store in memory|save to memory|memorize)\b"
+    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference)\b"
     r"[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\b"
     r"|\b(?:authoritative|trusted|canonical|official)\s+source\b"
-    r"[^.]{0,80}?\b(?:remember|store|save|memorize)\b")
+    r"[^.]{0,80}?\b(?:remember|store|save|memorize)\b"
+    r"|[?&](?-i:remember)=(?-i:[A-Z])[a-zA-Z0-9]+\b")
 
 
 def _strip_zero_width(text):
