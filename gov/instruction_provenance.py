@@ -391,7 +391,7 @@ _ZW_CHARS = "\u200b\u200c\u200d\ufeff"
 # stock/archive/list/print/scribe/dictate/save/keep/commit/note/log/
 # write/take/set/put/mark in memory").
 _MEMORY_WRITE = re.compile(
-    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference|retain in memory|cache in memory|write to memory|update your memory|log (?:this |it )?to memory|record in memory|persist in memory|archive to memory|keep this in memory|memory banks|jot down in memory|in your memory|register in memory|stash in memory|deposit in memory|imprint on memory|plant in memory|seed your memory|instill in memory|ingrain in memory|internalize|bear in mind|hold in memory|lock in memory|take down in memory|write down in memory|burn into memory|carve into memory|encode in memory|push to memory|bank in memory|shelve in memory|pocket in memory|absorb into memory|fix in memory|anchor in memory|impress upon memory|set down in memory|put into memory|place in memory|cement in memory|file away in memory|stockpile in memory|warehouse in memory|soak into memory|etch into memory|engrave in memory|inscribe in memory|chronicle in memory|document in memory|transcribe into memory|preserve in memory|seal in memory|stamp into memory|entrust to memory|consign to memory|catalog in memory|index in memory|enroll in memory|put down in memory|mark down in memory|enter into memory|type in memory|input in memory|feed in memory|load in memory|import in memory|inject in memory|insert in memory|append in memory|add in memory|file in memory|stock in memory|archive in memory|list in memory|print in memory|scribe in memory|dictate in memory|save in memory|keep in memory|commit in memory|note in memory|log in memory|write in memory|take in memory|set in memory|put in memory|mark in memory)\b"
+    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference|retain in memory|cache in memory|write to memory|update your memory|log (?:this |it )?to memory|record in memory|persist in memory|archive to memory|keep this in memory|memory banks|jot down in memory|in your memory|register in memory|stash in memory|deposit in memory|imprint on memory|plant in memory|seed your memory|instill in memory|ingrain in memory|internalize|bear in mind|hold in memory|lock in memory|take down in memory|write down in memory|burn into memory|carve into memory|encode in memory|push to memory|bank in memory|shelve in memory|pocket in memory|absorb into memory|fix in memory|anchor in memory|impress upon memory|set down in memory|put into memory|place in memory|cement in memory|file away in memory|stockpile in memory|warehouse in memory|soak into memory|etch into memory|engrave in memory|inscribe in memory|chronicle in memory|document in memory|transcribe into memory|preserve in memory|seal in memory|stamp into memory|entrust to memory|consign to memory|catalog in memory|index in memory|enroll in memory|put down in memory|mark down in memory|enter into memory|type in memory|input in memory|feed in memory|load in memory|import in memory|inject in memory|insert in memory|append in memory|add in memory|file in memory|stock in memory|archive in memory|list in memory|print in memory|scribe in memory|dictate in memory|save in memory|keep in memory|commit in memory|note in memory|log in memory|write in memory|take in memory|set in memory|put in memory|put in memory|mark in memory|etch in memory|buffer in memory|back up in memory|enter in memory|pin to memory|chisel in memory|stamp in memory|hoard in memory|accumulate in memory|download to memory|infuse in memory|prepend to memory|enumerate in memory|commit to long-term memory|save to your memory|take note in memory|learn by heart)\b"
     r"[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\b"
     r"|\b(?:authoritative|trusted|canonical|official)\s+source\b"
     r"[^.]{0,80}?\b(?:remember|store|save|memorize|retain|cache|write|update|log|record|persist|archive|jot|know|burn|register|stash|etch|preserve|entrust)\b"
@@ -446,7 +446,26 @@ _MEMORY_WRITE = re.compile(
     r"|/(?-i:store)/(?-i:[A-Z])[a-zA-Z0-9]+\b"
     # F2446-F2447 (wave-447): deep-link path segments (/recall/, /mem/).
     r"|/(?-i:recall)/[a-zA-Z][a-zA-Z0-9]+\b"
-    r"|/(?-i:mem)/[a-zA-Z][a-zA-Z0-9]+\b")
+    r"|/(?-i:mem)/[a-zA-Z][a-zA-Z0-9]+\b"
+    # F2521 (wave-448 lane B): matrix param (;remember=).
+    r"|;(?-i:remember)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # F2522 (wave-448 lane B): hash routing (#/remember/).
+    r"|#/(?-i:remember)/"
+    # F2523-F2528 (wave-448 lane B): param-name case bypasses.
+    r"|[?&#](?-i:Save)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:Note)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:Cache)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:MEM)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:Memo)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:RECALL)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # F2531-F2536 (wave-448 lane B): bare deep-link path segments (URL context
+    # required to avoid prose false positives).
+    r"|://[^/\s]+/(?-i:remind)/"
+    r"|://[^/\s]+/(?-i:recollect)/"
+    r"|://[^/\s]+/(?-i:store)/"
+    r"|://[^/\s]+/(?-i:save)/"
+    r"|://[^/\s]+/(?-i:note)/"
+    r"|://[^/\s]+/(?-i:memory)/")
 
 
 def _strip_zero_width(text):
