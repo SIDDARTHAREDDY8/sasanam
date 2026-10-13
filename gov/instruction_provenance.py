@@ -496,7 +496,14 @@ _MEMORY_WRITE = re.compile(
     # #remember). The negative lookahead keeps this disjoint from the
     # ?remember= branch above. The !? matches the sibling branch's
     # bang-prefix handling.
-    r"|[?&#]!?(?-i:remember)(?![=a-zA-Z0-9])")
+    r"|[?&#]!?(?-i:remember)(?![=a-zA-Z0-9])"
+    # F2683-F2696 (wave-450 lane A): 14 new memory-write verbs in bare
+    # "<verb> (this|it) in memory" form. The filed carriers are bare
+    # (e.g. "capture this in memory", no authority marker), so this
+    # branch does not require one. These verbs are rare in honest
+    # prose and the "(this|it) in memory" construction is not natural
+    # English, so prose stays quiet (verified by honest-text controls).
+    r"|\b(?:capture|clutch|snatch|seize|affix|rivet|solder|envelop|encase|excavate|yank|fortify|reinforce|muster) (?:this |it )?in memory\b")
 
 
 def _strip_zero_width(text):
