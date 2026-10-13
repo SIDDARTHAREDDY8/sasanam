@@ -95,7 +95,7 @@ def test_p0_pins():
     src = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     _check("dispatch loop F2156-F2181", "_js_f2156_stmt_decode," in src and "_js_f2181_stmt_decode):" in src)
     loops = src.count("for _stmtdec in")
-    _check("N_STMTDEC_LOOPS=186", loops == 186, "got %d" % loops)
+    _check("N_STMTDEC_LOOPS=187", loops == 187, "got %d" % loops)
     rec = len(re.findall(r"re\.compile\(", src))
     _check("re.compile=29", rec == 29, "got %d" % rec)
 
