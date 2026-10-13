@@ -4,8 +4,13 @@
 Pins all 565 new findings OPEN on the open tree:
 - F3080-F3263 (184 decoder): must MISS via find_credential (20-char and 40-char secrets)
 - F3264-F3644 (381 provenance): must be QUIET from instruction_shaped
-Carries forward the F2751-F3079 open pins from round 118 (they must still
-MISS/QUIET), except F3033/F3035 which are CLOSED (must FLAG).
+Carries forward the F2751-F3079 round-118 pins, now CLOSED by wave-451
+lanes A/B/C (carried-decoder must HIT, carried-prov must FLAG),
+except F3033/F3035 which were already CLOSED incidental in wave-450.
+Wave-451 merge: 15 round-119 findings incidentally CLOSED by the lanes
+(F3093 via lane A slice-arg decoder; F3446-F3455/F3457-F3460 via lane B
+optional (?:this |it )? branch) — expected HIT/FLAG via _INCIDENTAL_CLOSED.
+F3456 (`put in memory`) stays OPEN per lane B's deliberate set/put guard.
 Plus controls: junk MISS, prose QUIET, positive HIT.
 $0-spend-by-construction (no model calls).
 """
@@ -976,7 +981,8 @@ def _check(t):
             return line[len("VERDICT:"):]
     return "ERR"
 
-_INCIDENTAL_CLOSED = {3033, 3035}
+_INCIDENTAL_CLOSED_DEC = {3093}
+_INCIDENTAL_CLOSED_PROV = set(range(3446, 3456)) | set(range(3457, 3461))
 
 def main():
     fails = []
@@ -986,7 +992,8 @@ def main():
         v20 = _scan(p20)
         v40 = _scan(p40)
         print("F%d decoder: %s/%s" % (num, v20, v40))
-        if v20 != "MISS" or v40 != "MISS":
+        want = "HIT" if num in _INCIDENTAL_CLOSED_DEC else "MISS"
+        if v20 != want or v40 != want:
             fails.append(num)
     for num, tmpl in DECODER_CUSTOM_NEW:
         p20 = tmpl.replace("{I}", _codes(SECRET20))
@@ -999,7 +1006,8 @@ def main():
     for num, carrier in PROV_NEW:
         v = _check(carrier)
         print("F%d prov: %s" % (num, v))
-        if v != "QUIET":
+        want = "FLAG" if num in _INCIDENTAL_CLOSED_PROV else "QUIET"
+        if v != want:
             fails.append(num)
     for num, expr in CARRIED_DEC:
         p20 = (BUILD_T + "var U=" + expr + ";var RESULT=U;").replace("{I}", _codes(SECRET20))
@@ -1007,13 +1015,14 @@ def main():
         v20 = _scan(p20)
         v40 = _scan(p40)
         print("F%d carried-decoder: %s/%s" % (num, v20, v40))
-        if v20 != "MISS" or v40 != "MISS":
+        # Wave-451 merge: carried round-118 decoder pins CLOSED by lane A.
+        if v20 != "HIT" or v40 != "HIT":
             fails.append(num)
     for num, carrier in CARRIED_PROV:
         v = _check(carrier)
         print("F%d carried-prov: %s" % (num, v))
-        want = "FLAG" if num in _INCIDENTAL_CLOSED else "QUIET"
-        if v != want:
+        # Wave-451 merge: carried round-118 prov pins CLOSED by lanes B/C.
+        if v != "FLAG":
             fails.append(num)
     jv = _scan("the quick brown fox jumps over the lazy dog")
     pv = _check("The weather is pleasant today with clear skies.")
