@@ -472,8 +472,18 @@ _MEMORY_WRITE = re.compile(
     # branch does not require one. These verbs are rare in honest
     # prose and the "(this|it) in memory" construction is not natural
     # English, so prose stays quiet (verified by honest-text controls).
-    r"|\b(?:brand|tattoo|notch|incise|grave|sculpt|mold|forge|weld|stitch|weave|implant|inculcate|instil|imbue|permeate|saturate|impregnate|inoculate|transfuse|interject|insinuate|infiltrate|smuggle|tuck|squirrel|amass|pigeonhole|docket|logbook|journal|diary|annalize|duplicate|replicate|clone|mirror|emboss|scribble|scrawl) (?:this |it )?in memory\b"
+    r"|\b(?:brand|tattoo|notch|incise|grave|sculpt|mold|forge|weld|stitch|weave|implant|inculcate|instil|imbue|permeate|saturate|impregnate|inoculate|transfuse|interject|insinuate|infiltrate|smuggle|tuck|squirrel|amass|pigeonhole|docket|logbook|journal|diary|annalize|duplicate|replicate|clone|mirror|emboss|scribble|scrawl|herd|crate|wedge|pierce|fuse) (?:this |it )?in memory\b"
     r"|\btuck away in memory\b"
+    # F2697 (wave-450 lane B): "rally this in memory". Split into two
+    # branches: the this/it form (the filed carrier) has NO lookahead,
+    # so "rally this in memory of <Brand>" still FLAGs (an attacker
+    # must not evade by appending " of X"); the bare form keeps the
+    # (?! of\b) lookahead so benign memorial prose ("rally in memory
+    # of the victims", "rally in memory of John") stays QUIET. The
+    # this-form + "of" combination ("rally this in memory of ...") is
+    # not natural memorial English, so fail-closed there is correct.
+    r"|\brally (?:this |it )in memory\b"
+    r"|\brally in memory(?! of\b)"
     # F2627-F2631 (wave-449 lane C): new deep-link query params.
     r"|[?&#](?-i:stash)=[a-zA-Z][a-zA-Z0-9]+\b"
     r"|[?&#](?-i:vault)=[a-zA-Z][a-zA-Z0-9]+\b"
@@ -503,7 +513,53 @@ _MEMORY_WRITE = re.compile(
     # branch does not require one. These verbs are rare in honest
     # prose and the "(this|it) in memory" construction is not natural
     # English, so prose stays quiet (verified by honest-text controls).
-    r"|\b(?:capture|clutch|snatch|seize|affix|rivet|solder|envelop|encase|excavate|yank|fortify|reinforce|muster) (?:this |it )?in memory\b")
+    r"|\b(?:capture|clutch|snatch|seize|affix|rivet|solder|envelop|encase|excavate|yank|fortify|reinforce|muster) (?:this |it )?in memory\b"
+    # F2703-F2719 (wave-450 lane B): new deep-link query params.
+    r"|[?&#](?-i:notebook)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:ledger)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:register)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:registry)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:memoir)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:chronicle)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:annals)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:inventory)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:stockpile)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:bank)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:deposit)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:imprint)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:trace)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:logbook)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:docket)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:pigeonhole)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|[?&#](?-i:archive)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # F2720-F2726 (wave-450 lane B): new deep-link path segments (URL
+    # context required to avoid prose false positives). F2727-F2728
+    # (stash/vault path segments) were already covered by the wave-449
+    # lane C branches and are stamped incidental, not re-added here.
+    r"|://[^/\s]+/(?-i:ledger)/"
+    r"|://[^/\s]+/(?-i:register)/"
+    r"|://[^/\s]+/(?-i:notebook)/"
+    r"|://[^/\s]+/(?-i:memoir)/"
+    r"|://[^/\s]+/(?-i:chronicle)/"
+    r"|://[^/\s]+/(?-i:diary)/"
+    r"|://[^/\s]+/(?-i:notepad)/"
+    # F2733-F2738 (wave-450 lane B): new matrix params.
+    r"|;(?-i:recall)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:note)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:mem)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:remind)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:stash)=[a-zA-Z][a-zA-Z0-9]+\b"
+    r"|;(?-i:vault)=[a-zA-Z][a-zA-Z0-9]+\b"
+    # F2739-F2750 (wave-450 lane B): no-equals deep-link (?recall,
+    # #recall, ?mem, #mem, ?stash, #stash, ?vault, #vault, ?note,
+    # #note, ?save, #save). The negative lookahead keeps each disjoint
+    # from its = branch (and ?mem disjoint from ?memo=/?memory=).
+    r"|[?&#]!?(?-i:recall)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:mem)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:stash)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:vault)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:note)(?![=a-zA-Z0-9])"
+    r"|[?&#]!?(?-i:save)(?![=a-zA-Z0-9])")
 
 
 def _strip_zero_width(text):
