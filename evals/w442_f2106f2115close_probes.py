@@ -24,8 +24,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-# Pin: N_STMTDEC_LOOPS = 175 (no new dispatch loop; decoders added to existing F2087/F2088 loop)
-EXPECTED_LOOPS = 175
+# Pin: N_STMTDEC_LOOPS = 180 (wave-442 merge: 175 + lane A 5 loops; lane B added to existing loop)
+EXPECTED_LOOPS = 180
 
 SECRET = "xoxb-12345678901234567890"
 
@@ -86,7 +86,7 @@ def main():
 
     # Pin: dispatch loop count
     loops = _count_loops()
-    _record("P0-pin-loops-175", loops == EXPECTED_LOOPS, f"got {loops}")
+    _record("P0-pin-loops-180", loops == EXPECTED_LOOPS, f"got {loops}")
 
     # F2106-F2109: filed shapes must HIT
     templates = {
