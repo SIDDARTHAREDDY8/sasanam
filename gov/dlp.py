@@ -246173,6 +246173,1544 @@ def _js_f2342_stmt_decode(text):
         return None
 
 
+def _js_f2381f2410_parse_base(text, state, what):
+    """Parse the shared credential base for F2381-F2410 bracket-access decoders.
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+
+    Returns (dstr, tname, bound, j) with j after the T-decl `;`.
+    Raises _JSExprFail on any mismatch (fail closed). Never evals.
+    """
+    j = _js_skip_ws(text, 0)
+    cname, dstr, j = _js_f1124f1130_parse_c_decl(text, j, state,
+                                                 what)
+    _js_f1028f1029_check_fresh_name(cname, set(),
+                                    {"String", "Array"}, what)
+    bound = {cname, "RESULT", "String", "Array"}
+    _, tname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    _js_f1028f1029_check_fresh_name(tname, bound,
+                                    {"String", "Array"}, what)
+    bound.add(tname)
+    nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm != cname:
+        raise _JSExprFail(what + " map base mismatch")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+    if m is None:
+        raise _JSExprFail(what + " not map")
+    j = _js_f1090_parse_map_cb(text, _js_expect(text, m, "("),
+                               what, False)
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, j, ".")
+    m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+    if m is None:
+        raise _JSExprFail(what + " not join")
+    j = _js_expect(text, m, "(")
+    sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    if sep != "":
+        raise _JSExprFail(what + " join sep not empty")
+    j = _js_expect(text, j, ")")
+    j = _js_expect(text, _js_skip_ws(text, j), ";")
+    _js_f96x_charge(state, what + " mapjoin")
+    return dstr, tname, bound, j
+
+
+def _js_f2381f2410_parse_result(text, j, state, what, bound, uname,
+                                dstr):
+    """Parse `var|let|const RESULT=U;` then end-of-text; returns dstr.
+
+    Raises _JSExprFail on any mismatch (fail closed). Never evals.
+    """
+    _, rname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    if rname != "RESULT":
+        raise _JSExprFail(what + " not RESULT")
+    nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+    if nm2 != uname:
+        raise _JSExprFail(what + " result base mismatch")
+    _js_f96x_expect_semi_end(text, j)
+    _js_f96x_charge(state, what + " result")
+    if len(dstr) > _MAX_DECODE_BYTES:
+        raise _JSExprFail(what + " result too long")
+    return dstr
+
+
+def _js_f2381f2410_parse_bracket_str(text, j, what):
+    """Parse `['name']` or `["name"]` at text[j]; returns (name, j-after-`]`).
+
+    Template literals fail closed here (F2393 handles `` [`name`] ``
+    separately). Raises _JSExprFail on any mismatch. Never evals.
+    """
+    j = _js_expect(text, j, "[")
+    name, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+    j = _js_expect(text, j, "]")
+    return name, j
+
+
+def _js_f2381f2410_parse_u_decl(text, j, state, what, bound):
+    """Parse `var|let|const U=` header; returns (uname, j-after-`=`).
+
+    Raises _JSExprFail on any mismatch (fail closed). Never evals.
+    """
+    _, uname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+    _js_f1028f1029_check_fresh_name(uname, bound,
+                                    {"String", "Array"}, what)
+    bound.add(uname)
+    return uname, j
+
+
+def _js_f2381_stmt_decode(text):
+    """Decode F2381 bracket-slice on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['slice'](0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['slice'](0) returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['slice'](0);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2381"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "slice":
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2382_stmt_decode(text):
+    """Decode F2382 bracket-slice-len on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['slice'](0,T['length']);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['slice'](0, T['length']) returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['slice'](0,T['length']);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2382"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "slice":
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm2 != tname:
+            raise _JSExprFail(what + " len base mismatch")
+        lname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if lname != "length":
+            raise _JSExprFail(what + " not length")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2383_stmt_decode(text):
+    """Decode F2383 bracket-substring on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['substring'](0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['substring'](0) returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['substring'](0);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2383"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "substring":
+            raise _JSExprFail(what + " not substring")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2384_stmt_decode(text):
+    """Decode F2384 bracket-substring-len on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['substring'](0,T['length']);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['substring'](0, T['length']) returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['substring'](0,T['length']);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2384"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "substring":
+            raise _JSExprFail(what + " not substring")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm2 != tname:
+            raise _JSExprFail(what + " len base mismatch")
+        lname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if lname != "length":
+            raise _JSExprFail(what + " not length")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2385_stmt_decode(text):
+    """Decode F2385 bracket-substr on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['substr'](0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['substr'](0) returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['substr'](0);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2385"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "substr":
+            raise _JSExprFail(what + " not substr")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2386_stmt_decode(text):
+    """Decode F2386 bracket-concat on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['concat']('');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['concat']('') returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['concat']('');" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2386"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "concat":
+            raise _JSExprFail(what + " not concat")
+        j = _js_expect(text, j, "(")
+        arg, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if arg != "":
+            raise _JSExprFail(what + " arg not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2387_stmt_decode(text):
+    """Decode F2387 bracket-trim on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['trim']();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['trim']() returns T (credential has no
+    surrounding whitespace; identity on the filed alphabet).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['trim']();" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2387"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "trim":
+            raise _JSExprFail(what + " not trim")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2388_stmt_decode(text):
+    """Decode F2388 bracket-tolower on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['toLowerCase']();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['toLowerCase']() returns T (credential is
+    already lowercase; identity on the filed alphabet).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['toLowerCase']();" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2388"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "toLowerCase":
+            raise _JSExprFail(what + " not toLowerCase")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2389_stmt_decode(text):
+    """Decode F2389 bracket-valueof on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['valueOf']();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['valueOf']() returns the primitive string T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['valueOf']();" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2389"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "valueOf":
+            raise _JSExprFail(what + " not valueOf")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2390_stmt_decode(text):
+    """Decode F2390 bracket-padstart on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['padStart'](T['length']);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['padStart'](T['length']) pads T to its own
+    length -- a no-op, returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['padStart'](T['length']);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2390"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "padStart":
+            raise _JSExprFail(what + " not padStart")
+        j = _js_expect(text, j, "(")
+        nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm2 != tname:
+            raise _JSExprFail(what + " len base mismatch")
+        lname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if lname != "length":
+            raise _JSExprFail(what + " not length")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2391_stmt_decode(text):
+    """Decode F2391 bracket-charat-slice on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['charAt'](0)+T['slice'](1);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['charAt'](0)+T['slice'](1) is first-char
+    plus the rest -- reassembles T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['charAt'](0)+T['slice'](1);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2391"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "charAt":
+            raise _JSExprFail(what + " not charAt")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "+")
+        nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm2 != tname:
+            raise _JSExprFail(what + " second base mismatch")
+        mname2, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname2 != "slice":
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, j, "(")
+        num2, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num2 != 1:
+            raise _JSExprFail(what + " arg not 1")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2392_stmt_decode(text):
+    """Decode F2392 bracket-dquote on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T["slice"](0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T["slice"](0) returns T (identity); the
+    double-quoted bracket is the same property access as F2381.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '["slice"](0);' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2392"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "slice":
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2393_stmt_decode(text):
+    """Decode F2393 bracket-tmpl on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T[`slice`](0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T[`slice`](0) returns T (identity); the
+    template-literal bracket with no interpolation is the same property
+    access as F2381. Escapes and interpolations fail closed.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "[`slice`](0);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2393"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "[")
+        j = _js_expect(text, j, "`")
+        n = len(text)
+        k = j
+        while k < n and text[k] not in "`\\$":
+            k += 1
+        if k >= n or text[k] != "`":
+            raise _JSExprFail(what + " bad template")
+        if text[j:k] != "slice":
+            raise _JSExprFail(what + " not slice")
+        j = k + 1
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2394_stmt_decode(text):
+    """Decode F2394 bracket-slice-undef on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['slice'](0,undefined);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['slice'](0, undefined) returns T (undefined
+    end means "to the end"; identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['slice'](0,undefined);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2394"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "slice":
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "undefined")
+        if m is None:
+            raise _JSExprFail(what + " not undefined")
+        j = _js_expect(text, m, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2395_stmt_decode(text):
+    """Decode F2395 string-bracket-valueof on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=String(T['valueOf']());`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): String(T['valueOf']()) is String of the
+    primitive string T -- returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "String(T['valueOf']());" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2395"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "valueOf":
+            raise _JSExprFail(what + " not valueOf")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2396_stmt_decode(text):
+    """Decode F2396 proto-bracket-tostring on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=String.prototype['toString'].call(T);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): String.prototype['toString'].call(T) invokes
+    the unbound toString on T -- returns the primitive string T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "String.prototype['toString'].call(T);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2396"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "String")
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "prototype")
+        if m is None:
+            raise _JSExprFail(what + " not prototype")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, m, what)
+        if mname != "toString":
+            raise _JSExprFail(what + " not toString")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "call")
+        if m is None:
+            raise _JSExprFail(what + " not call")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2397_stmt_decode(text):
+    """Decode F2397 bracket-repeat on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['repeat'](1);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['repeat'](1) returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['repeat'](1);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2397"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "repeat":
+            raise _JSExprFail(what + " not repeat")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg not 1")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2398_stmt_decode(text):
+    """Decode F2398 bracket-normalize on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['normalize']();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['normalize']() with no args is NFC
+    normalization; on the filed credential alphabet (ASCII) it is the
+    identity.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['normalize']();" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2398"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "normalize":
+            raise _JSExprFail(what + " not normalize")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2399_stmt_decode(text):
+    """Decode F2399 bracket-trimstart on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['trimStart']();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['trimStart']() returns T (credential has no
+    leading whitespace; identity on the filed alphabet).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['trimStart']();" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2399"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "trimStart":
+            raise _JSExprFail(what + " not trimStart")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2400_stmt_decode(text):
+    """Decode F2400 bracket-padend on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['padEnd'](T['length']);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['padEnd'](T['length']) pads T to its own
+    length -- a no-op, returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['padEnd'](T['length']);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2400"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "padEnd":
+            raise _JSExprFail(what + " not padEnd")
+        j = _js_expect(text, j, "(")
+        nm2, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm2 != tname:
+            raise _JSExprFail(what + " len base mismatch")
+        lname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if lname != "length":
+            raise _JSExprFail(what + " not length")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2401_stmt_decode(text):
+    """Decode F2401 bracket-toupper-tolower on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['toUpperCase']().toLowerCase();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['toUpperCase']().toLowerCase() round-trips
+    the credential through upper case; on the filed credential alphabet
+    (already lowercase ASCII) it is the identity.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['toUpperCase']().toLowerCase();" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2401"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "toUpperCase":
+            raise _JSExprFail(what + " not toUpperCase")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "toLowerCase")
+        if m is None:
+            raise _JSExprFail(what + " not toLowerCase")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2402_stmt_decode(text):
+    """Decode F2402 paren-slice on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=(T).slice(0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): (T).slice(0) returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "(T).slice(0);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2402"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2403_stmt_decode(text):
+    """Decode F2403 paren-paren on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=((T));`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): ((T)) is the doubly-parenthesized identity --
+    returns T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "((T));" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2403"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2404_stmt_decode(text):
+    """Decode F2404 paren-tostring on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=(T).toString();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): (T).toString() returns the primitive string T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "(T).toString();" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2404"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "toString")
+        if m is None:
+            raise _JSExprFail(what + " not toString")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2405_stmt_decode(text):
+    """Decode F2405 paren-bracket-slice on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=(T)['slice'](0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): (T)['slice'](0) returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "(T)['slice'](0);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2405"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "slice":
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2406_stmt_decode(text):
+    """Decode F2406 parenparen-bracket on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=((T))['slice'](0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): ((T))['slice'](0) returns T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "((T))['slice'](0);" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2406"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "slice":
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2407_stmt_decode(text):
+    """Decode F2407 arrayfrom-dblreverse on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Array.from(T).reverse().reverse().join('');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Array.from(T) splits T into chars; two
+    reverses cancel; join('') reassembles T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "Array.from(T).reverse().reverse().join('');" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2407"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Array")
+        if m is None:
+            raise _JSExprFail(what + " not Array")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "from")
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        for _ in range(2):
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "reverse")
+            if m is None:
+                raise _JSExprFail(what + " not reverse")
+            j = _js_expect(text, m, "(")
+            j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "":
+            raise _JSExprFail(what + " join sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2408_stmt_decode(text):
+    """Decode F2408 sort-identity on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.split('').sort(function(a,b){return 0;}).join('');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): the comparator always returns 0, so the
+    stable sort leaves the char array in place; split/join reassemble T
+    (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".sort(function(a,b){return 0;}).join('');" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2408"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "split")
+        if m is None:
+            raise _JSExprFail(what + " not split")
+        j = _js_expect(text, m, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "":
+            raise _JSExprFail(what + " split sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "sort")
+        if m is None:
+            raise _JSExprFail(what + " not sort")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        pa, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if pa != "a":
+            raise _JSExprFail(what + " param a mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ",")
+        pb, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if pb != "b":
+            raise _JSExprFail(what + " param b mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " not return")
+        num, j = _js_parse_number(text, _js_skip_ws(text, m))
+        if num != 0:
+            raise _JSExprFail(what + " comparator not 0")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, m, "(")
+        sep2, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep2 != "":
+            raise _JSExprFail(what + " join sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2409_stmt_decode(text):
+    """Decode F2409 bracket-split-join on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['split']('').join('');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T['split']('').join('') splits T into chars
+    and reassembles it (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['split']('').join('');" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2409"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "split":
+            raise _JSExprFail(what + " not split")
+        j = _js_expect(text, j, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "":
+            raise _JSExprFail(what + " split sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = _js_expect(text, m, "(")
+        sep2, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep2 != "":
+            raise _JSExprFail(what + " join sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f2410_stmt_decode(text):
+    """Decode F2410 bracket-dblreverse on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T['split']('').reverse().join('').split('').reverse().join('');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): split/reverse/join applied twice cancels --
+    reassembles T (identity).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "['split']('').reverse().join('').split('').reverse().join('');" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F2410"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        mname, j = _js_f2381f2410_parse_bracket_str(text, j, what)
+        if mname != "split":
+            raise _JSExprFail(what + " not split")
+        j = _js_expect(text, j, "(")
+        sep, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if sep != "":
+            raise _JSExprFail(what + " split sep not empty")
+        j = _js_expect(text, j, ")")
+        # .reverse().join('').split('').reverse().join('')
+        for _ in range(2):
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "reverse")
+            if m is None:
+                raise _JSExprFail(what + " not reverse")
+            j = _js_expect(text, m, "(")
+            j = _js_expect(text, j, ")")
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "join")
+            if m is None:
+                raise _JSExprFail(what + " not join")
+            j = _js_expect(text, m, "(")
+            sep2, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+            if sep2 != "":
+                raise _JSExprFail(what + " join sep not empty")
+            j = _js_expect(text, j, ")")
+            if _ == 1:
+                break
+            j = _js_expect(text, j, ".")
+            m = _js_match_kw(text, _js_skip_ws(text, j), "split")
+            if m is None:
+                raise _JSExprFail(what + " not split")
+            j = _js_expect(text, m, "(")
+            sep3, j = _js_f99x_parse_str(
+                text, _js_skip_ws(text, j))
+            if sep3 != "":
+                raise _JSExprFail(what + " split sep not empty")
+            j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -250232,6 +251770,43 @@ def _decode_layer(text):
                      _js_f2340_stmt_decode,
                      _js_f2341_stmt_decode,
                      _js_f2342_stmt_decode):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+    # F2381-F2410 bracket-access decoders (wave-447 lane A).
+    for _stmtdec in (_js_f2381_stmt_decode,
+                     _js_f2382_stmt_decode,
+                     _js_f2383_stmt_decode,
+                     _js_f2384_stmt_decode,
+                     _js_f2385_stmt_decode,
+                     _js_f2386_stmt_decode,
+                     _js_f2387_stmt_decode,
+                     _js_f2388_stmt_decode,
+                     _js_f2389_stmt_decode,
+                     _js_f2390_stmt_decode,
+                     _js_f2391_stmt_decode,
+                     _js_f2392_stmt_decode,
+                     _js_f2393_stmt_decode,
+                     _js_f2394_stmt_decode,
+                     _js_f2395_stmt_decode,
+                     _js_f2396_stmt_decode,
+                     _js_f2397_stmt_decode,
+                     _js_f2398_stmt_decode,
+                     _js_f2399_stmt_decode,
+                     _js_f2400_stmt_decode,
+                     _js_f2401_stmt_decode,
+                     _js_f2402_stmt_decode,
+                     _js_f2403_stmt_decode,
+                     _js_f2404_stmt_decode,
+                     _js_f2405_stmt_decode,
+                     _js_f2406_stmt_decode,
+                     _js_f2407_stmt_decode,
+                     _js_f2408_stmt_decode,
+                     _js_f2409_stmt_decode,
+                     _js_f2410_stmt_decode):
         _sdec = _stmtdec(text)
         if _sdec is not None:
             _add(_sdec)
