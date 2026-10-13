@@ -658,7 +658,71 @@ _MEMORY_WRITE = re.compile(
     r"|[?&#]!?(?-i:reminiscence)(?![=a-zA-Z0-9])"
     r"|[?&#]!?(?-i:retention)(?![=a-zA-Z0-9])"
     r"|[?&#]!?(?-i:scrapbook)(?![=a-zA-Z0-9])"
-    r"|[?&#]!?(?-i:thought)(?![=a-zA-Z0-9])")
+    r"|[?&#]!?(?-i:thought)(?![=a-zA-Z0-9])"
+    # F3264-F3337 (wave-452 lane B): 74 new memory-write verbs in
+    # "<verb> this in memory" form. Rally split (wave-450 lane B):
+    # the this/it form has NO memorial guard (fail-closed:
+    # "enshrine this in memory of Brand" FLAGs); the bare form keeps
+    # the (?! of\b) guard so memorial prose ("enshrine in memory of
+    # the victims") stays QUIET. "nestle" precedes "nest" in the
+    # alternation (prefix ordering).
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple|dot|speckle|fleck|dab|daub|smear|smudge|blot|stain|dye|tint|tinge|honor|honour|eternalize|inhume|manacle) (?:this |it )in memory\b"
+    r"|\b(?:enshrine|entrench|encrypt|memorialize|commemorate|immortalize|perpetuate|conserve|maintain|sustain|uphold|cherish|treasure|revere|venerate|entomb|inter|ensconce|nestle|nest|harbor|harbour|shelter|house|accommodate|contain|clasp|grasp|grip|clamp|moor|tether|tie|bind|lash|chain|shackle|fetter|bolt|nail|screw|peg|spike|stake|stick|paste|glue|adhere|annex|adjoin|deboss|score|scratch|scrape|gouge|hatch|stipple|dot|speckle|fleck|dab|daub|smear|smudge|blot|stain|dye|tint|tinge|honor|honour|eternalize|inhume|manacle) in memory(?! of\b)"
+    # F3338-F3374 (wave-452 lane B): "<verb> this to memory". Same
+    # rally split. set/put excluded from the bare form
+    # (past==present: bare "set to memory" / "put to memory" occur
+    # in honest technical prose); they keep REQUIRED this/it,
+    # mirroring wave-451 lane B.
+    r"|\b(?:commit|save|store|keep|write|put|set|take|add|record|log|enter|input|feed|load|file|archive|deposit|place|plant|register|enroll|engrave|etch|carve|brand|burn|impress|imprint|inscribe|seal|stamp|fix|anchor|cement|lock|hold) (?:this |it )to memory\b"
+    r"|\b(?:commit|save|store|keep|write|take|add|record|log|enter|input|feed|load|file|archive|deposit|place|plant|register|enroll|engrave|etch|carve|brand|burn|impress|imprint|inscribe|seal|stamp|fix|anchor|cement|lock|hold) to memory(?! of\b)"
+    # F3375-F3398 (wave-452 lane B): "<verb> this in your memory".
+    # Same rally split.
+    r"|\b(?:store|keep|write|record|enter|log|file|place|plant|engrave|etch|burn|imprint|impress|fix|anchor|lock|seal|stamp|brand|carve|commit|deposit|save) (?:this |it )in your memory\b"
+    r"|\b(?:store|keep|write|record|enter|log|file|place|plant|engrave|etch|burn|imprint|impress|fix|anchor|lock|seal|stamp|brand|carve|commit|deposit|save) in your memory(?! of\b)"
+    # F3399-F3420 (wave-452 lane B): "<verb> this into memory". put
+    # excluded from the bare form (same past==present rationale).
+    r"|\b(?:save|store|write|put|enter|record|log|commit|burn|engrave|etch|brand|imprint|fix|lock|seal|stamp|carve|file|feed|input|load) (?:this |it )into memory\b"
+    r"|\b(?:save|store|write|enter|record|log|commit|burn|engrave|etch|brand|imprint|fix|lock|seal|stamp|carve|file|feed|input|load) into memory(?! of\b)"
+    # F3421-F3429 (wave-452 lane B): long-term variants. The "in"
+    # forms carry the memorial guard on the bare form; the "to"
+    # form requires this/it ("save to long-term memory" occurs in
+    # honest cognitive-science prose) and needs no guard ("to
+    # long-term memory of" is not memorial idiom).
+    r"|\b(?:save|store|commit|keep|write|record|enter) (?:this |it )in long-term memory\b"
+    r"|\b(?:save|store|commit|keep|write|record|enter) in long-term memory(?! of\b)"
+    r"|\b(?:save|store|commit|keep|write|record|enter) (?:this |it )to long-term memory\b"
+    # F3430-F3437 (wave-452 lane B): "<verb> this to your memory".
+    # this/it REQUIRED (bare "commit to your memory" without an
+    # object is unnatural); no guard ("to your memory of" is not
+    # memorial idiom). "save" is NOT added: bare "save to your
+    # memory" is already covered by the fixed-phrase branch, and
+    # "save this to your memory" is an unfiled follow-on.
+    r"|\b(?:commit|store|write|record|enter|add|file|log) (?:this |it )to your memory\b"
+    # F3438-F3440 (wave-452 lane B): "<verb> this in my memory".
+    # Same rally split. Memorial prose uses person pronouns
+    # ("keep him in my memory"), not this/it, so the this/it form
+    # needs no guard.
+    r"|\b(?:save|store|keep) (?:this |it )in my memory\b"
+    r"|\b(?:save|store|keep) in my memory(?! of\b)"
+    # F3441-F3443 (wave-452 lane B): "<verb> this as a memory".
+    # Guard on the bare form: "a memory of X" is the memorial noun
+    # phrase ("save this as a memory of our trip").
+    r"|\b(?:save|store|keep) (?:this |it )as a memory\b"
+    r"|\b(?:save|store|keep) as a memory(?! of\b)"
+    # F3444-F3445 (wave-452 lane B): "<verb> this in the memory".
+    # Same rally split. The bare-form guard matters here:
+    # "store in the memory of the device" is honest technical prose.
+    r"|\b(?:save|store) (?:this |it )in the memory\b"
+    r"|\b(?:save|store) in the memory(?! of\b)"
+    # F3461-F3464 (wave-452 lane B): fixed phrases.
+    r"|\balways remember this\b"
+    r"|\blearn (?:this |it )by heart\b"
+    r"|\bmemorize by heart\b"
+    r"|\bremember by heart\b")
+    # F3456 (wave-452 lane B): "put in memory" stays OPEN by design.
+    # The wave-451 lane B set/put guard (REQUIRED this/it) is kept:
+    # bare "put in memory" occurs in honest technical prose. No
+    # branch added.
 
 
 def _strip_zero_width(text):
