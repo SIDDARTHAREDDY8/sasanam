@@ -4,10 +4,12 @@
 Pins all 1908 new findings OPEN on the open tree:
 - F3645-F3810 (166 decoder): must MISS via find_credential (20-char and 40-char secrets)
 - F3811-F5552 (1742 provenance): must be QUIET from instruction_shaped
-Carries forward the round-119 pins (F3080-F3644): still MISS/QUIET except
-the 15 incidental CLOSED at wave-451 merge (F3093, F3446-F3455, F3457-F3460,
-expected HIT/FLAG), and the round-118 pins (F2751-F3079): HIT/FLAG (closed
-by wave-451 lanes A/B/C). Bare-vs-paren note: the bare operator forms
+Carries forward the round-119 pins (F3080-F3644): HIT/FLAG for the
+563 expecting it (548 newly closed by wave-452 lanes A/B/C — F3080-F3263
+decoder, F3264-F3464 except F3456 provenance verbs+phrases, F3466-F3644
+deep-link carriers — plus 15 pre-CLOSED incidental at wave-451 merge).
+F3456/F3465 stay OPEN and QUIET, and the round-118 pins
+(F2751-F3079): HIT/FLAG (closed by wave-451 lanes A/B/C). Bare-vs-paren note: the bare operator forms
 F3645+ (T || '', T ? T : '', void 0, T, T ?? '') are NEW findings; the
 parenthesized forms (F2542/F2544/F2547/F2550) were closed in wave-449.
 Plus controls: junk MISS, prose QUIET, positive HIT.
@@ -93,6 +95,12 @@ def _check(t):
 
 _INCIDENTAL_CLOSED_DEC_119 = {3093}
 _INCIDENTAL_CLOSED_PROV_119 = set(range(3446, 3456)) | set(range(3457, 3461))
+# Wave-452 merge: round-119 pins closed by lanes A/B/C (not incidental).
+# Decoder: F3080-F3263 (lane A, incl. F3093). Provenance: F3264-F3464
+# except F3456 (lane B) + F3466-F3644 (lane C). F3456 (put in memory,
+# guard kept by design) and F3465 (know by heart, orphaned phrase) stay OPEN.
+_CLOSED_DEC_119 = set(range(3080, 3264))
+_CLOSED_PROV_119 = (set(range(3264, 3465)) - {3456}) | set(range(3466, 3645))
 
 def _dec_job(item):
     num, expr, want = item
@@ -129,12 +137,12 @@ def main():
     jobs_prov = [(num, carrier, "QUIET") for num, carrier in PROV_NEW_120]
     # carried round-119 decoder
     for num, expr in _prev.DECODER_NEW:
-        want = "HIT" if num in _INCIDENTAL_CLOSED_DEC_119 else "MISS"
+        want = "HIT" if (num in _INCIDENTAL_CLOSED_DEC_119 or num in _CLOSED_DEC_119) else "MISS"
         jobs_dec.append((num, expr, want))
     for num, tmpl in _prev.DECODER_CUSTOM_NEW:
-        jobs_custom.append((num, tmpl, "MISS"))
+        jobs_custom.append((num, tmpl, "HIT" if num in _CLOSED_DEC_119 else "MISS"))
     for num, carrier in _prev.PROV_NEW:
-        want = "FLAG" if num in _INCIDENTAL_CLOSED_PROV_119 else "QUIET"
+        want = "FLAG" if (num in _INCIDENTAL_CLOSED_PROV_119 or num in _CLOSED_PROV_119) else "QUIET"
         jobs_prov.append((num, carrier, want))
     # carried round-118 (closed by wave-451 lanes)
     for num, expr in _prev.CARRIED_DEC:

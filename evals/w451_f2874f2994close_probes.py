@@ -187,7 +187,7 @@ def main():
     # 1. Pin checks (provenance work must not change dlp.py pins; wave-451 merge: 197 + 1 lane A dispatch loop = 198)
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("N_STMTDEC_LOOPS=198", loops == 198)
+    check("N_STMTDEC_LOOPS=199", loops == 199)
     import re as _re
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("re.compile=29 in dlp", dlp_re == 29)

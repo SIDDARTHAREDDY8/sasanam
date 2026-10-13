@@ -65,7 +65,7 @@ def main():
     # a new re.compile in instruction_provenance.py).
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("N_STMTDEC_LOOPS=198", loops == 198)
+    check("N_STMTDEC_LOOPS=199", loops == 199)
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("re.compile=29 in dlp", dlp_re == 29)
     prov_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/instruction_provenance.py")).read()))
