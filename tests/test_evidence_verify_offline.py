@@ -97,7 +97,7 @@ def _policy_doc(ev, tsa, expires):
     }
 
 
-def _good_bundle():
+def _good_bundle(policy_expires=None):
     ev = _signer(EV_SEED)
     stmt = {
         "_type": "https://in-toto.io/Statement/v1",
@@ -108,8 +108,13 @@ def _good_bundle():
         "predicate": {"window": "2026-10-03T00:00:00Z"},
     }
     payload = v.canonical(stmt)
-    policy = _policy_doc([ev], [_signer(TSA_SEED)],
-                         NOW + timedelta(days=10))
+    # Wave-452 merge: the subprocess acceptance script checks policy
+    # expiry against wall-clock, so a fixed NOW+10d expiry is a
+    # time-bomb (expired 2026-10-13 12:00 UTC). Callers that run the
+    # script pass a fresh expiry; all other callers keep the fixed NOW.
+    if policy_expires is None:
+        policy_expires = NOW + timedelta(days=10)
+    policy = _policy_doc([ev], [_signer(TSA_SEED)], policy_expires)
     vb = {
         "version": v.BUNDLE_VERSION,
         "envelope": _seal(payload, v.ENVELOPE_PAYLOAD_TYPE, [ev]),
@@ -436,7 +441,11 @@ class TestThirdPartyAccept(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="ovf-tp-")
-        vb, bb = _good_bundle()
+        # Fresh policy expiry: the acceptance script checks expiry
+        # against wall-clock (wave-452 merge: fixed NOW+10d expired
+        # 2026-10-13 12:00 UTC and broke this test after that instant).
+        vb, bb = _good_bundle(
+            policy_expires=datetime.now(timezone.utc) + timedelta(days=10))
         self.bp = os.path.join(self.tmp, "b.json")
         self.ap = os.path.join(self.tmp, "a.bin")
         self.tp = os.path.join(self.tmp, "t.json")
