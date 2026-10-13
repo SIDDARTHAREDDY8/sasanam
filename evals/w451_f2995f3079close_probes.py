@@ -124,9 +124,12 @@ def main():
           _shaped("https://example.com/page?!brain") == "FLAG")
     check("no-equals bang-suffix FLAG",
           _shaped("https://example.com/page?brain!") == "FLAG")
-    check("case-variant param QUIET (case-sensitive per established convention;"
-          " uppercase variants are separate findings, cf. F2442-F2445)",
-          _shaped("https://example.com/page?BRAIN=ExampleBrand") == "QUIET")
+    # Wave-452 merge: uppercase variants are now closed by wave-452
+    # lane C (F3466-F3644, incl. ?BRAIN=), so this now FLAGs. The
+    # case-sensitive convention still holds: each case variant is an
+    # explicit branch, never IGNORECASE.
+    check("case-variant param FLAG (uppercase closed by wave-452 lane C)",
+          _shaped("https://example.com/page?BRAIN=ExampleBrand") == "FLAG")
     check("case-variant no-equals QUIET (case-sensitive per established convention)",
           _shaped("https://example.com/page?BRAIN") == "QUIET")
     check("embedded URL FLAG",
