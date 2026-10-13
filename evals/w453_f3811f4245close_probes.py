@@ -518,7 +518,7 @@ def main():
     # a new re.compile in instruction_provenance.py).
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("N_STMTDEC_LOOPS=199", loops == 199)
+    check("N_STMTDEC_LOOPS=200", loops == 200)
     import re as _re
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("re.compile=29 in dlp", dlp_re == 29)
@@ -619,10 +619,10 @@ def main():
           _shaped("https://example.com/STASH") == "QUIET")
     check("capitalized path QUIET (case-sensitive)",
           _shaped("https://example.com/Stash") == "QUIET")
-    check("dot my-memory QUIET (dot filed only to/into/in-your)",
-          _shaped("dot this in my memory") == "QUIET")
-    check("dot as-a-memory QUIET (dot filed only to/into/in-your)",
-          _shaped("dot this as a memory") == "QUIET")
+    check("dot my-memory FLAG (lane C closed, merged tree)",
+          _shaped("dot this in my memory") == "FLAG")
+    check("dot as-a-memory FLAG (lane C closed, merged tree)",
+          _shaped("dot this as a memory") == "FLAG")
     check("bear in mind QUIET",
           _shaped("bear in mind the deadline") == "QUIET")
     check("I remember the meeting QUIET",
@@ -666,8 +666,8 @@ def main():
           _shaped("enshrine this in memory") == "FLAG")
     check("sibling F3466 FLAG (wave-452 lane C)",
           _shaped("https://example.com/page?recollection=ExampleBrand") == "FLAG")
-    check("sibling F3465 QUIET (know by heart, still OPEN)",
-          _shaped("know by heart") == "QUIET")
+    check("sibling F3465 FLAG (lane A closed, merged tree)",
+          _shaped("know by heart") == "FLAG")
     check("sibling F3456 QUIET (put in memory, OPEN by design)",
           _shaped("put in memory") == "QUIET")
     check("sibling F3645 decoder shape QUIET (not our seam)",

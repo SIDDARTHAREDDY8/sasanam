@@ -106,9 +106,18 @@ def _prov_job(item):
     return ok
 
 def main():
+    # Wave-453 merge: 25 attack-121 findings incidentally CLOSED by the
+    # lanes' [?&#] branches (the ?word= branch also matches &word=).
+    # 13 via lane D, 12 via lane E; stamped CLOSED in FINDINGS.md.
+    INCIDENTAL_CLOSED = frozenset((
+        7533, 7536, 7543, 7546, 7563, 7566, 7569, 7572, 7578, 7584,
+        7587, 7594, 7603, 7575, 7581, 7597, 7600, 7606, 7609, 7612,
+        7619, 7622, 7625, 7632, 7635))
     jobs_dec = [(num, expr, "MISS") for num, expr in DECODER_NEW_121]
     jobs_custom = [(num, tmpl, "MISS") for num, tmpl in DECODER_CUSTOM_121]
-    jobs_prov = [(num, carrier, "QUIET") for num, carrier in PROV_NEW_121]
+    jobs_prov = [(num, carrier,
+                  "FLAG" if num in INCIDENTAL_CLOSED else "QUIET")
+                 for num, carrier in PROV_NEW_121]
     fails = 0
     total = 0
     with ThreadPoolExecutor(max_workers=6) as ex:

@@ -508,7 +508,7 @@ def main():
     # 1. Pin checks (provenance work must not change dlp.py pins)
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("N_STMTDEC_LOOPS=199", loops == 199)
+    check("N_STMTDEC_LOOPS=200", loops == 200)
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("re.compile=29 in dlp", dlp_re == 29)
     # 1b. FINDINGS.md stamps: F4246-F4681 CLOSED
@@ -611,8 +611,8 @@ def main():
           _shaped("https://example.com/page?trove=") == "QUIET")
     check("deeplink digit value QUIET",
           _shaped("https://example.com/page?trove=1") == "QUIET")
-    check("deeplink uppercase param QUIET (case-sensitive)",
-          _shaped("https://example.com/page?TROVE=ExampleBrand") == "QUIET")
+    check("deeplink uppercase param FLAG (F5497, lane E closed, merged tree)",
+          _shaped("https://example.com/page?TROVE=ExampleBrand") == "FLAG")
     check("wrong verb QUIET",
           _shaped("contemplate this in memory") == "QUIET")
     check("this-moment gap QUIET",
@@ -636,10 +636,10 @@ def main():
           _shaped("enshrine this in memory") == "FLAG")
     check("sibling F3466 FLAG (wave-452 lane C)",
           _shaped("https://example.com/page?recollection=ExampleBrand") == "FLAG")
-    check("sibling F4245 QUIET (lane B scope, still OPEN)",
-          _shaped(SIBLING_4245) == "QUIET")
-    check("sibling F4682 QUIET (next lane scope, still OPEN)",
-          _shaped(SIBLING_4682) == "QUIET")
+    check("sibling F4245 FLAG (lane B closed, merged tree)",
+          _shaped(SIBLING_4245) == "FLAG")
+    check("sibling F4682 FLAG (lane D closed, merged tree)",
+          _shaped(SIBLING_4682) == "FLAG")
     check("decoder shape QUIET (not our seam)",
           _shaped("var U=T.slice(undefined, undefined);") == "QUIET")
     # 6. Honest-text controls QUIET

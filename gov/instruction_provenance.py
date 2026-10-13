@@ -912,6 +912,14 @@ _MEMORY_WRITE = re.compile(
     # % from its lookahead, so these FLAG only via this
     # branch (empty-value `?memory%3D` stays QUIET).
     r"|[?&#](?-i:memory)%3[Dd][a-zA-Z][a-zA-Z0-9]+\b"
+    # URL-encoded equals for `album` (wave-453 merge): same
+    # convention as `memory` -- the `album` no-equals branch
+    # below excludes % from its lookahead, so valued
+    # `?album%3DExampleBrand` FLAGs only via this branch
+    # (empty-value `?album%3D` stays QUIET). The systematic
+    # remainder (other words' no-equals branches still match
+    # empty-encoded forms) is filed as F8147.
+    r"|[?&#](?-i:album)%3[Dd][a-zA-Z][a-zA-Z0-9]+\b"
     # F3811-F3833 (wave-453 lane B): "<verb> this in memory of
     # <Brand>". The wave-451 lane B branch keeps (?! of\b) on both
     # forms, so a CamelCase brand after "of" evaded. These additive
@@ -1005,8 +1013,13 @@ _MEMORY_WRITE = re.compile(
     # #word) for 28 words. The negative lookahead keeps each
     # disjoint from its = branch and from longer words (?episodes
     # does not match an ?episode shape: the = branches need =,
-    # and no ?episode no-equals branch exists).
-    r"|[?&#]!?(?-i:album)(?![=a-zA-Z0-9])"
+    # and no ?episode no-equals branch exists). `album` also
+    # excludes % (wave-453 merge): a % after `album` signals
+    # percent-encoded content, which is the encoded-equals
+    # branch's job -- so `?album%3D` (empty value) stays QUIET.
+    # Other words' no-equals branches still lack the % exclusion;
+    # that systematic remainder is filed as F8147.
+    r"|[?&#]!?(?-i:album)(?![=a-zA-Z0-9%])"
     r"|[?&#]!?(?-i:story)(?![=a-zA-Z0-9])"
     r"|[?&#]!?(?-i:diary)(?![=a-zA-Z0-9])"
     r"|[?&#]!?(?-i:journal)(?![=a-zA-Z0-9])"

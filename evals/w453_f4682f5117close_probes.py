@@ -64,13 +64,14 @@ def main():
     # a new re.compile in instruction_provenance.py).
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("N_STMTDEC_LOOPS=199", loops == 199)
+    check("N_STMTDEC_LOOPS=200", loops == 200)
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("re.compile=29 in dlp", dlp_re == 29)
     prov_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/instruction_provenance.py")).read()))
     check("re.compile=8 in instruction_provenance (no new compiles)", prov_re == 8)
     # 1b. Footer pins: lane footer present, range stamped CLOSED,
-    # siblings F4681/F5118 still OPEN.
+    # siblings F4681/F5118 CLOSED by their own lanes (merged tree;
+    # on the lane-D tree they were still OPEN).
     findings = open(os.path.join(REPO_ROOT, "evals/FINDINGS.md")).read().split("\n")
     _by_num = {}
     for _ln in findings:
@@ -82,7 +83,7 @@ def main():
     for _n in (4682, 4900, 5117):
         check("footer: F%d stamped CLOSED" % _n, "CLOSED" in _by_num.get(_n, ""))
     for _n in (4681, 5118):
-        check("footer: F%d still OPEN" % _n, "LOW, OPEN:" in _by_num.get(_n, ""))
+        check("footer: F%d CLOSED (own lane, merged tree)" % _n, "CLOSED" in _by_num.get(_n, ""))
     # 2. Filed carriers FLAG (436)
     for n in sorted(PROV):
         check("F%d carrier FLAG" % n, _shaped(PROV[n]) == "FLAG")
@@ -148,6 +149,13 @@ GEN = [
     ('path trailing FLAG', 'https://example.com/reminisce/page?x=1'),
     ('path embedded FLAG', 'see https://example.com/reminisce/page for details'),
     ('query-eq shadow FLAG (generalization via [?&#]; only #shadow= filed)', 'https://example.com/page?shadow=ExampleBrand'),
+    # Wave-453 merge: the four entries below were BOUNDS (QUIET) on the
+    # lane-D tree; on the merged tree they FLAG via sibling lanes'
+    # closures (F5502/F4681/F5496/F5118). Moved to GEN.
+    ('case-variant TROVES FLAG (F5502, lane E closed, merged tree)', 'https://example.com/page?TROVES=ExampleBrand'),
+    ('singular trove FLAG (F4681, lane C closed, merged tree)', 'https://example.com/page?trove=ExampleBrand'),
+    ('singular trove no-equals FLAG (F5496, lane E closed, merged tree)', 'https://example.com/page?trove'),
+    ('plural shadows path FLAG (F5118, lane E closed, merged tree)', 'https://example.com/shadows/page'),
 ]
 
 BOUNDS = [
@@ -155,16 +163,12 @@ BOUNDS = [
     ('param prefix QUIET', 'https://example.com/page?trovesx=ExampleBrand'),
     ('param suffix no-equals QUIET', 'https://example.com/page?trovesx'),
     ('digit-start value QUIET', 'https://example.com/page?troves=1abc'),
-    ('case-variant TROVES QUIET (not filed)', 'https://example.com/page?TROVES=ExampleBrand'),
     ('case-variant Troves QUIET (not filed)', 'https://example.com/page?Troves=ExampleBrand'),
     ('case-variant Shadow QUIET (not filed)', 'https://example.com/page?Shadow=ExampleBrand'),
     ('matrix wrong case QUIET (no uppercase matrix branch)', 'https://example.com/page;TROVES=ExampleBrand'),
     ('path wrong case QUIET (no uppercase path branch)', 'https://example.com/TROVES/page'),
     ('path without trailing slash QUIET', 'https://example.com/reminisce'),
     ('path without URL context QUIET', '/reminisce/'),
-    ('singular trove QUIET (F4681 sibling, still OPEN)', 'https://example.com/page?trove=ExampleBrand'),
-    ('singular trove no-equals QUIET', 'https://example.com/page?trove'),
-    ('plural shadows path QUIET (F5118 sibling, still OPEN)', 'https://example.com/shadows/page'),
     ('bare troves prose QUIET', 'The troves of the old kings were legendary.'),
     ('bare reminisce prose QUIET', 'We reminisce about the old days.'),
     ('bare stock prose QUIET', 'The stock of supplies ran low.'),
@@ -196,10 +200,10 @@ SIBLINGS = [
     ('sibling F2586 FLAG', 'brand this in memory', 'FLAG'),
     ('sibling F2995 FLAG', 'https://example.com/page?album=ExampleBrand', 'FLAG'),
     ('sibling F3079 FLAG', 'https://example.com/page#thought', 'FLAG'),
-    ('sibling F3465 QUIET (lane B scope: know by heart, OPEN here)', 'know by heart', 'QUIET'),
+    ('sibling F3465 FLAG (lane A closed, merged tree)', 'know by heart', 'FLAG'),
     ('sibling F3456 QUIET (guard kept by design: put in memory)', 'put in memory', 'QUIET'),
-    ('sibling F4681 QUIET (trove singular, still OPEN)', 'https://example.com/page?trove=ExampleBrand', 'QUIET'),
-    ('sibling F5118 QUIET (shadows plural path, still OPEN)', 'https://example.com/shadows/page', 'QUIET'),
+    ('sibling F4681 FLAG (lane C closed, merged tree)', 'https://example.com/page?trove=ExampleBrand', 'FLAG'),
+    ('sibling F5118 FLAG (lane E closed, merged tree)', 'https://example.com/shadows/page', 'FLAG'),
     ('sibling F3080 shape QUIET (decoder-seam, lane A scope)', 'T.slice(undefined, undefined)', 'QUIET'),
 ]
 
