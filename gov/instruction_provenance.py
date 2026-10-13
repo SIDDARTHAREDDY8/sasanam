@@ -365,11 +365,12 @@ _ZW_CHARS = "\u200b\u200c\u200d\ufeff"
 # value (no authority claim needed -- the URL parameter itself is the
 # memory-write instruction).
 _MEMORY_WRITE = re.compile(
-    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference)\b"
+    r"(?i)\b(?:remember|store in memory|save to memory|memorize|commit to memory|keep in mind|note for future reference|retain in memory|cache in memory|write to memory|update your memory)\b"
     r"[^.]{0,80}?\b(?:authoritative|trusted|canonical|official)\b"
     r"|\b(?:authoritative|trusted|canonical|official)\s+source\b"
-    r"[^.]{0,80}?\b(?:remember|store|save|memorize)\b"
-    r"|[?&](?-i:remember)=(?-i:[A-Z])[a-zA-Z0-9]+\b")
+    r"[^.]{0,80}?\b(?:remember|store|save|memorize|retain|cache|write|update)\b"
+    r"|[?&#](?-i:remember)=(?-i:[A-Z])[a-zA-Z0-9]+\b"
+    r"|/(?-i:remember)/(?-i:[A-Z])[a-zA-Z0-9]+\b")
 
 
 def _strip_zero_width(text):
