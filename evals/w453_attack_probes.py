@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Wave-453 attack round 121 coverage battery.
 
-Pins all 2594 new findings OPEN on the open tree:
-- F5553-F8146: 114 decoder (must MISS) + 2480 provenance (must QUIET)
+Pins all 2594 new findings (round 121; CLOSED by wave-454 lanes)
+on the merged tree:
+- F5553-F8146: 114 decoder (must HIT) + 2480 provenance (must FLAG)
 Carries forward the round-120 pins (F3645-F5552: MISS/QUIET, still OPEN),
 round-119 pins (F3080-F3644: HIT/FLAG, closed by wave-452 lanes) and
 round-118 pins (F2751-F3079: HIT/FLAG, closed by wave-451 lanes) via
@@ -113,11 +114,11 @@ def main():
         7533, 7536, 7543, 7546, 7563, 7566, 7569, 7572, 7578, 7584,
         7587, 7594, 7603, 7575, 7581, 7597, 7600, 7606, 7609, 7612,
         7619, 7622, 7625, 7632, 7635))
-    jobs_dec = [(num, expr, "MISS") for num, expr in DECODER_NEW_121]
-    jobs_custom = [(num, tmpl, "MISS") for num, tmpl in DECODER_CUSTOM_121]
-    jobs_prov = [(num, carrier,
-                  "FLAG" if num in INCIDENTAL_CLOSED else "QUIET")
-                 for num, carrier in PROV_NEW_121]
+    # Wave-454 merge: round-121 CLOSED by wave-454 lanes (A: decoder
+    # F5553-F5666; B-E: provenance F5667-F8147 incl. the 25 incidentals).
+    jobs_dec = [(num, expr, "HIT") for num, expr in DECODER_NEW_121]
+    jobs_custom = [(num, tmpl, "HIT") for num, tmpl in DECODER_CUSTOM_121]
+    jobs_prov = [(num, carrier, "FLAG") for num, carrier in PROV_NEW_121]
     fails = 0
     total = 0
     with ThreadPoolExecutor(max_workers=6) as ex:

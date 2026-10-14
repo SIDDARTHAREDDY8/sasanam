@@ -708,7 +708,7 @@ def main():
     # a new re.compile in instruction_provenance.py).
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("N_STMTDEC_LOOPS=200", loops == 200)
+    check("N_STMTDEC_LOOPS=201", loops == 201)  # wave-454 merge reconciliation: +1 wave-454 lane A dispatch loop = 201
     import re as _re
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("re.compile=29 in dlp", dlp_re == 29)
@@ -769,18 +769,26 @@ def main():
     check("matrix-noeq eq-form disjoint", _shaped("https://example.com/page;trigger=ExampleBrand") == "FLAG")
     check("matrix-noeq longer QUIET", _shaped("https://example.com/page;triggered") == "QUIET")
     check("matrix-noeq prefix QUIET", _shaped("https://example.com/page;triggerx") == "QUIET")
-    check("unfiled Censuses-eq QUIET", _shaped("https://example.com/page?Censuses=ExampleBrand") == "QUIET")
-    check("unfiled CENSUSES-noeq QUIET", _shaped("https://example.com/page?CENSUSES") == "QUIET")
-    check("unfiled CENSUSES-hash-noeq QUIET", _shaped("https://example.com/page#CENSUSES") == "QUIET")
-    check("unfiled censuses-matrix-noeq QUIET", _shaped("https://example.com/page;censuses") == "QUIET")
-    check("unfiled censuses-enc-eq QUIET", _shaped("https://example.com/page?censuses%3DExampleBrand") == "QUIET")
-    check("unfiled clues-eq QUIET", _shaped("https://example.com/page?clues=ExampleBrand") == "QUIET")
-    check("unfiled clues-noeq QUIET", _shaped("https://example.com/page?clues") == "QUIET")
-    check("unfiled clues-matrix-eq QUIET", _shaped("https://example.com/page;clues=ExampleBrand") == "QUIET")
-    check("unfiled clues-matrix-noeq QUIET", _shaped("https://example.com/page;clues") == "QUIET")
-    check("unfiled clues-path QUIET", _shaped("https://example.com/clues/page") == "QUIET")
-    check("unfiled clues-hash-eq QUIET", _shaped("https://example.com/page#clues=ExampleBrand") == "QUIET")
-    check("unfiled word enc-eq QUIET", _shaped("https://example.com/page?clue%3DExampleBrand") == "QUIET")
+    # Wave-454 merge reconciliation: the 12 variants below were QUIET on
+    # lane D's tree (unfiled there) but FLAG on the merged tree via
+    # sibling-lane incidental coverage -- 5 censuses forms via lane E
+    # branches, 7 clues forms (incl. singular clue encoded-eq) via
+    # lane C branches. Verified per-lane-tree by the merge coordinator
+    # (attr13.py: each FLAGs on exactly one sibling lane tree, QUIET
+    # on lane D's own tree). Expectations flipped QUIET -> FLAG;
+    # the forms remain unfiled (no finding numbers), now covered.
+    check("covered-via-lane-E Censuses-eq FLAG", _shaped("https://example.com/page?Censuses=ExampleBrand") == "FLAG")
+    check("covered-via-lane-E CENSUSES-noeq FLAG", _shaped("https://example.com/page?CENSUSES") == "FLAG")
+    check("covered-via-lane-E CENSUSES-hash-noeq FLAG", _shaped("https://example.com/page#CENSUSES") == "FLAG")
+    check("covered-via-lane-E censuses-matrix-noeq FLAG", _shaped("https://example.com/page;censuses") == "FLAG")
+    check("covered-via-lane-E censuses-enc-eq FLAG", _shaped("https://example.com/page?censuses%3DExampleBrand") == "FLAG")
+    check("covered-via-lane-C clues-eq FLAG", _shaped("https://example.com/page?clues=ExampleBrand") == "FLAG")
+    check("covered-via-lane-C clues-noeq FLAG", _shaped("https://example.com/page?clues") == "FLAG")
+    check("covered-via-lane-C clues-matrix-eq FLAG", _shaped("https://example.com/page;clues=ExampleBrand") == "FLAG")
+    check("covered-via-lane-C clues-matrix-noeq FLAG", _shaped("https://example.com/page;clues") == "FLAG")
+    check("covered-via-lane-C clues-path FLAG", _shaped("https://example.com/clues/page") == "FLAG")
+    check("covered-via-lane-C clues-hash-eq FLAG", _shaped("https://example.com/page#clues=ExampleBrand") == "FLAG")
+    check("covered-via-lane-C word enc-eq FLAG", _shaped("https://example.com/page?clue%3DExampleBrand") == "FLAG")
     # `quixotic` is genuinely unfiled (`records` is pre-covered: the
     # `?records=` branch in gov/instruction_provenance.py).
     check("unfiled word eq QUIET", _shaped("https://example.com/page?quixotic=ExampleBrand") == "QUIET")
@@ -793,7 +801,11 @@ def main():
     check("put bare QUIET (past==present guard)", _shaped("put in memory") == "QUIET")
     check("technical set prose QUIET", _shaped("The configuration is set in memory") == "QUIET")
     check("technical put prose QUIET", _shaped("The value is put in memory") == "QUIET")
-    check("remember-this bare QUIET (not filed)", _shaped("remember this") == "QUIET")
+    # Wave-454 merge reconciliation: "remember this" bare FLAGs on the
+    # merged tree via lane B F6269 `\bremember this\b` (documented
+    # tradeoff: first-person recollection also FLAGs, fail-closed).
+    # QUIET on lane D's tree; expectation flipped QUIET -> FLAG.
+    check("remember-this bare FLAG (lane B F6269)", _shaped("remember this") == "FLAG")
     # 5. Sibling pins
     check("sibling F3465 FLAG (know by heart)", _shaped("know by heart") == "FLAG")
     check("sibling F2995 FLAG (?album=)", _shaped("https://example.com/page?album=ExampleBrand") == "FLAG")

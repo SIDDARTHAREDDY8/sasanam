@@ -518,7 +518,7 @@ def main():
     # a new re.compile in instruction_provenance.py).
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("N_STMTDEC_LOOPS=200", loops == 200)
+    check("N_STMTDEC_LOOPS=201", loops == 201)  # wave-454 merge reconciliation: +1 wave-454 lane A dispatch loop = 201
     import re as _re
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("re.compile=29 in dlp", dlp_re == 29)

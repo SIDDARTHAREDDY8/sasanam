@@ -799,7 +799,7 @@ def main():
     # ride the existing _MEMORY_WRITE compile.
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("pin N_STMTDEC_LOOPS == 200", loops == 200)
+    check("pin N_STMTDEC_LOOPS == 201", loops == 201)  # wave-454 merge reconciliation: +1 wave-454 lane A dispatch loop = 201
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("pin re.compile == 29 in dlp", dlp_re == 29)
     ip_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov", "instruction_provenance.py")).read()))

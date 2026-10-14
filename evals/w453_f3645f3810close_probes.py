@@ -269,7 +269,7 @@ def main():
     import inspect
     src = inspect.getsource(dlp_mod)
     nloops = src.count("for _stmtdec in (")
-    check("pin N_STMTDEC_LOOPS==200", nloops == 200)
+    check("pin N_STMTDEC_LOOPS==201", nloops == 201)  # wave-454 merge reconciliation: +1 wave-454 lane A dispatch loop = 201
     nre = len(re.findall(r"re\.compile\(", src))
     check("pin re.compile==29", nre == 29)
     # --- Footer / stamp pin: F3645-F3810 except F3787 CLOSED, F3465 CLOSED ---
