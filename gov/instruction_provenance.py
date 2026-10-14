@@ -2001,6 +2001,54 @@ _MEMORY_WRITE = re.compile(
     r"|://[^/\s]+/(?-i:unconscious)/"
     r"|://[^/\s]+/(?-i:warehouse)/"
     r"|://[^/\s]+/(?-i:warehouses)/"
+    # F5667-F6287 (wave-454 lane B): 602 (verb, frame) pairs across
+    # 10 frames (71 distinct verbs, sparse matrix) + 16 tail verb
+    # forms (F6272 memorize, F6273 set, F6274-F6287 in-memory)
+    # + 3 fixed phrases (F6269 remember this, F6270/F6271 know
+    # this/it by heart) = 621. Per-frame
+    # branches following waves 451-453 conventions. Rally split
+    # per frame: the this/it form has NO memorial guard
+    # (fail-closed); the bare form keeps (?! of\b) so memorial
+    # prose stays QUIET. to-your / to-long-term / into-long-term
+    # are this/it-REQUIRED (no bare branch): bare "save to
+    # (your|long-term) memory" and bare "save into long-term
+    # memory" occur in honest prose (wave-452 F3430/F3421
+    # precedent, extended to into-long-term). No guard needed
+    # on those forms: "to your/long-term memory of" is not
+    # memorial idiom.
+    # F6269 `remember this` is a bare branch: fail-closed
+    # routing to approval. Known residual: first-person
+    # declarative recollection ("I remember this meeting")
+    # also FLAGs -- the same tradeoff already accepted for
+    # F3461 `always remember this`. Pinned as a documented
+    # FLAG in the close battery, not hidden. The remember-this and
+    # memorize-this phrase branches likewise carry no memorial
+    # guard, so "remember/memorize this in memory of X" also
+    # FLAGs (fail-closed); pinned as DOCUMENTED FLAG in the
+    # close battery.
+    r"|\b(?:absorb|accumulate|affix|aggregate|amass|annalize|append|arrange|assemble|assimilate|back up|bale|bank|bind up|blanket|board|bottle up|bottle|box in|box up|brick|bridle|buffer|bundle up|bundle|burden|bury|cache away|cache|cage|can|candy|capture|carpet|catalogue|catalog|categorize|charge|chill|chisel|chronicle|clad|classify|clone|clutch|coat|codify|collate|compile) (?:this |it )to memory\b"
+    r"|\b(?:absorb|accumulate|affix|aggregate|amass|annalize|append|arrange|assemble|assimilate|back up|bale|bank|bind up|blanket|board|bottle up|bottle|box in|box up|brick|bridle|buffer|bundle up|bundle|burden|bury|cache away|cache|cage|can|candy|capture|carpet|catalogue|catalog|categorize|charge|chill|chisel|chronicle|clad|classify|clone|clutch|coat|codify|collate|compile) to memory(?! of\b)"
+    r"|\b(?:absorb|accumulate|add|affix|aggregate|amass|anchor|annalize|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|blanket|board|bottle up|bottle|box in|box up|brick|bridle|buffer|bundle up|bundle|burden|bury|cache away|cache|cage|can|candy|capture|carpet|catalogue|catalog|categorize|cement|charge|chill|chisel|chronicle|clad|classify|clone|clutch|coat|codify|collate) (?:this |it )into memory\b"
+    r"|\b(?:absorb|accumulate|add|affix|aggregate|amass|anchor|annalize|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|blanket|board|bottle up|bottle|box in|box up|brick|bridle|buffer|bundle up|bundle|burden|bury|cache away|cache|cage|can|candy|capture|carpet|catalogue|catalog|categorize|cement|charge|chill|chisel|chronicle|clad|classify|clone|clutch|coat|codify|collate) into memory(?! of\b)"
+    r"|\b(?:absorb|accumulate|add|affix|aggregate|amass|annalize|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|blanket|board|bottle up|bottle|box in|box up|brick|bridle|buffer|bundle up|bundle|burden|bury|cache away|cache|cage|can|candy|capture|carpet|catalogue|catalog|categorize|cement|charge|chill|chisel|chronicle|clad|classify|clone|clutch|coat|codify|collate) (?:this |it )in your memory\b"
+    r"|\b(?:absorb|accumulate|add|affix|aggregate|amass|annalize|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|blanket|board|bottle up|bottle|box in|box up|brick|bridle|buffer|bundle up|bundle|burden|bury|cache away|cache|cage|can|candy|capture|carpet|catalogue|catalog|categorize|cement|charge|chill|chisel|chronicle|clad|classify|clone|clutch|coat|codify|collate) in your memory(?! of\b)"
+    r"|\b(?:absorb|accumulate|add|affix|aggregate|amass|anchor|annalize|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|blanket|board|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|charge|chill|chisel|chronicle|clad|classify|clone|clutch|coat|codify|collate|commit) (?:this |it )in my memory\b"
+    r"|\b(?:absorb|accumulate|add|affix|aggregate|amass|anchor|annalize|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|blanket|board|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|charge|chill|chisel|chronicle|clad|classify|clone|clutch|coat|codify|collate|commit) in my memory(?! of\b)"
+    r"|\b(?:absorb|accumulate|add|affix|aggregate|amass|anchor|annalize|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|blanket|board|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|charge|chill|chisel|chronicle|clad|classify|clone|clutch|coat|codify|collate|commit) (?:this |it )as a memory\b"
+    r"|\b(?:absorb|accumulate|add|affix|aggregate|amass|anchor|annalize|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|blanket|board|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|charge|chill|chisel|chronicle|clad|classify|clone|clutch|coat|codify|collate|commit) as a memory(?! of\b)"
+    r"|\b(?:absorb|accommodate|accumulate|add|adhere|adjoin|affix|aggregate|amass|anchor|annalize|annex|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|bind|blanket|blot|board|bolt|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|chain|charge|cherish|chill|chisel|chronicle|clad|clamp|clasp|classify|clone|clutch|coat|codify|collate|commemorate|commit) (?:this |it )in the memory\b"
+    r"|\b(?:absorb|accommodate|accumulate|add|adhere|adjoin|affix|aggregate|amass|anchor|annalize|annex|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|bind|blanket|blot|board|bolt|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|chain|charge|cherish|chill|chisel|chronicle|clad|clamp|clasp|classify|clone|clutch|coat|codify|collate|commemorate|commit) in the memory(?! of\b)"
+    r"|\b(?:absorb|accommodate|accumulate|adhere|adjoin|affix|aggregate|amass|anchor|annalize|annex|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|bind|blanket|blot|board|bolt|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|chain|charge|cherish|chill|chisel|chronicle|clad|clamp|clasp|classify|clone|clutch|coat|codify|collate|commemorate|keep|save) (?:this |it )to your memory\b"
+    r"|\b(?:absorb|accommodate|accumulate|add|adhere|adjoin|affix|aggregate|amass|anchor|annalize|annex|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|bind|blanket|blot|board|bolt|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|chain|charge|cherish|chill|chisel|chronicle|clad|clamp|clasp|classify|clone|clutch|coat|codify|collate|commemorate) (?:this |it )in long-term memory\b"
+    r"|\b(?:absorb|accommodate|accumulate|add|adhere|adjoin|affix|aggregate|amass|anchor|annalize|annex|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|bind|blanket|blot|board|bolt|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|chain|charge|cherish|chill|chisel|chronicle|clad|clamp|clasp|classify|clone|clutch|coat|codify|collate|commemorate) in long-term memory(?! of\b)"
+    r"|\b(?:absorb|accommodate|accumulate|add|adhere|adjoin|affix|aggregate|amass|anchor|annalize|annex|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|bind|blanket|blot|board|bolt|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|chain|charge|cherish|chill|chisel|chronicle|clad|clamp|clasp|classify|clone|clutch|coat|codify|collate|commemorate) (?:this |it )to long-term memory\b"
+    r"|\b(?:absorb|accommodate|accumulate|add|adhere|adjoin|affix|aggregate|amass|anchor|annalize|annex|append|archive|arrange|assemble|assimilate|back up|bale|bank|bind up|bind|blanket|blot|board|bolt|bottle up|bottle|box in|box up|brand|brick|bridle|buffer|bundle up|bundle|burden|burn|bury|cache away|cache|cage|can|candy|capture|carpet|carve|catalogue|catalog|categorize|cement|chain|charge|cherish|chill|chisel|chronicle|clad|clamp|clasp|classify|clone|clutch|coat|codify|collate|commemorate|commit) (?:this |it )into long-term memory\b"
+    r"|\bremember this\b"
+    r"|\bknow (?:this |it )by heart\b"
+    r"|\b(?:contemplate|engrain|muse|narrate|ponder|recapitulate|recount|rehearse|reiterate|relate|reminisce|reprise|revisit|ruminate) (?:this |it )in memory\b"
+    r"|\b(?:contemplate|engrain|muse|narrate|ponder|recapitulate|recount|rehearse|reiterate|relate|reminisce|reprise|revisit|ruminate) in memory(?! of\b)"
+    r"|\bset (?:this |it )into memory\b"
+    r"|\bmemorize (?:this|it)\b"
 )
 
 

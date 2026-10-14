@@ -613,12 +613,12 @@ def main():
           _shaped("https://example.com/page?trove=1") == "QUIET")
     check("deeplink uppercase param FLAG (F5497, lane E closed, merged tree)",
           _shaped("https://example.com/page?TROVE=ExampleBrand") == "FLAG")
-    check("wrong verb QUIET",
-          _shaped("contemplate this in memory") == "QUIET")
+    check("contemplate-this-in-memory FLAG (wave-454 lane B maintenance: F6287 closed)",
+          _shaped("contemplate this in memory") == "FLAG")
     check("this-moment gap QUIET",
           _shaped("aggregate this moment in memory") == "QUIET")
-    check("remember-this bare QUIET (not filed)",
-          _shaped("remember this") == "QUIET")
+    check("remember-this bare FLAG (wave-454 lane B maintenance: F6269 closed)",
+          _shaped("remember this") == "FLAG")
     check("keep-him memorial QUIET (person pronoun)",
           _shaped("keep him in your memory") == "QUIET")
     # 5. Sibling pins

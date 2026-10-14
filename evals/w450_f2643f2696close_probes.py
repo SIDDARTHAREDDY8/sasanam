@@ -184,7 +184,8 @@ def main():
     check("honest prose", _check_prov("The weather is pleasant today with clear skies.") == "QUIET")
     check("honest verb no memory", _check_prov("muster the troops for the parade") == "QUIET")
     check("honest verb moment", _check_prov("capture this moment in memory") == "QUIET")
-    check("honest verb my memory", _check_prov("I will capture this in my memory") == "QUIET")
+    check("capture-this-in-my-memory FLAG (wave-454 lane B maintenance: F6064 closed)",
+          _check_prov("I will capture this in my memory") == "FLAG")
 
     # --- Sibling pins: neighboring findings still behave ---
     check("sibling F2381", _scan(_shape("T['slice'](0)", SECRET20)) == "HIT")
