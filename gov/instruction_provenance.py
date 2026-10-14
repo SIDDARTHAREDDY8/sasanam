@@ -3358,6 +3358,139 @@ _MEMORY_WRITE = re.compile(
     r"|\b(?:compose|conceal|concoct|confine|consign|constrain|contrive|coop|cork up|cork|corral|cover|crate|curb|cure|cut|dehydrate|deluge|deposit away|desiccate|detain|devise|diary|dictate|digest|dip|docket|document|douse|download|draft|drench|dry|dunk|duplicate|embalm|emboss|enamel|encase|encode|encumber|engulf|entrust|enumerate|envelop|excavate|fabricate|face|fashion|fasten|fence in|fence|file away|film|filter|flood|forge|formulate|fortify|freeze|freight|fuse|gather|gild|glaze|graft|grave|guard|hamper|handcuff|herd|hew) (?:this |it )to memory\b"
     r"|\b(?:compile|compose|conceal|concoct|confine|consign|constrain|contrive|coop|cork up|cork|corral|cover|crate|curb|cure|cut|dehydrate|deluge|deposit away|deposit|desiccate|detain|devise|diary|dictate|digest|dip|docket|document|douse|download|draft|drench|dry|dunk|duplicate|embalm|emboss|enamel|encase|encode|encumber|engrave|engulf|enroll|entrust|enumerate|envelop|etch|excavate|fabricate|face|fashion|fasten|feed|fence in|fence|file away|film|filter|fix|flood|forge|formulate|fortify|freeze|freight|fuse|gather|gild|glaze|graft|grave|guard|hamper|handcuff|herd|hew) (?:this |it )to your memory\b"
 
+    # F10791-F11671 (wave-455 lane D): attack-122 provenance-frame
+    # and of-variant carriers in this lane's range. One branch
+    # per filed template; each verb alternation lists exactly the
+    # verbs filed for that template (no generalization). Frame
+    # branches require a filed verb + the full template, so
+    # bare "in my memory" / "in mind" / "in memory of John"
+    # (Titlecase, no internal capital) stay QUIET. The of-form
+    # brand guard follows the wave-453 lane B CamelCase rule
+    # (McDonald-style surnames FLAG: accepted fail-closed edge).
+    # Lane D template 'in memory of ExampleBrand': 260 findings (F11260-11261, 11263, 11265, 11267-11269, 11271, 11273-11274, 11276, 11278, 11280-11281, 11283, 11285, 11287-11289, 11291, 11293, 11295, 11297, 11299, 11301-11302, 11304, 11306-11307, 11309, 11311-11313, 11315-11317, 11322-11324, 11326-11327, 11329, 11331, 11333, 11335, 11337-11340, 11342-11343, 11345-11347, 11349-11350, 11352-11358, 11360, 11362-11367, 11369, 11371-11372, 11374-11375, 11377-11380, 11382-11383, 11385, 11387-11388, 11390-11391, 11393-11394, 11396-11400, 11402-11404, 11406, 11408, 11410, 11412, 11414-11415, 11417, 11419-11420, 11422-11423, 11425-11426, 11428, 11430-11431, 11433, 11435, 11437-11440, 11442-11444, 11446-11447, 11449, 11451, 11453-11454, 11456-11459, 11461-11462, 11464-11468, 11470-11471, 11473, 11475, 11477, 11479, 11481, 11483, 11485, 11487-11489, 11491-11493, 11495-11496, 11498-11500, 11502, 11504, 11506-11507, 11509-11511, 11513, 11515-11517, 11519-11522, 11524-11526, 11528-11529, 11531-11532, 11534, 11539-11541, 11543, 11545-11546, 11548-11549, 11551, 11554-11557, 11559, 11561, 11563-11569, 11571-11573, 11575, 11577-11579, 11581, 11583-11587, 11589-11591, 11593, 11595, 11597-11599, 11607-11612, 11619-11620, 11622, 11628-11632, 11634, 11636, 11638-11639, 11641, 11643, 11645, 11647, 11649, 11651, 11653, 11655, 11657-11658, 11660, 11662-11663, 11665-11666, 11668-11670).
+    r"|\b(?:acclimatize|accommodate|accustom|acquire|adapt|adhere|adjoin|adjust|adore|aggregate|align|alleviate|animate|annex|appease|apply|arouse|arrange|assemble|assuage|attain|attune|audit|author|awaken|bale|bear|bequeath|bind|blanket|bloom|blot|board|bolster|bolt|bottle|brace|brick|bridle|brood|bundle|burden|buttress|cage|calibrate|calm|can|candy|carpet|carry|catalogue|catch|categorize|chain|channel|charge|cheer|cherish|chill|clad|clamp|clasp|classify|clinch|coach|coat|codify|collate|commemorate|compose|concentrate|conciliate|concoct|condition|confine|conform|conserve|constrain|contain|contemplate|contrive|convert|convey|coop|coordinate|cork|corral|cover|cultivate|curb|cure|cut|dab|dampen|daub|deboss|decipher|decode|decrypt|dedicate|defend|dehydrate|delight|deliver|deluge|desiccate|detain|develop|devise|devote|diffuse|dip|discover|disperse|disseminate|dot|douse|drench|drill|dry|dunk|dwell|dye|earmark|educate|electrify|embalm|employ|enamel|encrypt|encumber|engrain|engulf|enliven|ensconce|enshrine|entomb|entrench|esteem|eternalize|evolve|examine|excite|exercise|exert|exploit|explore|expose|fabricate|face|familiarize|fashion|fence|fetter|filter|fixate|fleck|flood|flourish|focus|follow|formulate|foster|freeze|freight|funnel|galvanize|gather|gild|gladden|glaze|glue|gouge|grab|graft|grasp|gratify|grip|habituate|hamper|hand|handcuff|harbor|harbour|harmonize|harness|hatch|haul|hew|hobble|hone|honor|honour|house|hydrate|ignite|imbibe|immerse|immortalize|immure|impound|imprison|incarcerate|incubate|indoctrinate|infix|inflame|ingest|inhume|inseminate|inspect|instruct|inter|intern|interpolate|interpose|interpret|introduce|inundate|investigate|invigorate|irrigate|jail|jar|kindle|lacquer|lade|laminate|lash|lay|leach|leash|leverage|maintain|manacle|manufacture|marinate|marshal|master|mature|meditate|memorialize|memorise|mentor|migrate|mitigate|moderate|modulate|moisten|mollify|monitor|moor|motivate|move|mummify|muse|nail|narrate|nest|nestle) in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'this as a memory': 38 findings (F10820, 10840, 10850, 10860, 10870, 10880, 10890, 10900, 10910, 10920, 10930, 10939, 10959, 10969, 10989, 10999, 11009, 11019, 11029, 11039, 11049, 11059, 11069, 11079, 11099, 11109, 11119, 11129, 11139, 11159, 11169, 11179, 11189, 11199, 11209, 11219, 11236, 11253).
+    r"|\b(?:stow|strain|submerge|suffuse|sugar|summarize|swaddle|swamp|swathe|sync|systematize|take|tape|tattoo|tile|tin|trace|trammel|transcribe|transfuse|transplant|trickle|truss|tuck|type|vacuum|varnish|veneer|wall|warehouse|weave|wedge|weld|whittle|winnow|wrap|write|yank) this as a memory\b"
+    # Lane D template 'this in my memory': 38 findings (F10819, 10839, 10849, 10859, 10869, 10879, 10889, 10899, 10909, 10919, 10929, 10938, 10958, 10968, 10988, 10998, 11008, 11018, 11028, 11038, 11048, 11058, 11068, 11078, 11098, 11108, 11118, 11128, 11138, 11158, 11168, 11178, 11188, 11198, 11208, 11218, 11235, 11252).
+    r"|\b(?:stow|strain|submerge|suffuse|sugar|summarize|swaddle|swamp|swathe|sync|systematize|take|tape|tattoo|tile|tin|trace|trammel|transcribe|transfuse|transplant|trickle|truss|tuck|type|vacuum|varnish|veneer|wall|warehouse|weave|wedge|weld|whittle|winnow|wrap|write|yank) this in my memory\b"
+    # Lane D template 'this in the memory': 38 findings (F10821, 10841, 10851, 10861, 10871, 10881, 10891, 10901, 10911, 10921, 10931, 10940, 10960, 10970, 10990, 11000, 11010, 11020, 11030, 11040, 11050, 11060, 11070, 11080, 11100, 11110, 11120, 11130, 11140, 11160, 11170, 11180, 11190, 11200, 11210, 11220, 11237, 11254).
+    r"|\b(?:stow|strain|submerge|suffuse|sugar|summarize|swaddle|swamp|swathe|sync|systematize|take|tape|tattoo|tile|tin|trace|trammel|transcribe|transfuse|transplant|trickle|truss|tuck|type|vacuum|varnish|veneer|wall|warehouse|weave|wedge|weld|whittle|winnow|wrap|write|yank) this in the memory\b"
+    # Lane D template 'this into long-term memory': 38 findings (F10825, 10845, 10855, 10865, 10875, 10885, 10895, 10905, 10915, 10925, 10935, 10944, 10964, 10974, 10994, 11004, 11014, 11024, 11034, 11044, 11054, 11064, 11074, 11084, 11104, 11114, 11124, 11134, 11144, 11164, 11174, 11184, 11194, 11204, 11214, 11224, 11238, 11258).
+    r"|\b(?:stow|strain|submerge|suffuse|sugar|summarize|swaddle|swamp|swathe|sync|systematize|take|tape|tattoo|tile|tin|trace|trammel|transcribe|transfuse|transplant|trickle|truss|tuck|type|vacuum|varnish|veneer|wall|warehouse|weave|wedge|weld|whittle|winnow|wrap|write|yank) this into long\-term memory\b"
+    # Lane D template 'this in long-term memory': 37 findings (F10823, 10843, 10853, 10863, 10873, 10883, 10893, 10903, 10913, 10923, 10933, 10942, 10962, 10972, 10992, 11002, 11012, 11022, 11032, 11042, 11052, 11062, 11072, 11082, 11102, 11112, 11122, 11132, 11142, 11162, 11172, 11182, 11192, 11202, 11212, 11222, 11256).
+    r"|\b(?:stow|strain|submerge|suffuse|sugar|summarize|swaddle|swamp|swathe|sync|systematize|take|tape|tattoo|tile|tin|trace|trammel|transcribe|transfuse|transplant|trickle|truss|tuck|type|vacuum|varnish|veneer|wall|warehouse|weave|wedge|weld|whittle|winnow|wrap|yank) this in long\-term memory\b"
+    # Lane D template 'this in your memory': 37 findings (F10818, 10838, 10848, 10858, 10868, 10878, 10888, 10898, 10908, 10918, 10928, 10937, 10957, 10967, 10987, 10997, 11007, 11017, 11027, 11037, 11047, 11057, 11067, 11077, 11097, 11107, 11117, 11127, 11137, 11157, 11167, 11177, 11187, 11197, 11207, 11217, 11251).
+    r"|\b(?:stow|strain|submerge|suffuse|sugar|summarize|swaddle|swamp|swathe|sync|systematize|take|tape|tattoo|tile|tin|trace|trammel|transcribe|transfuse|transplant|trickle|truss|tuck|type|vacuum|varnish|veneer|wall|warehouse|weave|wedge|weld|whittle|winnow|wrap|yank) this in your memory\b"
+    # Lane D template 'this into memory': 37 findings (F10817, 10837, 10847, 10857, 10867, 10877, 10887, 10897, 10907, 10917, 10927, 10936, 10956, 10966, 10986, 10996, 11006, 11016, 11026, 11036, 11046, 11056, 11066, 11076, 11096, 11106, 11116, 11126, 11136, 11156, 11166, 11176, 11186, 11196, 11206, 11216, 11250).
+    r"|\b(?:stow|strain|submerge|suffuse|sugar|summarize|swaddle|swamp|swathe|sync|systematize|take|tape|tattoo|tile|tin|trace|trammel|transcribe|transfuse|transplant|trickle|truss|tuck|type|vacuum|varnish|veneer|wall|warehouse|weave|wedge|weld|whittle|winnow|wrap|yank) this into memory\b"
+    # Lane D template 'this to long-term memory': 37 findings (F10824, 10844, 10854, 10864, 10874, 10884, 10894, 10904, 10914, 10924, 10934, 10943, 10963, 10973, 10993, 11003, 11013, 11023, 11033, 11043, 11053, 11063, 11073, 11083, 11103, 11113, 11123, 11133, 11143, 11163, 11173, 11183, 11193, 11203, 11213, 11223, 11257).
+    r"|\b(?:stow|strain|submerge|suffuse|sugar|summarize|swaddle|swamp|swathe|sync|systematize|take|tape|tattoo|tile|tin|trace|trammel|transcribe|transfuse|transplant|trickle|truss|tuck|type|vacuum|varnish|veneer|wall|warehouse|weave|wedge|weld|whittle|winnow|wrap|yank) this to long\-term memory\b"
+    # Lane D template 'this to your memory': 37 findings (F10822, 10842, 10852, 10862, 10872, 10882, 10892, 10902, 10912, 10922, 10932, 10941, 10961, 10971, 10991, 11001, 11011, 11021, 11031, 11041, 11051, 11061, 11071, 11081, 11101, 11111, 11121, 11131, 11141, 11161, 11171, 11181, 11191, 11201, 11211, 11221, 11255).
+    r"|\b(?:stow|strain|submerge|suffuse|sugar|summarize|swaddle|swamp|swathe|sync|systematize|take|tape|tattoo|tile|tin|trace|trammel|transcribe|transfuse|transplant|trickle|truss|tuck|type|vacuum|varnish|veneer|wall|warehouse|weave|wedge|weld|whittle|winnow|wrap|yank) this to your memory\b"
+    # Lane D template 'this to memory': 36 findings (F10816, 10836, 10846, 10856, 10866, 10876, 10886, 10896, 10906, 10916, 10926, 10955, 10965, 10985, 10995, 11005, 11015, 11025, 11035, 11045, 11055, 11065, 11075, 11095, 11105, 11115, 11125, 11135, 11155, 11165, 11175, 11185, 11195, 11205, 11215, 11249).
+    r"|\b(?:stow|strain|submerge|suffuse|sugar|summarize|swaddle|swamp|swathe|sync|systematize|tape|tattoo|tile|tin|trace|trammel|transcribe|transfuse|transplant|trickle|truss|tuck|type|vacuum|varnish|veneer|wall|warehouse|weave|wedge|weld|whittle|winnow|wrap|yank) this to memory\b"
+    # Lane D template 'up in memory of ExampleBrand': 8 findings (F11308, 11318, 11320, 11328, 11392, 11605, 11618, 11625).
+    r"|\b(?:bind|bottle|box|bundle|cork|keep|lay|lock) up in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'in in memory of ExampleBrand': 6 findings (F11319, 11494, 11552, 11604, 11617, 11624).
+    r"|\b(?:box|fence|hold|keep|lay|lock) in in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'this in memory of ExampleBrand': 6 findings (F11298, 11305, 11411, 11427, 11448, 11640).
+    r"|\b(?:author|bequeath|dedicate|devote|earmark|memorise) this in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'away in memory of ExampleBrand': 5 findings (F11332, 11421, 11550, 11614, 11623).
+    r"|\b(?:cache|deposit|hoard|lay|lock) away in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'down in memory of ExampleBrand': 4 findings (F11536, 11601, 11616, 11627).
+    r"|\b(?:hand|jot|lay|log) down in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'down this in memory of ExampleBrand': 4 findings (F11535, 11600, 11626, 11671).
+    r"|\b(?:hand|jot|log|note) down this in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'away this in long-term memory': 3 findings (F10793, 10833, 11092).
+    r"|\b(?:store|stow|tuck) away this in long\-term memory\b"
+    # Lane D template 'away this in the memory': 3 findings (F10791, 10831, 11090).
+    r"|\b(?:store|stow|tuck) away this in the memory\b"
+    # Lane D template 'away this into long-term memory': 3 findings (F10795, 10835, 11094).
+    r"|\b(?:store|stow|tuck) away this into long\-term memory\b"
+    # Lane D template 'away this to long-term memory': 3 findings (F10794, 10834, 11093).
+    r"|\b(?:store|stow|tuck) away this to long\-term memory\b"
+    # Lane D template 'away this to your memory': 3 findings (F10792, 10832, 11091).
+    r"|\b(?:store|stow|tuck) away this to your memory\b"
+    # Lane D template 'up this as a memory': 3 findings (F10810, 10979, 11229).
+    r"|\b(?:store|tie|wrap) up this as a memory\b"
+    # Lane D template 'up this in long-term memory': 3 findings (F10813, 10982, 11232).
+    r"|\b(?:store|tie|wrap) up this in long\-term memory\b"
+    # Lane D template 'up this in my memory': 3 findings (F10809, 10978, 11228).
+    r"|\b(?:store|tie|wrap) up this in my memory\b"
+    # Lane D template 'up this in the memory': 3 findings (F10811, 10980, 11230).
+    r"|\b(?:store|tie|wrap) up this in the memory\b"
+    # Lane D template 'up this in your memory': 3 findings (F10808, 10977, 11227).
+    r"|\b(?:store|tie|wrap) up this in your memory\b"
+    # Lane D template 'up this into long-term memory': 3 findings (F10815, 10984, 11234).
+    r"|\b(?:store|tie|wrap) up this into long\-term memory\b"
+    # Lane D template 'up this into memory': 3 findings (F10807, 10976, 11226).
+    r"|\b(?:store|tie|wrap) up this into memory\b"
+    # Lane D template 'up this to long-term memory': 3 findings (F10814, 10983, 11233).
+    r"|\b(?:store|tie|wrap) up this to long\-term memory\b"
+    # Lane D template 'up this to memory': 3 findings (F10806, 10975, 11225).
+    r"|\b(?:store|tie|wrap) up this to memory\b"
+    # Lane D template 'up this to your memory': 3 findings (F10812, 10981, 11231).
+    r"|\b(?:store|tie|wrap) up this to your memory\b"
+    # Lane D template 'aside in memory of ExampleBrand': 2 findings (F11603, 11613).
+    r"|\b(?:keep|lay) aside in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'away this as a memory': 2 findings (F10830, 11089).
+    r"|\b(?:stow|tuck) away this as a memory\b"
+    # Lane D template 'away this in my memory': 2 findings (F10829, 11088).
+    r"|\b(?:stow|tuck) away this in my memory\b"
+    # Lane D template 'away this in your memory': 2 findings (F10828, 11087).
+    r"|\b(?:stow|tuck) away this in your memory\b"
+    # Lane D template 'away this into memory': 2 findings (F10827, 11086).
+    r"|\b(?:stow|tuck) away this into memory\b"
+    # Lane D template 'away this to memory': 2 findings (F10826, 11085).
+    r"|\b(?:stow|tuck) away this to memory\b"
+    # Lane D template 'down this as a memory': 2 findings (F10949, 11243).
+    r"|\b(?:take|write) down this as a memory\b"
+    # Lane D template 'down this in long-term memory': 2 findings (F10952, 11246).
+    r"|\b(?:take|write) down this in long\-term memory\b"
+    # Lane D template 'down this in my memory': 2 findings (F10948, 11242).
+    r"|\b(?:take|write) down this in my memory\b"
+    # Lane D template 'down this in the memory': 2 findings (F10950, 11244).
+    r"|\b(?:take|write) down this in the memory\b"
+    # Lane D template 'down this in your memory': 2 findings (F10947, 11241).
+    r"|\b(?:take|write) down this in your memory\b"
+    # Lane D template 'down this into long-term memory': 2 findings (F10954, 11248).
+    r"|\b(?:take|write) down this into long\-term memory\b"
+    # Lane D template 'down this into memory': 2 findings (F10946, 11240).
+    r"|\b(?:take|write) down this into memory\b"
+    # Lane D template 'down this to long-term memory': 2 findings (F10953, 11247).
+    r"|\b(?:take|write) down this to long\-term memory\b"
+    # Lane D template 'down this to memory': 2 findings (F10945, 11239).
+    r"|\b(?:take|write) down this to memory\b"
+    # Lane D template 'down this to your memory': 2 findings (F10951, 11245).
+    r"|\b(?:take|write) down this to your memory\b"
+    # Lane D template 'in this as a memory': 2 findings (F10800, 11149).
+    r"|\b(?:store|wall) in this as a memory\b"
+    # Lane D template 'in this in long-term memory': 2 findings (F10803, 11152).
+    r"|\b(?:store|wall) in this in long\-term memory\b"
+    # Lane D template 'in this in my memory': 2 findings (F10799, 11148).
+    r"|\b(?:store|wall) in this in my memory\b"
+    # Lane D template 'in this in the memory': 2 findings (F10801, 11150).
+    r"|\b(?:store|wall) in this in the memory\b"
+    # Lane D template 'in this in your memory': 2 findings (F10798, 11147).
+    r"|\b(?:store|wall) in this in your memory\b"
+    # Lane D template 'in this into long-term memory': 2 findings (F10805, 11154).
+    r"|\b(?:store|wall) in this into long\-term memory\b"
+    # Lane D template 'in this into memory': 2 findings (F10797, 11146).
+    r"|\b(?:store|wall) in this into memory\b"
+    # Lane D template 'in this to long-term memory': 2 findings (F10804, 11153).
+    r"|\b(?:store|wall) in this to long\-term memory\b"
+    # Lane D template 'in this to memory': 2 findings (F10796, 11145).
+    r"|\b(?:store|wall) in this to memory\b"
+    # Lane D template 'in this to your memory': 2 findings (F10802, 11151).
+    r"|\b(?:store|wall) in this to your memory\b"
+    # Lane D template 'aside this in memory of ExampleBrand': 1 finding (F11602).
+    r"|\b(?:keep) aside this in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'by in memory of ExampleBrand': 1 finding (F11615).
+    r"|\b(?:lay) by in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'on in memory of ExampleBrand': 1 finding (F11538).
+    r"|\b(?:hand) on in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
+    # Lane D template 'on this in memory of ExampleBrand': 1 finding (F11537).
+    r"|\b(?:hand) on this in memory of (?-i:[A-Z][a-z]*[A-Z][a-zA-Z0-9]*)\b"
 )
 
 
