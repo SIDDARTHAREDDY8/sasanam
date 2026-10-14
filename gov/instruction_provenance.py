@@ -514,6 +514,25 @@ _MEMORY_WRITE = re.compile(
     # prose and the "(this|it) in memory" construction is not natural
     # English, so prose stays quiet (verified by honest-text controls).
     r"|\b(?:capture|clutch|snatch|seize|affix|rivet|solder|envelop|encase|excavate|yank|fortify|reinforce|muster) (?:this |it )?in memory\b"
+    # F9029-F9909 (wave-455 lane B): 75 memory-write verbs in
+    # "<verb> [particle] (this|it) [particle] <tail>" form, where tail
+    # is one of 10 memory forms (to/into memory, in your/my/the/
+    # long-term memory, to your/long-term memory, into long-term
+    # memory, as a memory). Filed carriers use "this" with the
+    # particle before the pronoun ("lay aside this ..."); the "it"
+    # form and the particle-after-pronoun split ("pack it away into
+    # memory", the natural phrasal-verb split) are covered as
+    # generalizations of the same construction (cf. wave-449).
+    # Particles (aside/away/by/down/in/up) are attested on 7 verbs
+    # (hoard, hold, keep, lay, lock, mark, pack); the branch covers
+    # unattested combinations of the same shape. No "of" lookahead:
+    # the this-form + "of" combination is not natural memorial
+    # English (cf. F2697), so fail-closed there is correct.
+    # First-person recollection ("I will keep this in my memory")
+    # FLAGs by design -- accepted fail-closed tradeoff, cf.
+    # wave-454 lane B `remember this`. "Keep this in memory of our
+    # trip" stays QUIET: "in memory of" is not one of the 10 tails.
+    r"|\b(?:hew|hide|hoard|hobble|hold|imbue|immerse|immure|implant|import|impound|impregnate|impress|imprint|imprison|incarcerate|incise|inculcate|index|indoctrinate|infiltrate|infix|infuse|ingrain|inject|inoculate|input|inscribe|inseminate|insert|insinuate|instil|instill|interject|intern|internalize|interpolate|interpose|introduce|inundate|inventory|jail|jar|jot|journal|keep|lacquer|lade|laminate|lay|leach|learn|leash|list|load|lock|lodge|log|logbook|manufacture|marinate|mark|marshal|mirror|mold|mummify|muster|notch|note|ooze|order|organize|outline|overlay|pack) (?:(?:aside|away|by|down|in|up) )?(?:this|it) (?:(?:aside|away|by|down|in|up) )?(?:to memory|into memory|in your memory|in my memory|as a memory|in the memory|to your memory|in long-term memory|to long-term memory|into long-term memory)\b"
     # F2703-F2719 (wave-450 lane B): new deep-link query params.
     r"|[?&#](?-i:notebook)=[a-zA-Z][a-zA-Z0-9]+\b"
     r"|[?&#](?-i:ledger)=[a-zA-Z][a-zA-Z0-9]+\b"
