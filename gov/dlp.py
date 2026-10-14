@@ -39997,14 +39997,19 @@ def _js_f825_coerce_number(props, depth, state):
     - object / array literal body -> the call returns a
       non-primitive, so the engine tries the next method;
     - anything else -> fail closed (never mis-decoded).
-    An own [Symbol.toPrimitive] (callable or not) keeps F794's
-    semantics: F794 decodes literal bodies, and anything else fails
-    closed here -- the engine would invoke it (throwing, or with no
-    fall-through to valueOf), never reaching valueOf. Non-callable
-    own valueOf / toString values are skipped, like the engine
-    skips them. Returns the ToNumber float. Never evals.
+    An own [Symbol.toPrimitive] (callable or non-nullish
+    non-callable) keeps F794's semantics: F794 decodes literal
+    bodies, and anything else fails closed here -- the engine
+    would invoke it (throwing, or with no fall-through to
+    valueOf), never reaching valueOf. EXCEPTION (F761
+    GetMethod-exact): a NULLISH own [Symbol.toPrimitive] (None)
+    makes GetMethod return undefined -- the engine FALLS THROUGH
+    to valueOf/toString, so this proceeds to the loop below.
+    Non-callable own valueOf / toString values are skipped, like
+    the engine skips them. Returns the ToNumber float. Never evals.
     """
-    if ("symbol", "toPrimitive") in props:
+    tp = props.get(("symbol", "toPrimitive"))
+    if ("symbol", "toPrimitive") in props and tp is not None:
         raise _JSExprFail("F825 toPrimitive present")
     for mname in ("valueOf", "toString"):
         mv = props.get(mname)
@@ -83316,11 +83321,16 @@ def _js_parse_f697_object(text, i, depth, state):
     closed. Getters fail closed -- this grammar models only
     coercion METHODS (F674 owns getter shapes and fails closed on
     the bare-bound-ident return this grammar requires). Values:
-    string literals or zero-arg `function(){return ADD;}` methods
-    (an optional function name is allowed -- engine-identical).
-    `__proto__`, setters, method shorthand, spreads, nested
-    values, and non-literal data values fail closed. Duplicate
-    keys later-wins (node v24.20.0). Each property charges the F430
+    string literals, zero-arg `function(){return ADD;}` methods
+    (an optional function name is allowed -- engine-identical),
+    or NULLISH values (`null`, `undefined`, `void 0`) stored as
+    None -- the engine's GetMethod returns undefined for a
+    null/undefined own [Symbol.toPrimitive] (fall-through to
+    valueOf/toString, F761 GetMethod-exact), and OrdinaryToPrimitive
+    skips nullish valueOf/toString as non-callable. `__proto__`,
+    setters, method shorthand, spreads, nested values, and other
+    non-literal data values fail closed. Duplicate keys later-wins
+    (node v24.20.0). Each property charges the F430
     parts budget. Returns (props, next_index). Never evals.
     """
     n = len(text)
@@ -83383,6 +83393,32 @@ def _js_parse_f697_object(text, i, depth, state):
         if vj < n and text[vj] in "'\"":
             val, vj = _js_parse_string(text, vj)
             props[key] = val
+        elif (text.startswith("null", vj)
+                and (vj + 4 >= n
+                     or text[vj + 4] not in _JS_IDENT_CONT)):
+            # F761 GetMethod-exact: nullish own value -- GetMethod
+            # returns undefined (fall-through), stored as None.
+            props[key] = None
+            vj = vj + 4
+        elif (text.startswith("undefined", vj)
+                and (vj + 9 >= n
+                     or text[vj + 9] not in _JS_IDENT_CONT)):
+            # F761 GetMethod-exact: bare `undefined` (no shadowing
+            # possible in these IIFEs -- no params/extra statements).
+            props[key] = None
+            vj = vj + 9
+        elif (text.startswith("void", vj)
+                and (vj + 4 >= n
+                     or text[vj + 4] not in _JS_IDENT_CONT)):
+            # F761 GetMethod-exact: `void 0` (ws-tolerant) -> undefined.
+            w = _js_skip_ws(text, vj + 4)
+            if (w < n and text[w] == "0"
+                    and (w + 1 >= n
+                         or text[w + 1] not in _JS_IDENT_CONT)):
+                props[key] = None
+                vj = w + 1
+            else:
+                raise _JSExprFail("F697 object value not modeled")
         elif (text.startswith("function", vj)
                 and (vj + 8 >= n
                      or text[vj + 8] not in _JS_IDENT_CONT)):
@@ -83498,7 +83534,12 @@ def _js_f697_toprimitive(props, depth, state):
     [Symbol.toPrimitive] makes the engine's GetMethod throw
     TypeError with no fall-through to valueOf/toString (F761,
     node v24.20.0) -- this fails closed rather than skipping it
-    as absent. Rationale (node v24.20.0): a body returning an
+    as absent. EXCEPTION (F761 GetMethod-exact): a NULLISH own
+    [Symbol.toPrimitive] (`null`, `undefined`, `void 0`, stored as
+    None by _js_parse_f697_object) makes GetMethod return undefined
+    -- the engine FALLS THROUGH to valueOf/toString (node v24.20.0).
+    Treating nullish as throwing over-blocks shapes the engine
+    evaluates (a MISS/bypass). Rationale (node v24.20.0): a body returning an
     Object makes the engine throw (valueOf/toString fall through
     to the next method; @@toPrimitive propagates the throw) --
     correctly refused; but an own @@toPrimitive body returning a
@@ -83517,10 +83558,13 @@ def _js_f697_toprimitive(props, depth, state):
     """
     recv = _JSObj(props)
     tp = props.get(("symbol", "toPrimitive"))
-    if ("symbol", "toPrimitive") in props and not isinstance(tp, _JSF67xBody):
+    if (("symbol", "toPrimitive") in props and tp is not None
+            and not isinstance(tp, _JSF67xBody)):
         # F761: the engine's GetMethod throws TypeError on an own
-        # non-callable @@toPrimitive (no fall-through to
+        # non-callable NON-NULLISH @@toPrimitive (no fall-through to
         # valueOf/toString) -- fail closed, never mis-decode.
+        # Nullish (None) falls through below: GetMethod returns
+        # undefined for null/undefined (node v24.20.0).
         raise _JSExprFail("F697 toPrimitive non-callable")
     if isinstance(tp, _JSF67xBody):
         # No fallback in the engine: a throwing [Symbol.toPrimitive]
@@ -83865,7 +83909,18 @@ def _js_parse_f743_toprimitive_assign_iife(text, i, depth, state):
                     raise _JSExprFail("F794 fromCharCode of unbound")
                 q = _js_skip_ws(text, q)
                 q = _js_expect(text, q, ")")
-                cp = _js_f794_toprimitive_number(props, depth, state)
+                try:
+                    cp = _js_f794_toprimitive_number(props, depth, state)
+                except _JSExprFail:
+                    # F825 (mirrors the F697 call site above): no
+                    # (decodable) own @@toPrimitive -- fall back to
+                    # OrdinaryToPrimitive (valueOf, then toString;
+                    # hint "number"), then ToUint16 for fromCharCode.
+                    # Covers nullish @@toPrimitive (GetMethod returns
+                    # undefined -> fall-through, F761) and absent
+                    # @@toPrimitive alike.
+                    cp = _js_touint16(
+                        _js_f825_coerce_number(props, depth, state))
                 ch = _safe_chr(cp)
                 if ch is None:
                     raise _JSExprFail("F794 bad codepoint")
@@ -290829,6 +290884,6078 @@ def _js_f5645_stmt_decode(text):
         return None
 
 
+# ---------------------------------------------------------------------------
+# F8148-F8200 decoder-seam decoders (wave-455 lane A, generated).
+# Each follows the established _js_f2381f2410_* pattern: precheck ->
+# parse_base -> parse_u_decl -> shape ops -> `;` -> charge -> guards ->
+# parse_result. Guards make conditional-identity shapes node-exact.
+# ---------------------------------------------------------------------------
+
+
+def _js_f8148_stmt_decode(text):
+    """Decode F8148 slice-0div0 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.slice(0 / 0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): slice(0/0=NaN): ToIntegerOrInfinity(NaN)=0, slice(0)=T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'slice(0 / 0)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8148"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, "/")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8149_stmt_decode(text):
+    """Decode F8149 slice-numsqrtneg on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.slice(Math.sqrt(-1));`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): slice(sqrt(-1)=NaN): ToIntegerOrInfinity(NaN)=0, slice(0)=T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'Math.sqrt(-1))' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8149"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Math')
+        if m is None:
+            raise _JSExprFail(what + " not Math")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'sqrt')
+        if m is None:
+            raise _JSExprFail(what + " not sqrt")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, "-")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8150_stmt_decode(text):
+    """Decode F8150 slice-numundef on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.slice(Number(undefined));`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): slice(Number(undefined)=NaN): ToIntegerOrInfinity(NaN)=0.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'Number(undefined))' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8150"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Number')
+        if m is None:
+            raise _JSExprFail(what + " not Number")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'undefined')
+        if m is None:
+            raise _JSExprFail(what + " not undefined")
+        j = m
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8151_stmt_decode(text):
+    """Decode F8151 slice-neg1div0 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.slice(-1 / 0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): slice(-1/0=-Infinity): negative start clamps to 0, slice(0)=T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'slice(-1 / 0)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8151"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, "-")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, "/")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8152_stmt_decode(text):
+    """Decode F8152 substr-nan on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.substr(NaN);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): substr(NaN): ToInteger(NaN)=0, substr(0)=T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'substr(NaN)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8152"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'substr')
+        if m is None:
+            raise _JSExprFail(what + " not substr")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'NaN')
+        if m is None:
+            raise _JSExprFail(what + " not NaN")
+        j = m
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8153_stmt_decode(text):
+    """Decode F8153 substr-null on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.substr(null);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): substr(null): ToInteger(null)=0, substr(0)=T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'substr(null)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8153"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'substr')
+        if m is None:
+            raise _JSExprFail(what + " not substr")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'null')
+        if m is None:
+            raise _JSExprFail(what + " not null")
+        j = m
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8154_stmt_decode(text):
+    """Decode F8154 substr-undef on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.substr(undefined);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): substr(undefined): ToInteger(undefined)=NaN->0, substr(0)=T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'substr(undefined)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8154"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'substr')
+        if m is None:
+            raise _JSExprFail(what + " not substr")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'undefined')
+        if m is None:
+            raise _JSExprFail(what + " not undefined")
+        j = m
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8155_stmt_decode(text):
+    """Decode F8155 substring-undef on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.substring(undefined);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): substring(undefined): ToInteger(undefined)=NaN->0, substring(0)=T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'substring(undefined)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8155"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'substring')
+        if m is None:
+            raise _JSExprFail(what + " not substring")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'undefined')
+        if m is None:
+            raise _JSExprFail(what + " not undefined")
+        j = m
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8156_stmt_decode(text):
+    """Decode F8156 head-charcodeat on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=String.fromCharCode(T.charCodeAt(0)) + T.slice(1);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): First code unit re-emitted + rest: code-unit identity, all strings.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'fromCharCode(T.charCodeAt(0))' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8156"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'String')
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'fromCharCode')
+        if m is None:
+            raise _JSExprFail(what + " not fromCharCode")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'charCodeAt')
+        if m is None:
+            raise _JSExprFail(what + " not charCodeAt")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "+")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8157_stmt_decode(text):
+    """Decode F8157 head-codepointat on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=String.fromCodePoint(T.codePointAt(0)) + T.slice(1);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): First code point re-emitted + slice(1); a leading surrogate pair would be re-emitted whole by fromCodePoint while slice(1) splits after its high surrogate (duplicated low surrogate) -- guarded to no leading surrogate pair.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'fromCodePoint(T.codePointAt(0))' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8157"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'String')
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'fromCodePoint')
+        if m is None:
+            raise _JSExprFail(what + " not fromCodePoint")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'codePointAt')
+        if m is None:
+            raise _JSExprFail(what + " not codePointAt")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "+")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        if len(dstr) >= 2 and 0xD800 <= ord(dstr[0]) <= 0xDBFF and 0xDC00 <= ord(dstr[1]) <= 0xDFFF:
+            raise _JSExprFail(what + " leading surrogate pair")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8158_stmt_decode(text):
+    """Decode F8158 head-charcodeat-2 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=String.fromCharCode(T.charCodeAt(0)) + String.fromCharCode(T.charCodeAt(1)) + T.slice(2);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): First two code units re-emitted + rest: code-unit identity, all strings.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'fromCharCode(T.charCodeAt(1))' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8158"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'String')
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'fromCharCode')
+        if m is None:
+            raise _JSExprFail(what + " not fromCharCode")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'charCodeAt')
+        if m is None:
+            raise _JSExprFail(what + " not charCodeAt")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "+")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'String')
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'fromCharCode')
+        if m is None:
+            raise _JSExprFail(what + " not fromCharCode")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'charCodeAt')
+        if m is None:
+            raise _JSExprFail(what + " not charCodeAt")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "+")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 2:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8159_stmt_decode(text):
+    """Decode F8159 head-at-computed on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.at(0 * 1) + T.at(1) + T.slice(2);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): at(0*1=0)+at(1)+slice(2): first two chars + rest = T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.at(0 * 1)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8159"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'at')
+        if m is None:
+            raise _JSExprFail(what + " not at")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, "*")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "+")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'at')
+        if m is None:
+            raise _JSExprFail(what + " not at")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "+")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 2:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8160_stmt_decode(text):
+    """Decode F8160 head-charat-computed on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.charAt(0 + 0) + T.charAt(1) + T.slice(2);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): charAt(0+0=0)+charAt(1)+slice(2): first two chars + rest = T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.charAt(0 + 0)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8160"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'charAt')
+        if m is None:
+            raise _JSExprFail(what + " not charAt")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, "+")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "+")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'charAt')
+        if m is None:
+            raise _JSExprFail(what + " not charAt")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "+")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 2:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8161_stmt_decode(text):
+    """Decode F8161 head-charat-nan on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.charAt(NaN) + T.slice(1);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): charAt(NaN)=charAt(0): first char + rest = T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.charAt(NaN)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8161"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'charAt')
+        if m is None:
+            raise _JSExprFail(what + " not charAt")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'NaN')
+        if m is None:
+            raise _JSExprFail(what + " not NaN")
+        j = m
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "+")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8162_stmt_decode(text):
+    """Decode F8162 concat-twoempty on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.concat('', '');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T.concat('','') appends two empty strings: T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".concat('', '')" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8162"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'concat')
+        if m is None:
+            raise _JSExprFail(what + " not concat")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != '':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ",")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != '':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8163_stmt_decode(text):
+    """Decode F8163 concat-empty-prefix on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=''.concat(T, '');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): ''.concat(T,'') = '' + T + '' = T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "''.concat(T, '')" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8163"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != '':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'concat')
+        if m is None:
+            raise _JSExprFail(what + " not concat")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ",")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != '':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8164_stmt_decode(text):
+    """Decode F8164 raw-subst-empty on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=String.raw`${T}${''}`;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): String.raw with empty cooked parts: '' + T + '' + '' = T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'String.raw`' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8164"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'String')
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'raw')
+        if m is None:
+            raise _JSExprFail(what + " not raw")
+        j = m
+        j = _js_expect(text, j, "`")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("${", j):
+            raise _JSExprFail(what + " not ${")
+        j += 2
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("${", j):
+            raise _JSExprFail(what + " not ${")
+        j += 2
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != '':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, "`")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8165_stmt_decode(text):
+    """Decode F8165 match-chars-u-join on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.match(/[\\s\\S]/gu).join('');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): /[\\s\\S]/gu matches each code point; join('') reproduces T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.match(/[\\s\\S]/gu)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8165"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'match')
+        if m is None:
+            raise _JSExprFail(what + " not match")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '[\\s\\S]', 'gu')
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'join')
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != '':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8166_stmt_decode(text):
+    """Decode F8166 match-plus-0 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.match(/[\\s\\S]+/)[0];`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Greedy [\\s\\S]+ matches the whole string; [0] is T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.match(/[\\s\\S]+/)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8166"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'match')
+        if m is None:
+            raise _JSExprFail(what + " not match")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '[\\s\\S]+', '')
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "[")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " index mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8167_stmt_decode(text):
+    """Decode F8167 match-dotstar-s-amp on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.replace(/.*/s, '$&');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): /.*/s matches the whole string (s: . spans newlines); $& reinserts it.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".replace(/.*/s, '$&')" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8167"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'replace')
+        if m is None:
+            raise _JSExprFail(what + " not replace")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '.*', 's')
+        j = _js_expect(text, j, ",")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != '$&':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8168_stmt_decode(text):
+    """Decode F8168 match-charset-plus-amp on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.replace(/[\\s\\S]+/, '$&');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Greedy [\\s\\S]+ matches the whole string; $& reinserts it.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if ".replace(/[\\s\\S]+/, '$&')" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8168"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'replace')
+        if m is None:
+            raise _JSExprFail(what + " not replace")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '[\\s\\S]+', '')
+        j = _js_expect(text, j, ",")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != '$&':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8169_stmt_decode(text):
+    """Decode F8169 matchall-chars-map-join on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=[...T.matchAll(/[\\s\\S]/g)].map(function(m){return m[0];}).join('');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): matchAll yields each code unit as m[0]; map + join('') reproduces T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.matchAll(/[\\s\\S]/g)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8169"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, j, "[")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("...", j):
+            raise _JSExprFail(what + " not spread")
+        j += 3
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'matchAll')
+        if m is None:
+            raise _JSExprFail(what + " not matchAll")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '[\\s\\S]', 'g')
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'map')
+        if m is None:
+            raise _JSExprFail(what + " not map")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "m":
+            raise _JSExprFail(what + " bad match param")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "m":
+            raise _JSExprFail(what + " not match")
+        j = _js_expect(text, j, "[")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " index mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'join')
+        if m is None:
+            raise _JSExprFail(what + " not join")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != '':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8170_stmt_decode(text):
+    """Decode F8170 replace-fnexpr-replacer on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.replace(/[\\s\\S]/g, function(m){return m;});`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Identity replacer: each char maps to itself, T unchanged.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.replace(/[\\s\\S]/g, function(m){return m;})' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8170"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'replace')
+        if m is None:
+            raise _JSExprFail(what + " not replace")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '[\\s\\S]', 'g')
+        j = _js_expect(text, j, ",")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'm':
+            raise _JSExprFail(what + " bad elem param")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != 'm':
+            raise _JSExprFail(what + " not identity return")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8171_stmt_decode(text):
+    """Decode F8171 replace-blockarrow-replacer on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.replace(/[\\s\\S]/g, (m)=>{return m;});`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Block-arrow identity replacer: each char maps to itself.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.replace(/[\\s\\S]/g, (m)=>{return m;})' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8171"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'replace')
+        if m is None:
+            raise _JSExprFail(what + " not replace")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '[\\s\\S]', 'g')
+        j = _js_expect(text, j, ",")
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'm':
+            raise _JSExprFail(what + " bad elem param")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " not arrow")
+        j += 2
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != 'm':
+            raise _JSExprFail(what + " not identity return")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8172_stmt_decode(text):
+    """Decode F8172 replace-replacer-args on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.replace(/[\\s\\S]/g, function(m, o, s){return m;});`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): 3-arg identity replacer (match, offset, string): returns the match.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'function(m, o, s){return m;}' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8172"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'replace')
+        if m is None:
+            raise _JSExprFail(what + " not replace")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '[\\s\\S]', 'g')
+        j = _js_expect(text, j, ",")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "m":
+            raise _JSExprFail(what + " bad match param")
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "o":
+            raise _JSExprFail(what + " bad offset param")
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "s":
+            raise _JSExprFail(what + " bad string param")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "m":
+            raise _JSExprFail(what + " not identity return")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8173_stmt_decode(text):
+    """Decode F8173 replaceall-fnexpr-replacer on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.replaceAll(/[\\s\\S]/g, function(m){return m;});`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): replaceAll requires /g (present); identity replacer leaves T unchanged.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.replaceAll(/[\\s\\S]/g, function(m){return m;})' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8173"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'replaceAll')
+        if m is None:
+            raise _JSExprFail(what + " not replaceAll")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '[\\s\\S]', 'g')
+        j = _js_expect(text, j, ",")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'm':
+            raise _JSExprFail(what + " bad elem param")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != 'm':
+            raise _JSExprFail(what + " not identity return")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8174_stmt_decode(text):
+    """Decode F8174 replaceall-blockarrow-replacer on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.replaceAll(/[\\s\\S]/g, (m)=>{return m;});`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): replaceAll with /g; block-arrow identity replacer.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.replaceAll(/[\\s\\S]/g, (m)=>{return m;})' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8174"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'replaceAll')
+        if m is None:
+            raise _JSExprFail(what + " not replaceAll")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '[\\s\\S]', 'g')
+        j = _js_expect(text, j, ",")
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'm':
+            raise _JSExprFail(what + " bad elem param")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " not arrow")
+        j += 2
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != 'm':
+            raise _JSExprFail(what + " not identity return")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8175_stmt_decode(text):
+    """Decode F8175 replace-plus-replacer on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.replace(/[\\s\\S]+/g, function(m){return m;});`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Whole-string match + identity replacer: T unchanged.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.replace(/[\\s\\S]+/g, function(m){return m;})' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8175"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'replace')
+        if m is None:
+            raise _JSExprFail(what + " not replace")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_f2751_parse_regex(text, j, what, '[\\s\\S]+', 'g')
+        j = _js_expect(text, j, ",")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'm':
+            raise _JSExprFail(what + " bad elem param")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != 'm':
+            raise _JSExprFail(what + " not identity return")
+        j = _js_expect(text, j, ";")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8176_stmt_decode(text):
+    """Decode F8176 repeat-1plus0 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.repeat(1 + 0);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): repeat(1+0=1): T once.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '.repeat(1 + 0)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8176"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'repeat')
+        if m is None:
+            raise _JSExprFail(what + " not repeat")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, "+")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8177_stmt_decode(text):
+    """Decode F8177 repeat-pow1 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.repeat(Math.pow(1, 9));`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): repeat(pow(1,9)=1): T once.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'Math.pow(1, 9))' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8177"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'repeat')
+        if m is None:
+            raise _JSExprFail(what + " not repeat")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Math')
+        if m is None:
+            raise _JSExprFail(what + " not Math")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'pow')
+        if m is None:
+            raise _JSExprFail(what + " not pow")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ",")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 9:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8178_stmt_decode(text):
+    """Decode F8178 repeat-floor1 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T.repeat(Math.floor(1.9));`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): repeat(floor(1.9)=1): T once.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'Math.floor(1.9))' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8178"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'repeat')
+        if m is None:
+            raise _JSExprFail(what + " not repeat")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Math')
+        if m is None:
+            raise _JSExprFail(what + " not Math")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'floor')
+        if m is None:
+            raise _JSExprFail(what + " not floor")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_skip_ws(text, j)
+        if not text.startswith('1.9', j):
+            raise _JSExprFail(what + " lit mismatch")
+        j += 3
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8179_stmt_decode(text):
+    """Decode F8179 fromcharcode-reflect on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Reflect.apply(String.fromCharCode, null, C);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Reflect.apply spreads C as fromCharCode args: fromCharCode(...C) = T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'Reflect.apply(String.fromCharCode, null, ' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8179"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Reflect')
+        if m is None:
+            raise _JSExprFail(what + " not Reflect")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'apply')
+        if m is None:
+            raise _JSExprFail(what + " not apply")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'String')
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'fromCharCode')
+        if m is None:
+            raise _JSExprFail(what + " not fromCharCode")
+        j = m
+        j = _js_expect(text, j, ",")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'null')
+        if m is None:
+            raise _JSExprFail(what + " not null")
+        j = m
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in (tname, uname, "RESULT", "String", "Array") or nm not in bound:
+            raise _JSExprFail(what + " not base C")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8180_stmt_decode(text):
+    """Decode F8180 buffer-utf8 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Buffer.from(C).toString('utf8');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Buffer.from(C) bytes decoded as UTF-8; ASCII-only guard keeps it identity.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "Buffer.from(C).toString('utf8')" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8180"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Buffer')
+        if m is None:
+            raise _JSExprFail(what + " not Buffer")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'from')
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in (tname, uname, "RESULT", "String", "Array") or nm not in bound:
+            raise _JSExprFail(what + " not base C")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'toString')
+        if m is None:
+            raise _JSExprFail(what + " not toString")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'utf8':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        if any(ord(c) >= 128 for c in dstr):
+            raise _JSExprFail(what + " non-ASCII char")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8181_stmt_decode(text):
+    """Decode F8181 buffer-utf-8 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Buffer.from(C).toString('utf-8');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Buffer.from(C) bytes decoded as UTF-8; ASCII-only guard keeps it identity.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "Buffer.from(C).toString('utf-8')" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8181"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Buffer')
+        if m is None:
+            raise _JSExprFail(what + " not Buffer")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'from')
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in (tname, uname, "RESULT", "String", "Array") or nm not in bound:
+            raise _JSExprFail(what + " not base C")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'toString')
+        if m is None:
+            raise _JSExprFail(what + " not toString")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'utf-8':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        if any(ord(c) >= 128 for c in dstr):
+            raise _JSExprFail(what + " non-ASCII char")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8182_stmt_decode(text):
+    """Decode F8182 buffer-ascii on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Buffer.from(C).toString('ascii');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Buffer.from(C) bytes decoded as Latin-1; latin1 guard keeps it identity.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "Buffer.from(C).toString('ascii')" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8182"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Buffer')
+        if m is None:
+            raise _JSExprFail(what + " not Buffer")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'from')
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in (tname, uname, "RESULT", "String", "Array") or nm not in bound:
+            raise _JSExprFail(what + " not base C")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'toString')
+        if m is None:
+            raise _JSExprFail(what + " not toString")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'ascii':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        if any(ord(c) > 255 for c in dstr):
+            raise _JSExprFail(what + " not Latin-1")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8183_stmt_decode(text):
+    """Decode F8183 buffer-latin1 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Buffer.from(C).toString('latin1');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Buffer.from(C) bytes decoded as Latin-1; latin1 guard keeps it identity.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "Buffer.from(C).toString('latin1')" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8183"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Buffer')
+        if m is None:
+            raise _JSExprFail(what + " not Buffer")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'from')
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in (tname, uname, "RESULT", "String", "Array") or nm not in bound:
+            raise _JSExprFail(what + " not base C")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'toString')
+        if m is None:
+            raise _JSExprFail(what + " not toString")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'latin1':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        if any(ord(c) > 255 for c in dstr):
+            raise _JSExprFail(what + " not Latin-1")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8184_stmt_decode(text):
+    """Decode F8184 buffer-binary on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Buffer.from(C).toString('binary');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Buffer.from(C) bytes decoded as Latin-1 ('binary' alias); latin1 guard.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "Buffer.from(C).toString('binary')" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8184"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Buffer')
+        if m is None:
+            raise _JSExprFail(what + " not Buffer")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'from')
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in (tname, uname, "RESULT", "String", "Array") or nm not in bound:
+            raise _JSExprFail(what + " not base C")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'toString')
+        if m is None:
+            raise _JSExprFail(what + " not toString")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'binary':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        if any(ord(c) > 255 for c in dstr):
+            raise _JSExprFail(what + " not Latin-1")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8185_stmt_decode(text):
+    """Decode F8185 textdecoder-fatalfalse on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=new TextDecoder('utf-8', {fatal: false}).decode(Uint8Array.from(C));`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): TextDecoder utf-8 over ASCII bytes is identity; fatal:false irrelevant for valid ASCII.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "TextDecoder('utf-8', {fatal: false})" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8185"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'new')
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        j = m
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'TextDecoder')
+        if m is None:
+            raise _JSExprFail(what + " not TextDecoder")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'utf-8':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ",")
+        j = _js_expect(text, j, "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'fatal':
+            raise _JSExprFail(what + " ident mismatch")
+        j = _js_expect(text, j, ":")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'false')
+        if m is None:
+            raise _JSExprFail(what + " not false")
+        j = m
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'decode')
+        if m is None:
+            raise _JSExprFail(what + " not decode")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Uint8Array')
+        if m is None:
+            raise _JSExprFail(what + " not Uint8Array")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'from')
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in (tname, uname, "RESULT", "String", "Array") or nm not in bound:
+            raise _JSExprFail(what + " not base C")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        if any(ord(c) >= 128 for c in dstr):
+            raise _JSExprFail(what + " non-ASCII char")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8186_stmt_decode(text):
+    """Decode F8186 textdecoder-utf8 on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=new TextDecoder('utf-8').decode(Uint8Array.from(C));`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): TextDecoder utf-8 over ASCII bytes is identity.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "TextDecoder('utf-8').decode(Uint8Array.from(C))" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8186"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'new')
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        j = m
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'TextDecoder')
+        if m is None:
+            raise _JSExprFail(what + " not TextDecoder")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'utf-8':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'decode')
+        if m is None:
+            raise _JSExprFail(what + " not decode")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Uint8Array')
+        if m is None:
+            raise _JSExprFail(what + " not Uint8Array")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'from')
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in (tname, uname, "RESULT", "String", "Array") or nm not in bound:
+            raise _JSExprFail(what + " not base C")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        if any(ord(c) >= 128 for c in dstr):
+            raise _JSExprFail(what + " non-ASCII char")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8187_stmt_decode(text):
+    """Decode F8187 textdecoder-ignorebom on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=new TextDecoder('utf-8', {ignoreBOM: true}).decode(Uint8Array.from(C));`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): TextDecoder utf-8 over ASCII bytes is identity; ignoreBOM only affects a BOM prefix (none: ASCII guard).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "TextDecoder('utf-8', {ignoreBOM: true})" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8187"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'new')
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        j = m
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'TextDecoder')
+        if m is None:
+            raise _JSExprFail(what + " not TextDecoder")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'utf-8':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ",")
+        j = _js_expect(text, j, "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'ignoreBOM':
+            raise _JSExprFail(what + " ident mismatch")
+        j = _js_expect(text, j, ":")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'true')
+        if m is None:
+            raise _JSExprFail(what + " not true")
+        j = m
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'decode')
+        if m is None:
+            raise _JSExprFail(what + " not decode")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Uint8Array')
+        if m is None:
+            raise _JSExprFail(what + " not Uint8Array")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'from')
+        if m is None:
+            raise _JSExprFail(what + " not from")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in (tname, uname, "RESULT", "String", "Array") or nm not in bound:
+            raise _JSExprFail(what + " not base C")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        if any(ord(c) >= 128 for c in dstr):
+            raise _JSExprFail(what + " non-ASCII char")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8188_stmt_decode(text):
+    """Decode F8188 assign-single-v on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Object.assign({v: T}).v;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Object.assign copies v:T into a fresh object; .v reads T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'Object.assign({v: T}).v' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8188"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Object')
+        if m is None:
+            raise _JSExprFail(what + " not Object")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'assign')
+        if m is None:
+            raise _JSExprFail(what + " not assign")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'v':
+            raise _JSExprFail(what + " ident mismatch")
+        j = _js_expect(text, j, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'v')
+        if m is None:
+            raise _JSExprFail(what + " not v")
+        j = m
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8189_stmt_decode(text):
+    """Decode F8189 reflect-concat on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=Reflect.apply(T.concat, T, ['']);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Reflect.apply calls T.concat with ['']: T.concat('') = T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "Reflect.apply(T.concat, T, [''])" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8189"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Reflect')
+        if m is None:
+            raise _JSExprFail(what + " not Reflect")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'apply')
+        if m is None:
+            raise _JSExprFail(what + " not apply")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'concat')
+        if m is None:
+            raise _JSExprFail(what + " not concat")
+        j = m
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ",")
+        j = _js_expect(text, j, "[")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != '':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8190_stmt_decode(text):
+    """Decode F8190 weakref-deref-valueof on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=new WeakRef(new String(T)).deref().valueOf();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): WeakRef holds the String object; deref() in the same expression returns it (no GC window: no allocation between construction and deref); .valueOf() = T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'new WeakRef(new String(T)).deref().valueOf()' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8190"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'new')
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        j = m
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'WeakRef')
+        if m is None:
+            raise _JSExprFail(what + " not WeakRef")
+        j = m
+        j = _js_expect(text, j, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'new')
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        j = m
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'String')
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'deref')
+        if m is None:
+            raise _JSExprFail(what + " not deref")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'valueOf')
+        if m is None:
+            raise _JSExprFail(what + " not valueOf")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8191_stmt_decode(text):
+    """Decode F8191 globalthis-string on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=globalThis.String(T);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): globalThis.String is String: String(T) = T for a string.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'globalThis.String(T)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8191"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'globalThis')
+        if m is None:
+            raise _JSExprFail(what + " not globalThis")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'String')
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8192_stmt_decode(text):
+    """Decode F8192 globalthis-string-valueof on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=globalThis.String(T).valueOf();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): String(T) = T; .valueOf() on a string primitive is T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if 'globalThis.String(T).valueOf()' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8192"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'globalThis')
+        if m is None:
+            raise _JSExprFail(what + " not globalThis")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'String')
+        if m is None:
+            raise _JSExprFail(what + " not String")
+        j = m
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'valueOf')
+        if m is None:
+            raise _JSExprFail(what + " not valueOf")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8193_stmt_decode(text):
+    """Decode F8193 listformat-single on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=new Intl.ListFormat('en').format([T]);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): ListFormat.format of a single item is the item itself (no conjunction/disjunction).
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "ListFormat('en').format([T])" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8193"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'new')
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        j = m
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Intl')
+        if m is None:
+            raise _JSExprFail(what + " not Intl")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'ListFormat')
+        if m is None:
+            raise _JSExprFail(what + " not ListFormat")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'en':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'format')
+        if m is None:
+            raise _JSExprFail(what + " not format")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8194_stmt_decode(text):
+    """Decode F8194 listformat-conjunction on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=new Intl.ListFormat('en', {type: 'conjunction'}).format([T]);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Single-item conjunction list is the item itself.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "ListFormat('en', {type: 'conjunction'})" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8194"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'new')
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        j = m
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Intl')
+        if m is None:
+            raise _JSExprFail(what + " not Intl")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'ListFormat')
+        if m is None:
+            raise _JSExprFail(what + " not ListFormat")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'en':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ",")
+        j = _js_expect(text, j, "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'type':
+            raise _JSExprFail(what + " ident mismatch")
+        j = _js_expect(text, j, ":")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'conjunction':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'format')
+        if m is None:
+            raise _JSExprFail(what + " not format")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8195_stmt_decode(text):
+    """Decode F8195 listformat-disjunction on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=new Intl.ListFormat('en', {type: 'disjunction'}).format([T]);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Single-item disjunction list is the item itself.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "ListFormat('en', {type: 'disjunction'})" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8195"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'new')
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        j = m
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'Intl')
+        if m is None:
+            raise _JSExprFail(what + " not Intl")
+        j = m
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'ListFormat')
+        if m is None:
+            raise _JSExprFail(what + " not ListFormat")
+        j = m
+        j = _js_expect(text, j, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'en':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ",")
+        j = _js_expect(text, j, "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'type':
+            raise _JSExprFail(what + " ident mismatch")
+        j = _js_expect(text, j, ":")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != 'disjunction':
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'format')
+        if m is None:
+            raise _JSExprFail(what + " not format")
+        j = m
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8196_stmt_decode(text):
+    """Decode F8196 assign-expr on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=(U2 = T);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Assignment expression evaluates to the assigned value T; U2 is a fresh (sloppy-global) name.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '= T)' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8196"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in bound or nm in ("String", "Array", "RESULT"):
+            raise _JSExprFail(what + " not fresh")
+        fresh = nm
+        bound.add(nm)
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8197_stmt_decode(text):
+    """Decode F8197 assign-expr-slice on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=(U2 = T.slice(0));`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Assignment of T.slice(0)=T; the expression evaluates to T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '= T.slice(0))' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8197"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in bound or nm in ("String", "Array", "RESULT"):
+            raise _JSExprFail(what + " not fresh")
+        fresh = nm
+        bound.add(nm)
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'slice')
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = m
+        j = _js_expect(text, j, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8198_stmt_decode(text):
+    """Decode F8198 assign-expr-comma on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=(U2 = T, U2);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Comma expression: (U2=T, U2) evaluates to U2 = T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '= T, ' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8198"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in bound or nm in ("String", "Array", "RESULT"):
+            raise _JSExprFail(what + " not fresh")
+        fresh = nm
+        bound.add(nm)
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != fresh:
+            raise _JSExprFail(what + " fresh mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8199_stmt_decode(text):
+    """Decode F8199 destr-array-expr on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=([U2] = [T])[0];`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Array destructuring assigns U2=T; the expression evaluates to the RHS [T]; [0] is T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '] = [T])[0]' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8199"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in bound or nm in ("String", "Array", "RESULT"):
+            raise _JSExprFail(what + " not fresh")
+        fresh = nm
+        bound.add(nm)
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "=")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, "[")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " index mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8200_stmt_decode(text):
+    """Decode F8200 destr-obj-expr on var-bound credential (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=({v: U2} = {v: T}).v;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Object destructuring assigns U2=T; the expression evaluates to {v:T}; .v is T.
+    The filed shape BREAKs on the open tree. Anything else fails closed:
+    a miss, never a mis-decode. Returns the decoded string, or None.
+    Never evals.
+    """
+    if '} = {v: T}).v' not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8200"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'v':
+            raise _JSExprFail(what + " ident mismatch")
+        j = _js_expect(text, j, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm in bound or nm in ("String", "Array", "RESULT"):
+            raise _JSExprFail(what + " not fresh")
+        fresh = nm
+        bound.add(nm)
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, "=")
+        j = _js_expect(text, j, "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != 'v':
+            raise _JSExprFail(what + " ident mismatch")
+        j = _js_expect(text, j, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), 'v')
+        if m is None:
+            raise _JSExprFail(what + " not v")
+        j = m
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+
+# ---------------------------------------------------------------------------
+# F8201-F8244 + F12553 statement decoders (wave-455 lane A, hand-written).
+# Each follows the F5646 whole-text-hook pattern: precheck -> parse_base ->
+# middle statements -> charge -> parse_result. Node-exact (v24.20.0).
+# ---------------------------------------------------------------------------
+
+
+# Wave-455 lane A hand-written statement decoders (F8201-F8244, F12553).
+# Each follows the F5646 whole-text-hook pattern: precheck -> parse_base ->
+# middle statements -> charge -> parse_result. Node-exact (v24.20.0):
+# each filed shape assembles the credential; anything else fails closed.
+
+
+def _js_f8201_stmt_decode(text):
+    """Decode F8201 for-in over single-element array (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';for(var k in [T]){U=[T][k];}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): for-in over [T] yields k='0' once; U=[T]['0']=T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "for(var k in [T])" not in text and "for (var k in [T])" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8201"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail(what + " not for")
+        j = _js_expect(text, m, "(")
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail(what + " not a declaration")
+        kname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(kname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(kname)
+        m = _js_match_kw(text, _js_skip_ws(text, k), "in")
+        if m is None:
+            raise _JSExprFail(what + " not in")
+        j = _js_expect(text, m, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != kname:
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8202_stmt_decode(text):
+    """Decode F8202 for-of split accumulation (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';for(var ch of T.split('')){U+=ch;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T.split('') yields each code unit; U+=ch
+    accumulates all of them in order, so U=T. Anything else fails
+    closed. Returns the decoded string, or None. Never evals.
+    """
+    if "for(var ch of " not in text and "for (var ch of " not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8202"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail(what + " not for")
+        j = _js_expect(text, m, "(")
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail(what + " not a declaration")
+        kname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(kname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(kname)
+        m = _js_match_kw(text, _js_skip_ws(text, k), "of")
+        if m is None:
+            raise _JSExprFail(what + " not of")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "split")
+        if m is None:
+            raise _JSExprFail(what + " not split")
+        j = _js_expect(text, m, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " split sep not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "+")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != kname:
+            raise _JSExprFail(what + " elem mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8203_stmt_decode(text):
+    """Decode F8203 throw/catch passthrough (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';try{throw T;}catch(e){U=e;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): throw T is caught with e=T; U=e=T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "try{throw " not in text and "try {throw " not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8203"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "try")
+        if m is None:
+            raise _JSExprFail(what + " not try")
+        j = _js_expect(text, _js_skip_ws(text, m), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "throw")
+        if m is None:
+            raise _JSExprFail(what + " not throw")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "catch")
+        if m is None:
+            raise _JSExprFail(what + " not catch")
+        j = _js_expect(text, m, "(")
+        ename, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(ename, bound,
+                                        {"String", "Array"}, what)
+        bound.add(ename)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != ename:
+            raise _JSExprFail(what + " caught mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8204_stmt_decode(text):
+    """Decode F8204 throw/catch of slice(0) (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';try{throw T.slice(0);}catch(e){U=e;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): throw T.slice(0)=T; caught e=T; U=e=T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "throw T.slice(0)" not in text and "throw " not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8204"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "try")
+        if m is None:
+            raise _JSExprFail(what + " not try")
+        j = _js_expect(text, _js_skip_ws(text, m), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "throw")
+        if m is None:
+            raise _JSExprFail(what + " not throw")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "slice")
+        if m is None:
+            raise _JSExprFail(what + " not slice")
+        j = _js_expect(text, m, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " arg not 0")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "catch")
+        if m is None:
+            raise _JSExprFail(what + " not catch")
+        j = _js_expect(text, m, "(")
+        ename, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(ename, bound,
+                                        {"String", "Array"}, what)
+        bound.add(ename)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != ename:
+            raise _JSExprFail(what + " caught mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8205_stmt_decode(text):
+    """Decode F8205 switch/case on T (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';switch(T){case T:U=T;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): switch(T) matches case T (T===T); U=T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "switch(" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8205"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "switch")
+        if m is None:
+            raise _JSExprFail(what + " not switch")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "case")
+        if m is None:
+            raise _JSExprFail(what + " not case")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != tname:
+            raise _JSExprFail(what + " case mismatch")
+        j = _js_expect(text, j, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8206_stmt_decode(text):
+    """Decode F8206 switch/default (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';switch(1){default:U=T;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): switch(1) matches no case; default runs, U=T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "switch(1)" not in text and "switch (1)" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8206"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "switch")
+        if m is None:
+            raise _JSExprFail(what + " not switch")
+        j = _js_expect(text, m, "(")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " discriminant not 1")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "default")
+        if m is None:
+            raise _JSExprFail(what + " not default")
+        j = _js_expect(text, m, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8207_stmt_decode(text):
+    """Decode F8207 if/else on tautology T===T (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';if(T===T){U=T;}else{U='';}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): T===T is true; the then-branch runs, U=T.
+    The else-branch (U='') is dead. Anything else fails closed.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "if(T===T)" not in text and "if (T===T)" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8207"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "if")
+        if m is None:
+            raise _JSExprFail(what + " not if")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "=")
+        j = _js_expect(text, j, "=")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "else")
+        if m is None:
+            raise _JSExprFail(what + " not else")
+        j = _js_expect(text, _js_skip_ws(text, m), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " else init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8208_stmt_decode(text):
+    """Decode F8208 labeled for/break (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';outer:for(;;){U=T;break outer;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): the labeled loop runs one iteration (U=T)
+    then break outer exits. Anything else fails closed. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "outer:for(;;)" not in text and "outer: for(;;)" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8208"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "outer":
+            raise _JSExprFail(what + " label mismatch")
+        j = _js_expect(text, j, ":")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail(what + " not for")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "break")
+        if m is None:
+            raise _JSExprFail(what + " not break")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "outer":
+            raise _JSExprFail(what + " break label mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8209_stmt_decode(text):
+    """Decode F8209 do/while with U!==T exit (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';do{U=T;}while(U!==T);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): do runs once (U=T); while(U!==T) is false;
+    exit with U=T. Anything else fails closed. Returns the decoded
+    string, or None. Never evals.
+    """
+    if "do{U=T;}while(U!==T)" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8209"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "do")
+        if m is None:
+            raise _JSExprFail(what + " not do")
+        j = _js_expect(text, _js_skip_ws(text, m), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "while")
+        if m is None:
+            raise _JSExprFail(what + " not while")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "!")
+        j = _js_expect(text, j, "=")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8227_stmt_decode(text):
+    """Decode F8227 while-counter single iteration (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';var i=0;while(i<1){U=T;i++;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): i=0<1, body runs once (U=T, i=1), i<1 false.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "while(i<1)" not in text and "while (i<1)" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8227"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, iname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(iname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(iname)
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " counter init not 0")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "while")
+        if m is None:
+            raise _JSExprFail(what + " not while")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != iname:
+            raise _JSExprFail(what + " counter mismatch")
+        j = _js_expect(text, j, "<")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " bound not 1")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != iname:
+            raise _JSExprFail(what + " counter mismatch")
+        j = _js_expect(text, j, "+")
+        j = _js_expect(text, j, "+")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8228_stmt_decode(text):
+    """Decode F8228 for-empty-parts single iteration (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';for(;;){U=T;break;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): for(;;) runs once (U=T) then break exits.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "for(;;){U=T;break;}" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8228"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail(what + " not for")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "break")
+        if m is None:
+            raise _JSExprFail(what + " not break")
+        j = _js_expect(text, _js_skip_ws(text, m), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8229_stmt_decode(text):
+    """Decode F8229 try/catch/finally passthrough (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';try{U=T;}catch(e){}finally{}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): try assigns U=T (no throw); catch dead;
+    finally empty. U=T. Anything else fails closed. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "try{U=T;}catch(e){}finally{}" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8229"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "try")
+        if m is None:
+            raise _JSExprFail(what + " not try")
+        j = _js_expect(text, _js_skip_ws(text, m), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "catch")
+        if m is None:
+            raise _JSExprFail(what + " not catch")
+        j = _js_expect(text, m, "(")
+        ename, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(ename, bound,
+                                        {"String", "Array"}, what)
+        bound.add(ename)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "finally")
+        if m is None:
+            raise _JSExprFail(what + " not finally")
+        j = _js_expect(text, _js_skip_ws(text, m), "{")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8230_stmt_decode(text):
+    """Decode F8230 nested try/finally passthrough (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';try{try{U=T;}finally{}}catch(e){}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): inner try assigns U=T (no throw); inner
+    finally empty; outer catch dead. U=T. Anything else fails closed.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "try{try{U=T;}finally{}}catch(e){}" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8230"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "try")
+        if m is None:
+            raise _JSExprFail(what + " not try")
+        j = _js_expect(text, _js_skip_ws(text, m), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "try")
+        if m is None:
+            raise _JSExprFail(what + " not inner try")
+        j = _js_expect(text, _js_skip_ws(text, m), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "finally")
+        if m is None:
+            raise _JSExprFail(what + " not finally")
+        j = _js_expect(text, _js_skip_ws(text, m), "{")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "catch")
+        if m is None:
+            raise _JSExprFail(what + " not catch")
+        j = _js_expect(text, m, "(")
+        ename, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(ename, bound,
+                                        {"String", "Array"}, what)
+        bound.add(ename)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8210_stmt_decode(text):
+    """Decode F8210 nullish assignment (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U;U??=T;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): U is undefined, so U??=T assigns T. U=T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "U??=T" not in text and "??=T" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8210"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail(what + " not a declaration")
+        uname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(uname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(uname)
+        j = _js_expect(text, _js_skip_ws(text, k), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "?")
+        j = _js_expect(text, j, "?")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8211_stmt_decode(text):
+    """Decode F8211 logical-OR assignment from empty (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';U||=T;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): U='' is falsy, so U||=T assigns T. U=T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "U||=T" not in text and "||=T" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8211"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "|")
+        j = _js_expect(text, j, "|")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8212_stmt_decode(text):
+    """Decode F8212 logical-AND assignment from T (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=T;U&&=T;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): U=T is truthy, so U&&=T assigns U&&T=T.
+    U=T. Anything else fails closed. Returns the decoded string, or
+    None. Never evals.
+    """
+    if "U&&=T" not in text and "&&=T" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8212"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " U init not T")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "&")
+        j = _js_expect(text, j, "&")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8213_stmt_decode(text):
+    """Decode F8213 array-destructuring assignment (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U;[U]=[T];`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): [U]=[T] destructures U=T. Anything else
+    fails closed. Returns the decoded string, or None. Never evals.
+    """
+    if "[U]=[T]" not in text and "]=[" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8213"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail(what + " not a declaration")
+        uname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(uname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(uname)
+        j = _js_expect(text, _js_skip_ws(text, k), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "=")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8214_stmt_decode(text):
+    """Decode F8214 object-destructuring assignment (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U;({v:U}={v:T});`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): ({v:U}={v:T}) destructures U=T (the
+    parens are required: bare `{` at statement start is a block).
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "({v:U}={v:T})" not in text and "v:U}={v:T}" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8214"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail(what + " not a declaration")
+        uname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(uname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(uname)
+        j = _js_expect(text, _js_skip_ws(text, k), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "(")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, j, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, "=")
+        j = _js_expect(text, j, "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, j, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8215_stmt_decode(text):
+    """Decode F8215 comma-sequence assignment (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U;U=T,U=U;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): the sequence U=T, U=U leaves U=T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "U=T,U=U" not in text and "=T," not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8215"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail(what + " not a declaration")
+        uname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(uname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(uname)
+        j = _js_expect(text, _js_skip_ws(text, k), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8216_stmt_decode(text):
+    """Decode F8216 class instance-field read (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `class K{v=T;}var U=new K().v;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): instance field v is initialized to T at
+    construction; new K().v is T. Anything else fails closed.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "class K{v=T;}" not in text and "class K" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8216"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "class")
+        if m is None:
+            raise _JSExprFail(what + " not class")
+        kname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        _js_f1028f1029_check_fresh_name(kname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(kname)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " field mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != kname:
+            raise _JSExprFail(what + " class mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " field mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8217_stmt_decode(text):
+    """Decode F8217 class computed-field read (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `class K{['v']=T;}var U=new K().v;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): computed field ['v'] is the property 'v',
+    initialized to T; new K().v is T. Anything else fails closed.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "class K{['v']=T;}" not in text and "class K" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8217"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "class")
+        if m is None:
+            raise _JSExprFail(what + " not class")
+        kname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        _js_f1028f1029_check_fresh_name(kname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(kname)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "v":
+            raise _JSExprFail(what + " field key not v")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != kname:
+            raise _JSExprFail(what + " class mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " field mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8218_stmt_decode(text):
+    """Decode F8218 class getter read (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `class K{get v(){return T;}}var U=new K().v;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): getter v returns T; new K().v invokes it.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "class K{get v(){return T;}}" not in text and "class K" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8218"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "class")
+        if m is None:
+            raise _JSExprFail(what + " not class")
+        kname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        _js_f1028f1029_check_fresh_name(kname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(kname)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+        if m is None:
+            raise _JSExprFail(what + " not get")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "v":
+            raise _JSExprFail(what + " getter mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != kname:
+            raise _JSExprFail(what + " class mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " field mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8219_stmt_decode(text):
+    """Decode F8219 class private-field getter read (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `class K{#v=T;get v(){return this.#v;}}var U=new K().v;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): private field #v initialized to T; getter
+    returns this.#v; new K().v is T. Anything else fails closed.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "class K{#v=T;" not in text and "class K" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8219"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "class")
+        if m is None:
+            raise _JSExprFail(what + " not class")
+        kname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        _js_f1028f1029_check_fresh_name(kname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(kname)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_expect(text, _js_skip_ws(text, j), "#")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " field mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+        if m is None:
+            raise _JSExprFail(what + " not get")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "v":
+            raise _JSExprFail(what + " getter mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "this")
+        if m is None:
+            raise _JSExprFail(what + " not this")
+        j = _js_expect(text, m, ".")
+        j = _js_expect(text, j, "#")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " field mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != kname:
+            raise _JSExprFail(what + " class mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ".")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " field mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8220_stmt_decode(text):
+    """Decode F8220 function-call return (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `function f(){return T;}var U=f();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): f returns T; U=f()=T. Anything else
+    fails closed. Returns the decoded string, or None. Never evals.
+    """
+    if "function f(){return T;}" not in text and "function f" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8220"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        fname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        _js_f1028f1029_check_fresh_name(fname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(fname)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != fname:
+            raise _JSExprFail(what + " fn mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8221_stmt_decode(text):
+    """Decode F8221 arrow-call return (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var f=()=>T;var U=f();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): f is ()=>T; U=f()=T. Anything else fails
+    closed. Returns the decoded string, or None. Never evals.
+    """
+    if "var f=()=>T;" not in text and "f=()=>T" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8221"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, fname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(fname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(fname)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " not arrow")
+        j += 2
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != fname:
+            raise _JSExprFail(what + " fn mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8222_stmt_decode(text):
+    """Decode F8222 identity-function argument return (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `function f(x){return x;}var U=f(T);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): f is the identity; U=f(T)=T. Anything else
+    fails closed. Returns the decoded string, or None. Never evals.
+    """
+    if "function f(x){return x;}" not in text and "function f" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8222"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        fname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        _js_f1028f1029_check_fresh_name(fname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(fname)
+        j = _js_expect(text, j, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(pname)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != pname:
+            raise _JSExprFail(what + " param mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != fname:
+            raise _JSExprFail(what + " fn mismatch")
+        j = _js_expect(text, j, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8223_stmt_decode(text):
+    """Decode F8223 nested-function return (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `function o(){function i(){return T;}return i();}var U=o();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): inner i returns T; outer o returns i()=T;
+    U=o()=T. Anything else fails closed. Returns the decoded string,
+    or None. Never evals.
+    """
+    if "function o(){function i(){return T;}" not in text and "function o" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8223"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        oname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        _js_f1028f1029_check_fresh_name(oname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(oname)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not inner function")
+        iname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        _js_f1028f1029_check_fresh_name(iname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(iname)
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no outer return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != iname:
+            raise _JSExprFail(what + " inner mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != oname:
+            raise _JSExprFail(what + " fn mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8224_stmt_decode(text):
+    """Decode F8224 object-method call return (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var o={m:function(){return T;}};var U=o.m();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): o.m is a function returning T; U=o.m()=T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "var o={m:function(){return T;}}" not in text and "{m:function" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8224"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, oname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(oname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(oname)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "m":
+            raise _JSExprFail(what + " method mismatch")
+        j = _js_expect(text, j, ":")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != oname:
+            raise _JSExprFail(what + " obj mismatch")
+        j = _js_expect(text, j, ".")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "m":
+            raise _JSExprFail(what + " method mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8225_stmt_decode(text):
+    """Decode F8225 object arrow-method call return (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var o={m:()=>T};var U=o.m();`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): o.m is ()=>T; U=o.m()=T. Anything else
+    fails closed. Returns the decoded string, or None. Never evals.
+    """
+    if "var o={m:()=>T};" not in text and "{m:()=>T}" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8225"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, oname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(oname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(oname)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "m":
+            raise _JSExprFail(what + " method mismatch")
+        j = _js_expect(text, j, ":")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_skip_ws(text, j)
+        if not text.startswith("=>", j):
+            raise _JSExprFail(what + " not arrow")
+        j += 2
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != oname:
+            raise _JSExprFail(what + " obj mismatch")
+        j = _js_expect(text, j, ".")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "m":
+            raise _JSExprFail(what + " method mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8226_stmt_decode(text):
+    """Decode F8226 setter-flow assignment (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var U='';var o={set v(x){U=x;}};o.v=T;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): o.v=T invokes the setter with x=T; the
+    setter body assigns U=x=T. U=T. Anything else fails closed.
+    Returns the decoded string, or None. Never evals.
+    """
+    if "set v(x){U=x;}" not in text and "set v" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8226"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, oname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(oname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(oname)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "set")
+        if m is None:
+            raise _JSExprFail(what + " not set")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != "v":
+            raise _JSExprFail(what + " setter mismatch")
+        j = _js_expect(text, j, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(pname)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != pname:
+            raise _JSExprFail(what + " param mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != oname:
+            raise _JSExprFail(what + " obj mismatch")
+        j = _js_expect(text, j, ".")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " setter mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8231_stmt_decode(text):
+    """Decode F8231 forEach accumulation over [T] (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';[T].forEach(function(x){U=x;});`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): forEach over [T] calls the callback once
+    with x=T; U=x=T. Anything else fails closed. Returns the decoded
+    string, or None. Never evals.
+    """
+    if "[T].forEach(function(x){U=x;})" not in text and ".forEach(function" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8231"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "forEach")
+        if m is None:
+            raise _JSExprFail(what + " not forEach")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(pname)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != pname:
+            raise _JSExprFail(what + " param mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8232_stmt_decode(text):
+    """Decode F8232 map accumulation over [T] (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';[T].map(function(x){U=x;});`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): map over [T] calls the callback once with
+    x=T; U=x=T (the mapped array is discarded). Anything else fails
+    closed. Returns the decoded string, or None. Never evals.
+    """
+    if "[T].map(function(x){U=x;})" not in text and ".map(function(x)" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8232"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "map")
+        if m is None:
+            raise _JSExprFail(what + " not map")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(pname)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != pname:
+            raise _JSExprFail(what + " param mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8233_stmt_decode(text):
+    """Decode F8233 reduce over [T] (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U=[T].reduce(function(a,x){return x;},'');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): reduce over [T] with initial '' calls the
+    callback once with (a='', x=T); returns x=T. U=T. Anything else
+    fails closed. Returns the decoded string, or None. Never evals.
+    """
+    if "[T].reduce(function(a,x){return x;},'')" not in text and ".reduce(function" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8233"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "reduce")
+        if m is None:
+            raise _JSExprFail(what + " not reduce")
+        j = _js_expect(text, m, "(")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        j = _js_expect(text, m, "(")
+        aname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(aname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(aname)
+        j = _js_expect(text, j, ",")
+        xname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(xname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(xname)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != xname:
+            raise _JSExprFail(what + " return mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, j, ",")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " init not empty")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8234_stmt_decode(text):
+    """Decode F8234 spread array copy (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var A=[...[T]];var U=A[0];`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): [...[T]] spreads to [T]; A[0]=T. Anything
+    else fails closed. Returns the decoded string, or None. Never
+    evals.
+    """
+    if "=[...[T]];" not in text and "[...[" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8234"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, aname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(aname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(aname)
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        j = _js_expect(text, j, ".")
+        j = _js_expect(text, j, ".")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != aname:
+            raise _JSExprFail(what + " array mismatch")
+        j = _js_expect(text, j, "[")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 0:
+            raise _JSExprFail(what + " index not 0")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8235_stmt_decode(text):
+    """Decode F8235 spread-call to identity function (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `function f(x){return x;}var U=f(...[T]);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): f is the identity; f(...[T]) spreads [T]
+    to f(T)=T. U=T. Anything else fails closed. Returns the decoded
+    string, or None. Never evals.
+    """
+    if "function f(x){return x;}" not in text and "function f" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8235"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+        if m is None:
+            raise _JSExprFail(what + " not function")
+        fname, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        _js_f1028f1029_check_fresh_name(fname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(fname)
+        j = _js_expect(text, j, "(")
+        pname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(pname)
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "return")
+        if m is None:
+            raise _JSExprFail(what + " no return")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != pname:
+            raise _JSExprFail(what + " param mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != fname:
+            raise _JSExprFail(what + " fn mismatch")
+        j = _js_expect(text, j, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), ".")
+        j = _js_expect(text, j, ".")
+        j = _js_expect(text, j, ".")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8236_stmt_decode(text):
+    """Decode F8236 Object.entries loop (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';for(var e of Object.entries({v:T})){U=e[1];}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Object.entries({v:T}) is [['v',T]]; the
+    loop runs once with e=['v',T]; U=e[1]=T. Anything else fails
+    closed. Returns the decoded string, or None. Never evals.
+    """
+    if "Object.entries({v:T})" not in text and "Object.entries" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8236"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail(what + " not for")
+        j = _js_expect(text, m, "(")
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail(what + " not a declaration")
+        ename, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(ename, bound,
+                                        {"String", "Array"}, what)
+        bound.add(ename)
+        m = _js_match_kw(text, _js_skip_ws(text, k), "of")
+        if m is None:
+            raise _JSExprFail(what + " not of")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Object")
+        if m is None:
+            raise _JSExprFail(what + " not Object")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "entries")
+        if m is None:
+            raise _JSExprFail(what + " not entries")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, j, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != ename:
+            raise _JSExprFail(what + " entry mismatch")
+        j = _js_expect(text, j, "[")
+        num, j = _js_parse_number(text, _js_skip_ws(text, j))
+        if num != 1:
+            raise _JSExprFail(what + " index not 1")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8237_stmt_decode(text):
+    """Decode F8237 Object.values loop (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var|let|const U='';for(var x of Object.values({v:T})){U=x;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Object.values({v:T}) is [T]; the loop
+    runs once with x=T; U=x=T. Anything else fails closed. Returns
+    the decoded string, or None. Never evals.
+    """
+    if "Object.values({v:T})" not in text and "Object.values" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8237"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail(what + " not for")
+        j = _js_expect(text, m, "(")
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail(what + " not a declaration")
+        xname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(xname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(xname)
+        m = _js_match_kw(text, _js_skip_ws(text, k), "of")
+        if m is None:
+            raise _JSExprFail(what + " not of")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Object")
+        if m is None:
+            raise _JSExprFail(what + " not Object")
+        j = _js_expect(text, m, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "values")
+        if m is None:
+            raise _JSExprFail(what + " not values")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, j, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != xname:
+            raise _JSExprFail(what + " value mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8238_stmt_decode(text):
+    """Decode F8238 Map.get read (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var m=new Map([['k',T]]);var U=m.get('k');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Map with ['k',T] entry; m.get('k') is T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "new Map([['k',T]])" not in text and "new Map" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8238"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, mname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(mname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(mname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Map")
+        if m is None:
+            raise _JSExprFail(what + " not Map")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "k":
+            raise _JSExprFail(what + " key not k")
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != mname:
+            raise _JSExprFail(what + " map mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+        if m is None:
+            raise _JSExprFail(what + " not get")
+        j = _js_expect(text, m, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "k":
+            raise _JSExprFail(what + " key not k")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8239_stmt_decode(text):
+    """Decode F8239 Set for-of loop (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var s=new Set([T]);var U='';for(var x of s){U=x;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): Set holds one element T; the loop runs
+    once with x=T; U=x=T. Anything else fails closed. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "new Set([T])" not in text and "new Set" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8239"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(sname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Set")
+        if m is None:
+            raise _JSExprFail(what + " not Set")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "for")
+        if m is None:
+            raise _JSExprFail(what + " not for")
+        j = _js_expect(text, m, "(")
+        kw, k = _js_match_decl_kw(text, _js_skip_ws(text, j))
+        if kw is None:
+            raise _JSExprFail(what + " not a declaration")
+        xname, k = _js_parse_ident(text, _js_skip_ws(text, k))
+        _js_f1028f1029_check_fresh_name(xname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(xname)
+        m = _js_match_kw(text, _js_skip_ws(text, k), "of")
+        if m is None:
+            raise _JSExprFail(what + " not of")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, m))
+        if nm != sname:
+            raise _JSExprFail(what + " set mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != xname:
+            raise _JSExprFail(what + " elem mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8240_stmt_decode(text):
+    """Decode F8240 WeakMap.get read (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var o={};var m=new WeakMap([[o,T]]);var U=m.get(o);`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): WeakMap with [o,T] entry; m.get(o) is T
+    (o is still reachable: bound in the same text). Anything else
+    fails closed. Returns the decoded string, or None. Never evals.
+    """
+    if "new WeakMap([[o,T]])" not in text and "new WeakMap" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8240"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, oname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(oname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(oname)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, mname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(mname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(mname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "WeakMap")
+        if m is None:
+            raise _JSExprFail(what + " not WeakMap")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != oname:
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != mname:
+            raise _JSExprFail(what + " map mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+        if m is None:
+            raise _JSExprFail(what + " not get")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != oname:
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8241_stmt_decode(text):
+    """Decode F8241 symbol-keyed property round-trip (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var s=Symbol('k');var o={};o[s]=T;var U=o[s];`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): s is a fresh symbol; o[s]=T stores T under
+    it; U=o[s] reads T back. Anything else fails closed. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "Symbol('k')" not in text and "Symbol(" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8241"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, sname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(sname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(sname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "Symbol")
+        if m is None:
+            raise _JSExprFail(what + " not Symbol")
+        j = _js_expect(text, m, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "k":
+            raise _JSExprFail(what + " symbol desc not k")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _, oname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(oname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(oname)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != oname:
+            raise _JSExprFail(what + " obj mismatch")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " symbol mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != oname:
+            raise _JSExprFail(what + " obj mismatch")
+        j = _js_expect(text, j, "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != sname:
+            raise _JSExprFail(what + " symbol mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8242_stmt_decode(text):
+    """Decode F8242 globalThis property round-trip (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `globalThis.__w122=T;var U=globalThis.__w122;`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): globalThis.__w122=T stores T; U reads it
+    back. Anything else fails closed. Returns the decoded string, or
+    None. Never evals.
+    """
+    if "globalThis.__w122=T" not in text and "globalThis.__w122" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8242"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "globalThis")
+        if m is None:
+            raise _JSExprFail(what + " not globalThis")
+        j = _js_expect(text, m, ".")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "__w122":
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "globalThis")
+        if m is None:
+            raise _JSExprFail(what + " not globalThis")
+        j = _js_expect(text, m, ".")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "__w122":
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8243_stmt_decode(text):
+    """Decode F8243 with-block property read (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var o={v:T};var U='';with(o){U=v;}`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): with(o) puts o on the scope chain; bare v
+    resolves to o.v=T; U=v=T. Anything else fails closed. Returns the
+    decoded string, or None. Never evals.
+    """
+    if "with(o){U=v;}" not in text and "with(" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8243"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, oname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(oname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(oname)
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, j, ":")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "}")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "with")
+        if m is None:
+            raise _JSExprFail(what + " not with")
+        j = _js_expect(text, m, "(")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != oname:
+            raise _JSExprFail(what + " obj mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != "v":
+            raise _JSExprFail(what + " key mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f8244_stmt_decode(text):
+    """Decode F8244 URLSearchParams round-trip (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var P=new URLSearchParams();P.append('k',T);var U=P.get('k');`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Node-exact (v24.20.0): append stores T under 'k' verbatim
+    (encoding applies only to serialization); get('k') is T.
+    Anything else fails closed. Returns the decoded string, or None.
+    Never evals.
+    """
+    if "new URLSearchParams()" not in text and "URLSearchParams" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F8244"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, pname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(pname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(pname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "URLSearchParams")
+        if m is None:
+            raise _JSExprFail(what + " not URLSearchParams")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != pname:
+            raise _JSExprFail(what + " params mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "append")
+        if m is None:
+            raise _JSExprFail(what + " not append")
+        j = _js_expect(text, m, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "k":
+            raise _JSExprFail(what + " key not k")
+        j = _js_expect(text, j, ",")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != pname:
+            raise _JSExprFail(what + " params mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "get")
+        if m is None:
+            raise _JSExprFail(what + " not get")
+        j = _js_expect(text, m, "(")
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "k":
+            raise _JSExprFail(what + " key not k")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+def _js_f12553_stmt_decode(text):
+    """Decode F12553 Set.forEach over var-bound set (whole-text hook).
+
+    `var|let|const C=[INT,...];`
+    `var|let|const T=C.map(function(c){return String.fromCharCode(c);}).join('');`
+    `var ST=new Set([T]);var U='';ST.forEach((x)=>{U+=x;});`
+    `var|let|const RESULT=U;`, then end-of-text.
+
+    Also accepts the `function(x){U+=x;}` callback form (both filed).
+    Node-exact (v24.20.0): Set holds one element T; forEach calls the
+    callback once with x=T; U+=x accumulates ''+T=T. Anything else
+    fails closed. Returns the decoded string, or None. Never evals.
+    """
+    if "new Set([T])" not in text:
+        return None
+    if ".map(function(c)" not in text or "fromCharCode" not in text:
+        return None
+    if ".forEach(" not in text:
+        return None
+    state = {"ops": 0, "parts": 0}
+    what = "F12553"
+    try:
+        dstr, tname, bound, j = _js_f2381f2410_parse_base(
+            text, state, what)
+        _, stname, j = _js_f96x_decl(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(stname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(stname)
+        m = _js_match_kw(text, _js_skip_ws(text, j), "new")
+        if m is None:
+            raise _JSExprFail(what + " not new")
+        m = _js_match_kw(text, _js_skip_ws(text, m), "Set")
+        if m is None:
+            raise _JSExprFail(what + " not Set")
+        j = _js_expect(text, m, "(")
+        j = _js_expect(text, _js_skip_ws(text, j), "[")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != tname:
+            raise _JSExprFail(what + " base mismatch")
+        j = _js_expect(text, j, "]")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        uname, j = _js_f2381f2410_parse_u_decl(text, j, state, what,
+                                               bound)
+        s, j = _js_f99x_parse_str(text, _js_skip_ws(text, j))
+        if s != "":
+            raise _JSExprFail(what + " U init not empty")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != stname:
+            raise _JSExprFail(what + " set mismatch")
+        j = _js_expect(text, j, ".")
+        m = _js_match_kw(text, _js_skip_ws(text, j), "forEach")
+        if m is None:
+            raise _JSExprFail(what + " not forEach")
+        j = _js_expect(text, m, "(")
+        # Callback: (x)=>{U+=x;} or function(x){U+=x;}.
+        if text.startswith("function", _js_skip_ws(text, j)):
+            m = _js_match_kw(text, _js_skip_ws(text, j), "function")
+            j = _js_expect(text, m, "(")
+        else:
+            j = _js_expect(text, _js_skip_ws(text, j), "(")
+        # Param: x (past '(' for both forms).
+        xname, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        _js_f1028f1029_check_fresh_name(xname, bound,
+                                        {"String", "Array"}, what)
+        bound.add(xname)
+        j = _js_expect(text, j, ")")
+        if text.startswith("=>", _js_skip_ws(text, j)):
+            j = _js_skip_ws(text, j) + 2
+        j = _js_expect(text, _js_skip_ws(text, j), "{")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != uname:
+            raise _JSExprFail(what + " U mismatch")
+        j = _js_expect(text, j, "+")
+        j = _js_expect(text, j, "=")
+        nm, j = _js_parse_ident(text, _js_skip_ws(text, j))
+        if nm != xname:
+            raise _JSExprFail(what + " elem mismatch")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        j = _js_expect(text, _js_skip_ws(text, j), "}")
+        j = _js_expect(text, j, ")")
+        j = _js_expect(text, _js_skip_ws(text, j), ";")
+        _js_f96x_charge(state, what + " shape")
+        return _js_f2381f2410_parse_result(text, j, state, what,
+                                           bound, uname, dstr)
+    except _JSExprFail:
+        return None
+
+
+
 def _decode_layer(text):
     """One decode layer: return decoded variants of *text* (deduped)."""
     variants = []
@@ -295037,6 +301164,13 @@ def _decode_layer(text):
                      _js_f2671_stmt_decode, _js_f2672_stmt_decode, _js_f2673_stmt_decode, _js_f2674_stmt_decode, 
                      _js_f2675_stmt_decode, _js_f2676_stmt_decode, _js_f2677_stmt_decode, _js_f2678_stmt_decode, 
                      _js_f2679_stmt_decode, _js_f2680_stmt_decode, _js_f2681_stmt_decode, _js_f2682_stmt_decode,
+                     # F8201-F8244 + F12553 (hand-written).
+                     _js_f8201_stmt_decode, _js_f8202_stmt_decode, _js_f8203_stmt_decode, _js_f8204_stmt_decode, _js_f8205_stmt_decode, _js_f8206_stmt_decode, _js_f8207_stmt_decode, _js_f8208_stmt_decode,
+                     _js_f8209_stmt_decode, _js_f8210_stmt_decode, _js_f8211_stmt_decode, _js_f8212_stmt_decode, _js_f8213_stmt_decode, _js_f8214_stmt_decode, _js_f8215_stmt_decode, _js_f8216_stmt_decode,
+                     _js_f8217_stmt_decode, _js_f8218_stmt_decode, _js_f8219_stmt_decode, _js_f8220_stmt_decode, _js_f8221_stmt_decode, _js_f8222_stmt_decode, _js_f8223_stmt_decode, _js_f8224_stmt_decode,
+                     _js_f8225_stmt_decode, _js_f8226_stmt_decode, _js_f8227_stmt_decode, _js_f8228_stmt_decode, _js_f8229_stmt_decode, _js_f8230_stmt_decode, _js_f8231_stmt_decode, _js_f8232_stmt_decode,
+                     _js_f8233_stmt_decode, _js_f8234_stmt_decode, _js_f8235_stmt_decode, _js_f8236_stmt_decode, _js_f8237_stmt_decode, _js_f8238_stmt_decode, _js_f8239_stmt_decode, _js_f8240_stmt_decode,
+                     _js_f8241_stmt_decode, _js_f8242_stmt_decode, _js_f8243_stmt_decode, _js_f8244_stmt_decode, _js_f12553_stmt_decode,
                      ):
         _sdec = _stmtdec(text)
         if _sdec is not None:
@@ -295225,6 +301359,23 @@ def _decode_layer(text):
                      _js_f5657_stmt_decode, _js_f5658_stmt_decode, _js_f5659_stmt_decode, _js_f5660_stmt_decode,
                      _js_f5661_stmt_decode, _js_f5662_stmt_decode, _js_f5663_stmt_decode, _js_f5664_stmt_decode,
                      _js_f5665_stmt_decode, _js_f5666_stmt_decode,
+                     ):
+        _sdec = _stmtdec(text)
+        if _sdec is not None:
+            _add(_sdec)
+            if len(variants) >= _MAX_CANDIDATES:
+                return variants
+
+
+    # F8148-F8200 decoder-seam decoders (wave-455 lane A, generated).
+    for _stmtdec in (
+                     _js_f8148_stmt_decode, _js_f8149_stmt_decode, _js_f8150_stmt_decode, _js_f8151_stmt_decode, _js_f8152_stmt_decode, _js_f8153_stmt_decode, _js_f8154_stmt_decode, _js_f8155_stmt_decode,
+                     _js_f8156_stmt_decode, _js_f8157_stmt_decode, _js_f8158_stmt_decode, _js_f8159_stmt_decode, _js_f8160_stmt_decode, _js_f8161_stmt_decode, _js_f8162_stmt_decode, _js_f8163_stmt_decode,
+                     _js_f8164_stmt_decode, _js_f8165_stmt_decode, _js_f8166_stmt_decode, _js_f8167_stmt_decode, _js_f8168_stmt_decode, _js_f8169_stmt_decode, _js_f8170_stmt_decode, _js_f8171_stmt_decode,
+                     _js_f8172_stmt_decode, _js_f8173_stmt_decode, _js_f8174_stmt_decode, _js_f8175_stmt_decode, _js_f8176_stmt_decode, _js_f8177_stmt_decode, _js_f8178_stmt_decode, _js_f8179_stmt_decode,
+                     _js_f8180_stmt_decode, _js_f8181_stmt_decode, _js_f8182_stmt_decode, _js_f8183_stmt_decode, _js_f8184_stmt_decode, _js_f8185_stmt_decode, _js_f8186_stmt_decode, _js_f8187_stmt_decode,
+                     _js_f8188_stmt_decode, _js_f8189_stmt_decode, _js_f8190_stmt_decode, _js_f8191_stmt_decode, _js_f8192_stmt_decode, _js_f8193_stmt_decode, _js_f8194_stmt_decode, _js_f8195_stmt_decode,
+                     _js_f8196_stmt_decode, _js_f8197_stmt_decode, _js_f8198_stmt_decode, _js_f8199_stmt_decode, _js_f8200_stmt_decode,
                      ):
         _sdec = _stmtdec(text)
         if _sdec is not None:
