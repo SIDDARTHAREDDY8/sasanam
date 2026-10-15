@@ -3806,6 +3806,23 @@ _MEMORY_WRITE = re.compile(
     r"|\bmemorise this\b"
     # F12552: `memorise this in memory`
     r"|\bmemorise this in memory\b"
+    # F14554-F16553 (wave-456 lane B): 176-verb set in
+    # "<verb> this (in|to|into|as) <memory-phrase>" frames (attack-123
+    # round-122 deferred verbs). Filed carriers use "this"; the "it"
+    # form and particle-split forms ("cork this up into memory") are
+    # covered as generalizations (wave-455 lane B precedent). The
+    # (?! of\b) guards on possessive-memory tails preserve memorial
+    # prose ("keep this in my memory of our trip"); "in the memory"
+    # is NOT guarded (storage reading wins: "Hold this in the memory
+    # of the computer." must FLAG). Generalizations beyond the filed
+    # carriers: full verb x tail cross-product (incl. the 4 unfiled
+    # shapes: revitalize to/into memory, cork up to/into long term
+    # memory), "it" forms, particle splits. this/it REQUIRED (bare
+    # forms occur in honest prose). Bare "back"/"box" are included
+    # so the split forms of "back up" / "box in" / "box up"
+    # ("back this up in your memory") match; the attached-particle
+    # forms ("back up this ...") match via the particle verbs.
+    r"|\b(?:absorb|acclimatize|accommodate|accumulate|accustom|acquire|adapt|add|adhere|adjoin|adjust|adore|affix|aggregate|align|alleviate|amass|anchor|animate|annalize|annex|appease|append|apply|archive|arouse|arrange|assemble|assimilate|assuage|attain|attune|audit|author|awaken|back|back up|bale|bank|bear|bequeath|bind|bind up|blanket|bloom|blot|board|bolster|bolt|bottle|bottle up|box|box in|box up|brace|brand|brick|bridle|brood|buffer|bundle|bundle up|burden|burn|bury|buttress|cache|cache away|cage|calibrate|calm|can|candy|capture|carpet|carry|carve|catalog|catalogue|catch|categorize|cement|chain|channel|charge|cheer|cherish|chill|chisel|chronicle|clad|clamp|clasp|classify|clinch|clone|clutch|coach|coat|codify|collate|commemorate|commit|compile|compose|conceal|concentrate|conciliate|concoct|condition|confine|conform|conserve|consign|constrain|contain|contemplate|contrive|convert|convey|coop|coordinate|cork|cork up|revitalize|revive|rework|ripen|rouse|route|ruminate|satisfy|scan|scatter|school|scrutinize|sear|seek|sharpen|shield|shift|shower|soothe|sow|spray|spread|sprinkle|stimulate|stir|study|support|surmount|survey|sweep|synchronize|teach|temper|thrill|thrive|track|train|transform|translate|transliterate|transmit|transmute|transport|tune|tutor|uncover|unearth|unmask|unveil|utilize|value|vitalize|water|wet) (?:(?:aside|away|by|down|in|up) )?(?:this|it) (?:(?:aside|away|by|down|in|up) )?(?:to memory|into memory|in my memory(?! of\b)|in your memory(?! of\b)|in our memory(?! of\b)|in their memory(?! of\b)|to our memory(?! of\b)|to their memory(?! of\b)|into our memory(?! of\b)|into their memory(?! of\b)|to your memory(?! of\b)|as a memory|in the memory|in long-term memory|to long-term memory|into long-term memory|in your long-term memory(?! of\b)|to your long-term memory(?! of\b)|into your long-term memory(?! of\b)|in long term memory|to long term memory|into long term memory)\b"
 )
 
 
