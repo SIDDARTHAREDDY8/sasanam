@@ -132,7 +132,7 @@ def main():
     import inspect
     src = inspect.getsource(dlp_mod)
     nloops = src.count("for _stmtdec in (")
-    check("pin N_STMTDEC_LOOPS==202", nloops == 202)  # wave-455 merge reconciliation: +1 wave-455 lane A dispatch loop = 202
+    check("pin N_STMTDEC_LOOPS==203", nloops == 203)  # wave-455 merge reconciliation: +1 wave-455 lane A dispatch loop = 202; wave-456 merge reconciliation: +1 wave-456 lane A dispatch loop = 203
     # --- Pin: re.compile count = 29 ---
     nre = len(re.findall(r"re\.compile\(", src))
     check("pin re.compile==29", nre == 29)

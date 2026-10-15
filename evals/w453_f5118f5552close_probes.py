@@ -67,7 +67,7 @@ def main():
     # a new re.compile in instruction_provenance.py).
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("N_STMTDEC_LOOPS=202", loops == 202)  # wave-454 merge reconciliation: +1 wave-454 lane A dispatch loop = 201; wave-455 merge reconciliation: +1 wave-455 lane A dispatch loop = 202
+    check("N_STMTDEC_LOOPS=203", loops == 203)  # wave-454 merge reconciliation: +1 wave-454 lane A dispatch loop = 201; wave-455 merge reconciliation: +1 wave-455 lane A dispatch loop = 202; wave-456 merge reconciliation: +1 wave-456 lane A dispatch loop = 203
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("re.compile=29 in dlp", dlp_re == 29)
     prov_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/instruction_provenance.py")).read()))

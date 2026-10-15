@@ -198,7 +198,7 @@ def main():
     prov_src = pathlib.Path(REPO_ROOT, "gov", "instruction_provenance.py").read_text()
     check("re.compile prov == 8", prov_src.count("re.compile"), 8)
     dlp_src = pathlib.Path(REPO_ROOT, "gov", "dlp.py").read_text()
-    check("N_STMTDEC_LOOPS == 202", dlp_src.count("for _stmtdec in"), 202)
+    check("N_STMTDEC_LOOPS == 203", dlp_src.count("for _stmtdec in"), 203)  # wave-456 merge: 202 -> 203; wave-456 merge reconciliation: +1 wave-456 lane A dispatch loop = 203
 
     # 8. Perf: full in-process sweep timing.
     check("perf sweep < 120s", sweep_s < 120, True)

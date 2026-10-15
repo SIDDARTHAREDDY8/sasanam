@@ -1163,8 +1163,8 @@ def main():
     repo = os.path.dirname(os.path.abspath(__file__)) + "/.."
     with open(os.path.join(repo, "gov", "dlp.py")) as f:
         nloops = f.read().count("for _stmtdec in (")
-    print("stmtdec loops: %d (want 202)" % nloops)
-    if nloops != 202:
+    print("stmtdec loops: %d (want 203)" % nloops)  # wave-456 merge: 202 -> 203; wave-456 merge reconciliation: +1 wave-456 lane A dispatch loop = 203
+    if nloops != 203:  # wave-456 merge: 202 -> 203; wave-456 merge reconciliation: +1 wave-456 lane A dispatch loop = 203
         fails.append("loops=%d" % nloops)
     for fname, want in [("gov/dlp.py", 29), ("gov/instruction_provenance.py", 8)]:
         with open(os.path.join(repo, fname)) as f:

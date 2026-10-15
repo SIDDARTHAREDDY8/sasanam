@@ -143,7 +143,7 @@ def main():
     dlp = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     n_loops = dlp.count("for _stmtdec in")
     print("N_STMTDEC_LOOPS: %d (expect 202)" % n_loops)
-    if n_loops != 202:
+    if n_loops != 203:  # wave-456 merge: 202 -> 203; wave-456 merge reconciliation: +1 wave-456 lane A dispatch loop = 203
         fails += 1
     findings = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read()
     n_stamps = findings.count("wave-456 lane B") if "wave-456 lane B" in findings else 0

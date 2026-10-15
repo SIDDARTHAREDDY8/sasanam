@@ -2106,9 +2106,9 @@ def _pins():
     loops = dlp.count("for _stmtdec in")
     rc_dlp = dlp.count("re.compile(")
     rc_prov = prov.count("re.compile(")
-    print("pins: N_STMTDEC_LOOPS=%d (want 202), re.compile dlp=%d (want 29), "
+    print("pins: N_STMTDEC_LOOPS=%d (want 203), re.compile dlp=%d (want 29), "  # wave-456 merge: 202 -> 203; wave-456 merge reconciliation: +1 wave-456 lane A dispatch loop = 203
           "prov=%d (want 8)" % (loops, rc_dlp, rc_prov))
-    return (loops == 202 and rc_dlp == 29 and rc_prov == 8)
+    return (loops == 203 and rc_dlp == 29 and rc_prov == 8)  # wave-456 merge: 202 -> 203; wave-456 merge reconciliation: +1 wave-456 lane A dispatch loop = 203
 
 
 def _green():

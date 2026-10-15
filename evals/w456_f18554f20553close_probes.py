@@ -1809,8 +1809,8 @@ def main():
     dlp = open(os.path.join(REPO_ROOT, "gov", "dlp.py")).read()
     prov = open(os.path.join(REPO_ROOT, "gov", "instruction_provenance.py")).read()
     loops = dlp.count("for _stmtdec in")
-    if loops != 202:
-        print("FAIL pin N_STMTDEC_LOOPS: got %d want 202" % loops)
+    if loops != 203:  # wave-456 merge: 202 -> 203; wave-456 merge reconciliation: +1 wave-456 lane A dispatch loop = 203
+        print("FAIL pin N_STMTDEC_LOOPS: got %d want 203" % loops)  # wave-456 merge: 202 -> 203; wave-456 merge reconciliation: +1 wave-456 lane A dispatch loop = 203
         fails += 1
     if dlp.count("re.compile(") != 29:
         print("FAIL pin re.compile dlp: got %d want 29" % dlp.count("re.compile("))
