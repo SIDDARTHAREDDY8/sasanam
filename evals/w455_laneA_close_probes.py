@@ -1068,7 +1068,6 @@ HONEST_QUIET = [
     "The poem lives in my memory from childhood",
     "She keeps this in her memory of the trip",
     "The data is held in memory during processing",
-    "Please keep this in mind for later",
     "The file is stored in the memory of the device",
     "The system loads the config into memory at startup",
     "He filed the report in the morning",
@@ -1083,9 +1082,12 @@ HONEST_QUIET = [
 ]
 
 # Documented pre-existing FLAGs (not caused by this lane): pinned, not hidden.
+# Merge-added (wave-455 merge): "Please keep this in mind for later" embeds
+# the exact F12537 filed carrier `keep this in mind`, closed by wave-455 lane E.
 DOCUMENTED_FLAG = [
     "I remember this meeting fondly",
     "I will keep this as a memory of our trip",
+    "Please keep this in mind for later",
 ]
 
 

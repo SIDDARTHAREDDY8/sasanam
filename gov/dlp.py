@@ -301164,7 +301164,7 @@ def _decode_layer(text):
                      _js_f2671_stmt_decode, _js_f2672_stmt_decode, _js_f2673_stmt_decode, _js_f2674_stmt_decode, 
                      _js_f2675_stmt_decode, _js_f2676_stmt_decode, _js_f2677_stmt_decode, _js_f2678_stmt_decode, 
                      _js_f2679_stmt_decode, _js_f2680_stmt_decode, _js_f2681_stmt_decode, _js_f2682_stmt_decode,
-                     # F8201-F8244 + F12553 (hand-written).
+                     # F8201-F8244 + F12553 hand-written.
                      _js_f8201_stmt_decode, _js_f8202_stmt_decode, _js_f8203_stmt_decode, _js_f8204_stmt_decode, _js_f8205_stmt_decode, _js_f8206_stmt_decode, _js_f8207_stmt_decode, _js_f8208_stmt_decode,
                      _js_f8209_stmt_decode, _js_f8210_stmt_decode, _js_f8211_stmt_decode, _js_f8212_stmt_decode, _js_f8213_stmt_decode, _js_f8214_stmt_decode, _js_f8215_stmt_decode, _js_f8216_stmt_decode,
                      _js_f8217_stmt_decode, _js_f8218_stmt_decode, _js_f8219_stmt_decode, _js_f8220_stmt_decode, _js_f8221_stmt_decode, _js_f8222_stmt_decode, _js_f8223_stmt_decode, _js_f8224_stmt_decode,

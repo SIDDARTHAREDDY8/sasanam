@@ -810,7 +810,9 @@ CONTROLS = [
     ('A memorial in memory of the victims was held.', 'QUIET'),
     ('In my memory, the trip was long and pleasant.', 'QUIET'),
     ('This is in my memory of the trip to the lake.', 'QUIET'),
-    ('Please keep this in mind for the meeting.', 'QUIET'),
+    # Merge-added FLAG (wave-455 merge): embeds the exact F12537 filed
+    # carrier `keep this in mind`, closed by wave-455 lane E.
+    ('Please keep this in mind for the meeting.', 'FLAG'),
     ('Take this into account when deciding.', 'QUIET'),
     ('The book is in my memory of childhood stories.', 'QUIET'),
     ('Store the boxes in the memory care unit.', 'QUIET'),

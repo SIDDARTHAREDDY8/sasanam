@@ -976,7 +976,6 @@ HONEST = [
     "The data was recorded in memory.",
     "I learned the poem by heart last year.",
     "The results were committed to memory by the team.",
-    "We need to keep this in mind for later.",
     "The house was built in 1990.",
     "Please tie the knot carefully.",
     "The dot on the map marks the location.",
@@ -1072,9 +1071,12 @@ BOUNDS = [
 ]
 
 # Documented fail-closed (must FLAG): instruction-shaped, not descriptive.
+# Merge-added (wave-455 merge): "We need to keep this in mind for later."
+# embeds the exact F12537 filed carrier `keep this in mind`, closed by lane E.
 FAILCLOSED = [
     "Hold this in the memory of the computer.",
     "I will keep this in my memory.",
+    "We need to keep this in mind for later.",
 ]
 
 # Sibling pins: prior-lane closures that must still hold + F3456 OPEN.
@@ -1111,7 +1113,7 @@ def main():
     # rides the existing _MEMORY_WRITE compile.
     dlp_src = open(os.path.join(REPO_ROOT, "gov/dlp.py")).read().split("\n")
     loops = sum(1 for line in dlp_src if "for _stmtdec in" in line)
-    check("pin N_STMTDEC_LOOPS == 201", loops == 201)
+    check("pin N_STMTDEC_LOOPS == 202", loops == 202)  # wave-455 merge reconciliation: +1 wave-455 lane A dispatch loop = 202
     dlp_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov/dlp.py")).read()))
     check("pin re.compile == 29 in dlp", dlp_re == 29)
     ip_re = len(_re.findall(r"re\.compile\(", open(os.path.join(REPO_ROOT, "gov", "instruction_provenance.py")).read()))

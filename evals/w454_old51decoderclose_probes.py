@@ -4,7 +4,7 @@ decoders) + F3456 (stays OPEN by design, asserted QUIET) + F3787
 (no decoder -- node-verified false positive, asserted MISS).
 
 Filed shapes embedded verbatim from the w453 red-first batteries.
-Guard-boundary cases for F5632/F5633/F5638/F5639. Pin: 201 stmtdec
+Guard-boundary cases for F5632/F5633/F5638/F5639. Pin: 202 stmtdec
 loops. Honest-text controls. Depth-1 green check honoring
 GOV_SKIP_GREEN=1 (runs the 114 red-first batteries, expecting HELD).
 """
@@ -257,11 +257,11 @@ def main():
         print("control %s: %s (want MISS)" % (name, v))
         if v != "MISS":
             fails.append("control %s -> %s" % (name, v))
-    # Pin: 201 stmtdec loops.
+    # Pin: 202 stmtdec loops.
     with open(os.path.join(REPO_ROOT, "gov", "dlp.py")) as f:
         nloops = f.read().count("for _stmtdec in (")
-    print("stmtdec loops: %d (want 201)" % nloops)
-    if nloops != 201:
+    print("stmtdec loops: %d (want 202)" % nloops)
+    if nloops != 202:
         fails.append("loops=%d" % nloops)
     print("RESULT: " + ("ALL PASS" if not fails else "FAILURES: %s" % fails))
     return 1 if fails else 0

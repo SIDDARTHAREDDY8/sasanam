@@ -125,14 +125,14 @@ def check(name, cond):
     print(("PASS " if cond else "FAIL ") + name, flush=True)
 
 def main():
-    # --- Pin: N_STMTDEC_LOOPS = 201 (wave-454 merge reconciliation: 199 pinned
+    # --- Pin: N_STMTDEC_LOOPS = 201 (wave-454 merge reconciliation: 199 pinned; wave-455 merge reconciliation: +1 wave-455 lane A dispatch loop = 202
     # value was stale -- true count was 200 on base e7b41b804 after wave-453
     # lane A; +1 wave-454 lane A dispatch loop = 201) ---
     import gov.dlp as dlp_mod
     import inspect
     src = inspect.getsource(dlp_mod)
     nloops = src.count("for _stmtdec in (")
-    check("pin N_STMTDEC_LOOPS==201", nloops == 201)
+    check("pin N_STMTDEC_LOOPS==202", nloops == 202)  # wave-455 merge reconciliation: +1 wave-455 lane A dispatch loop = 202
     # --- Pin: re.compile count = 29 ---
     nre = len(re.findall(r"re\.compile\(", src))
     check("pin re.compile==29", nre == 29)
