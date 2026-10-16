@@ -2170,7 +2170,10 @@ HONEST_QUIET = [
     'The committee will draft the proposal tomorrow',
     'Store the grain in the warehouse for winter',
     'The artist will paint the portrait in the studio',
-    'revitalize this in my memory',
+    # 'revitalize this in my memory' REMOVED from honest-quiet by the
+    # wave-456 merge: it is filed F14555 (attack-123, lane B range),
+    # stamped CLOSED by lane B -- FLAG is correct, not honest prose.
+    # It now lives in DOCUMENTED_FLAG below.
     'acclimatize that to memory',
     'acclimatize this thing to memory',
     'acclimatize these to memory',
@@ -2179,6 +2182,9 @@ HONEST_QUIET = [
 
 
 DOCUMENTED_FLAG = [
+    # Filed F14555 (attack-123, lane B range), stamped CLOSED by lane B:
+    # FLAG is correct -- moved here from HONEST_QUIET by the wave-456 merge.
+    'revitalize this in my memory',
     'acclimatize this in memory of the trip',
     'I remember this meeting fondly',
     'I will keep this as a memory of our trip',

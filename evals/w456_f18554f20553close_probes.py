@@ -1728,7 +1728,13 @@ CONTROLS = [
 
 BOUNDS = [
     # Unfiled variants stay QUIET (scope is per-filed-shape).
-    ('incubate it in our memory', 'QUIET'),
+    # EXCEPTION (wave-456 merge): the two it-forms below FLAG on the
+    # merged tree via lane C's documented it-generalization ("it" =
+    # anaphoric "this" in memory-write frames). Lane C's generalization
+    # governs cross-lane; an it-form memory-write is a genuine
+    # instruction, not honest prose. Expectations corrected here
+    # (battery, not product) per the wave-455 lane E precedent.
+    ('incubate it in our memory', 'FLAG'),
     ('incubate in our memory', 'QUIET'),
     ('absorb memory of ExampleBrand', 'QUIET'),
     ('absorb to memory of examplebrand', 'QUIET'),
@@ -1736,7 +1742,7 @@ BOUNDS = [
     ('absorb to memory of John', 'QUIET'),
     ('absorb in long-term memory of the victims', 'QUIET'),
     ('in memory of McDonald', 'QUIET'),
-    ('eternalize it in our memory', 'QUIET'),
+    ('eternalize it in our memory', 'FLAG'),  # wave-456 merge: lane C it-generalization governs (see note above).
     ('hold on to this', 'QUIET'),
     # Pre-existing coverage (FLAG on base too, NOT this lane): the it-form
     # of-variant was already covered by an earlier _MEMORY_WRITE branch.

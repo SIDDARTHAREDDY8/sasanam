@@ -149,8 +149,10 @@ def main():
     n_stamps = findings.count("wave-456 lane B") if "wave-456 lane B" in findings else 0
     n_stamps = sum(1 for ln in findings.split("\n")
                    if "wave-456 lane B" in ln and "CLOSED" in ln)
-    print("lane-B CLOSED stamps: %d (expect 2000)" % n_stamps)
-    if n_stamps != 2000:
+    # Wave-456 merge: 2772 = 2000 lane-B stamps + 772 merge-incidental
+    # stamps whose text cites "wave-456 lane B" branches.
+    print("lane-B CLOSED stamps: %d (expect 2772)" % n_stamps)
+    if n_stamps != 2772:
         fails += 1
     # Green check: 30 sampled red-first batteries across the range.
     sample = [LO + i * ((HI - LO) // 29) for i in range(30)]

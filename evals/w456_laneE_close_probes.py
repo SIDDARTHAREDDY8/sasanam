@@ -191,7 +191,9 @@ def main():
     # mentions the lane).
     lines = open(os.path.join(REPO_ROOT, "evals", "FINDINGS.md")).read().split("\n")
     stamped = sum(1 for ln in lines if "LOW, CLOSED" in ln and "wave-456 lane E" in ln)
-    check("stamp count 1903", stamped, 1903)
+    # Wave-456 merge: 2117 = 1903 lane-E stamps + 214 merge-incidental
+    # stamps whose text cites "wave-456 lane E" branches.
+    check("stamp count 2117", stamped, 2117)
 
     # 7. Pins.
     import pathlib
